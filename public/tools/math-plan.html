@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>锐满分 · 高中数学辅导方案生成器</title>
+<style>
+/* ============ 基础 ============ */
+*{box-sizing:border-box}
+:root{
+  --blue:#1f3864; --blue2:#2e5496; --line:#d9e2f3; --bg:#eef2f9;
+  --card:#fff; --ink:#1c2333; --muted:#6b7891; --ok:#1a7f4b; --warn:#b45309; --bad:#c0392b;
+  --shadow:0 1px 3px rgba(16,32,64,.08),0 8px 24px rgba(16,32,64,.06);
+}
+html,body{margin:0;padding:0;height:100%}
+body{
+  font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",
+       "PingFang SC","Hiragino Sans GB","Source Han Sans SC",sans-serif;
+  color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+a{color:var(--blue2)}
+
+/* ============ 顶栏 ============ */
+header{
+  height:56px;display:flex;align-items:center;gap:16px;padding:0 20px;
+  background:linear-gradient(90deg,#1f3864,#2e5496);color:#fff;
+  position:sticky;top:0;z-index:50;box-shadow:0 2px 10px rgba(16,32,64,.18)
+}
+header .logo{font-size:16px;font-weight:700;letter-spacing:.3px;white-space:nowrap}
+header .logo span{opacity:.6;font-weight:400;font-size:12px;margin-left:8px}
+header .spacer{flex:1}
+header button{
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);color:#fff;
+  padding:7px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:.15s
+}
+header button:hover{background:rgba(255,255,255,.26)}
+header button.primary{background:#fff;color:var(--blue);border-color:#fff;font-weight:600}
+header button.primary:hover{background:#f0f4ff}
+
+/* ============ 布局 ============ */
+.layout{display:grid;grid-template-columns:392px 1fr;height:calc(100vh - 56px)}
+aside{
+  background:var(--card);border-right:1px solid var(--line);
+  overflow-y:auto;padding:16px 18px 60px
+}
+main{overflow-y:auto;padding:20px 26px 80px}
+@media(max-width:1100px){
+  .layout{grid-template-columns:1fr;height:auto}
+  aside{border-right:0;border-bottom:1px solid var(--line)}
+  main{padding:16px}
+}
+
+/* ============ 表单 ============ */
+.grp{margin-bottom:18px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.grp>h3{
+  margin:0;padding:9px 12px;font-size:13px;background:#f6f8fd;border-bottom:1px solid var(--line);
+  color:var(--blue);display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none
+}
+.grp>h3 .badge{
+  font-size:11px;font-weight:400;background:var(--blue);color:#fff;border-radius:10px;
+  padding:1px 8px;margin-left:auto;opacity:.85
+}
+.grp .body{padding:12px}
+.grp.collapsed .body{display:none}
+.row{display:grid;grid-template-columns:96px 1fr;gap:8px;align-items:center;margin-bottom:9px}
+.row>label{font-size:12.5px;color:var(--muted);text-align:right;padding-right:2px}
+.row.wide{grid-template-columns:1fr}
+.row.wide>label{text-align:left;margin-bottom:4px}
+select,input[type=text],input[type=number],textarea{
+  width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:#fdfefe;
+  outline:none;transition:.15s
+}
+select:focus,input:focus,textarea:focus{border-color:var(--blue2);box-shadow:0 0 0 3px rgba(46,84,150,.12)}
+textarea{resize:vertical;min-height:52px;line-height:1.5}
+.hint{font-size:11.5px;color:var(--muted);margin:4px 0 0;line-height:1.5}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.pill{
+  font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:20px;
+  background:#fff;cursor:pointer;transition:.15s;user-select:none
+}
+.pill:hover{border-color:var(--blue2)}
+.pill.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.slider{display:flex;align-items:center;gap:10px}
+.slider input[type=range]{flex:1;accent-color:var(--blue2)}
+.slider .val{
+  min-width:74px;text-align:center;font-weight:600;color:var(--blue);
+  background:#f0f4ff;border-radius:6px;padding:3px 6px;font-size:12.5px
+}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.two>div>label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:3px}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.acts button{
+  flex:1;min-width:110px;padding:9px 12px;border-radius:8px;border:1px solid var(--line);
+  background:#fff;cursor:pointer;transition:.15s;font-weight:600;font-size:13px
+}
+.acts button:hover{border-color:var(--blue2);background:#f6f9ff}
+.acts button.go{background:var(--blue);color:#fff;border-color:var(--blue)}
+.acts button.go:hover{background:var(--blue2)}
+.preset{
+  display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px
+}
+.preset button{
+  font-size:12px;padding:6px 10px;border-radius:7px;border:1px dashed var(--line);
+  background:#fbfcff;cursor:pointer;transition:.15s
+}
+.preset button:hover{border-style:solid;border-color:var(--blue2);color:var(--blue2)}
+
+/* ============ 方案预览 ============ */
+.doc{
+  background:var(--card);border-radius:12px;box-shadow:var(--shadow);
+  padding:34px 38px 44px;max-width:1080px;margin:0 auto
+}
+.doc h1{
+  font-size:20px;text-align:center;margin:0 0 6px;color:var(--blue);letter-spacing:.5px
+}
+.doc .meta{text-align:center;color:var(--muted);font-size:12.5px;margin-bottom:22px}
+.doc h2{
+  font-size:15px;color:var(--blue);margin:24px 0 10px;padding-left:10px;
+  border-left:4px solid var(--blue2);line-height:1.3
+}
+.doc h3{font-size:13.5px;color:var(--blue2);margin:16px 0 7px}
+.doc p{margin:6px 0}
+.doc table{width:100%;border-collapse:collapse;margin:8px 0 4px;font-size:12.5px}
+.doc th,.doc td{border:1px solid #c9d4e8;padding:6px 8px;vertical-align:top;line-height:1.55}
+.doc th{background:#dce6f1;font-weight:700;text-align:center;color:var(--blue)}
+.doc td.c,.doc th.c{text-align:center;white-space:nowrap}
+.doc tbody tr:nth-child(even) td{background:#fafcff}
+.doc .stage-row td{background:#eef3fb;font-weight:700;color:var(--blue)}
+.doc ul{margin:6px 0 6px 0;padding-left:20px}
+.doc li{margin:3px 0}
+.kv{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:6px}
+.kv th{width:78px;background:#f2f6fd;text-align:center;font-weight:600;color:var(--muted)}
+.kv th,.kv td{border:1px solid #c9d4e8;padding:5px 8px}
+.tag{
+  display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;margin-right:4px;
+  background:#e8f0fe;color:var(--blue2);border:1px solid #cadcfb
+}
+.tag.b{background:#eaf7ee;color:var(--ok);border-color:#c6e8d3}
+.tag.w{background:#fdf3e3;color:var(--warn);border-color:#f4ddb4}
+.tag.r{background:#fdeceb;color:var(--bad);border-color:#f5cdc9}
+
+/* 自检 */
+.checks{margin-top:24px;border-top:2px dashed var(--line);padding-top:16px}
+.checks h2{border-left-color:var(--ok)}
+.chk{display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f2f5fb}
+.chk .dot{
+  width:18px;height:18px;border-radius:50%;flex:0 0 18px;display:flex;align-items:center;
+  justify-content:center;font-size:11px;font-weight:700;color:#fff;margin-top:2px
+}
+.chk.ok .dot{background:var(--ok)}
+.chk.warn .dot{background:var(--warn)}
+.chk.bad .dot{background:var(--bad)}
+.chk .txt{flex:1;font-size:12.5px}
+.chk .txt b{color:var(--blue)}
+
+/* 编辑模式 */
+.editbar{
+  display:flex;gap:8px;align-items:center;margin:0 auto 12px;max-width:1080px;
+  background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:12.5px;
+  color:var(--muted);box-shadow:var(--shadow)
+}
+.editbar button{
+  padding:6px 12px;border-radius:7px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:12.5px
+}
+.editbar button:hover{border-color:var(--blue2);color:var(--blue2)}
+.editbar .spacer{flex:1}
+.doc.editing td[contenteditable]{outline:none;background:#fffdf3}
+.doc.editing td[contenteditable]:focus{background:#fff7dd;box-shadow:inset 0 0 0 2px #f0c040}
+.empty{
+  max-width:1080px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:var(--shadow);
+  padding:60px 40px;text-align:center;color:var(--muted)
+}
+.empty h2{color:var(--blue);font-size:17px;margin:0 0 10px}
+.empty ol{display:inline-block;text-align:left;margin:12px 0 0;font-size:13px;line-height:2}
+.toast{
+  position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);
+  background:#1c2333;color:#fff;padding:10px 22px;border-radius:9px;font-size:13px;
+  opacity:0;pointer-events:none;transition:.25s;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.25)
+}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.mono{font-family:ui-monospace,Consolas,"Courier New",monospace;font-size:11.5px}
+@media print{
+  header,aside,.editbar,.toast{display:none!important}
+  .layout{display:block;height:auto}
+  main{overflow:visible;padding:0}
+  .doc{box-shadow:none;border-radius:0;padding:0;max-width:none}
+  body{background:#fff}
+  .doc h2{break-after:avoid}
+  .doc table{break-inside:auto}
+  .doc tr{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">锐满分 · 高中数学辅导方案生成器<span>v1.0 · 离线可用</span></div>
+  <div class="spacer"></div>
+  <button id="btnEdit">✎ 编辑模式</button>
+  <button id="btnPrint">🖨 打印 / 存 PDF</button>
+  <button class="primary" id="btnDoc">⬇ 导出 Word 文档</button>
+</header>
+
+<div class="layout">
+  <!-- ================= 左：参数 ================= -->
+  <aside>
+    <div class="preset">
+      <button data-preset="gs1">高三·基础重建</button>
+      <button data-preset="gs2">高三·提中档</button>
+      <button data-preset="gs3">高三·冲高分</button>
+      <button data-preset="g2s">高二·同步</button>
+      <button data-preset="g1p">高一·预科</button>
+      <button data-preset="gap">考前 100 天</button>
+    </div>
+
+    <div class="grp" id="g-basic">
+      <h3>① 学生与考区 <span class="badge">第 1 句</span></h3>
+      <div class="body">
+        <div class="row"><label>学生</label><input type="text" id="f-name" placeholder="可留空"></div>
+        <div class="row"><label>年级</label>
+          <select id="f-grade">
+            <option value="高一">高一</option>
+            <option value="高二">高二</option>
+            <option value="高三" selected>高三</option>
+          </select></div>
+        <div class="row"><label>学段 / 周期</label>
+          <select id="f-phase">
+            <option value="秋">秋季（9月–寒假）</option>
+            <option value="秋寒">秋季至寒假</option>
+            <option value="寒">寒假集训</option>
+            <option value="春">春季（3–6月）</option>
+            <option value="暑">暑期</option>
+            <option value="全年">全年／全托</option>
+          </select></div>
+        <div class="row"><label>考区卷种</label>
+          <select id="f-exam"></select></div>
+        <div class="row"><label>教材版本</label>
+          <select id="f-book">
+            <option value="人教A版（2019）" selected>人教A版（2019）</option>
+            <option value="人教B版">人教B版</option>
+            <option value="北师大版">北师大版</option>
+            <option value="苏教版">苏教版</option>
+            <option value="湘教版">湘教版</option>
+          </select></div>
+        <div class="row"><label>校区 / 教师</label><input type="text" id="f-teacher" placeholder="如：燕郊中学校区 · 郭老师"></div>
+      </div>
+    </div>
+
+    <div class="grp" id="g-score">
+      <h3>② 学情与分数段 <span class="badge">第 2 句</span></h3>
+      <div class="body">
+        <div class="row"><label>当前分数</label>
+          <div class="slider">
+            <input type="range" id="f-score" min="10" max="145" step="1" value="62">
+            <div class="val" id="v-score">62 / 150</div>
+          </div>
+        </div>
+        <div class="row"><label>目标分数</label>
+          <div class="slider">
+            <input type="range" id="f-target" min="30" max="145" step="1" value="100">
+            <div class="val" id="v-target">100 分</div>
+          </div>
+        </div>
+        <p class="hint" id="h-band">档位：提中档　|　建议每次课可持续提分：<b id="v-rate">—</b></p>
+        <div class="row wide"><label>薄弱模块（可多选，会加权提前、加课时）</label>
+          <div class="pills" id="f-weak"></div>
+        </div>
+        <div class="row wide"><label>学习特点 / 补充说明（会写进诊断句）</label>
+          <textarea id="f-note" placeholder="如：计算能力弱、畏难留白、需强督促；学校一轮进度偏快…"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="grp" id="g-hours">
+      <h3>③ 课时与排课 <span class="badge">第 1 句</span></h3>
+      <div class="body">
+        <div class="row"><label>总课时数</label>
+          <div class="slider">
+            <input type="range" id="f-hours" min="10" max="240" step="2" value="60">
+            <div class="val" id="v-hours">60 课时</div>
+          </div>
+        </div>
+        <p class="hint" id="h-hours">—</p>
+        <div class="row"><label>每次课时长</label>
+          <select id="f-len">
+            <option value="1.5">1.5 小时（90 分钟）</option>
+            <option value="2" selected>2 小时（120 分钟）</option>
+            <option value="1">1 小时（60 分钟）</option>
+          </select></div>
+        <div class="two">
+          <div><label>在校每周次数</label><input type="number" id="f-freq" min="1" max="7" step="1" value="2"></div>
+          <div><label>假期每周次数</label><input type="number" id="f-freqh" min="1" max="7" step="1" value="5"></div>
+        </div>
+        <div class="two" style="margin-top:8px">
+          <div><label>在校周数</label><input type="number" id="f-wk" min="0" max="60" step="1" value="20"></div>
+          <div><label>假期周数</label><input type="number" id="f-wkh" min="0" max="30" step="1" value="3"></div>
+        </div>
+        <div class="two" style="margin-top:8px">
+          <div><label>国庆加课</label><input type="number" id="f-nat" min="0" max="10" step="1" value="5"></div>
+          <div><label>其它节日加课</label><input type="number" id="f-hol" min="0" max="10" step="1" value="1"></div>
+        </div>
+        <p class="hint" id="h-time">—</p>
+      </div>
+    </div>
+
+    <div class="grp" id="g-mode">
+      <h3>④ 内容侧重与取舍 <span class="badge">第 3 句</span></h3>
+      <div class="body">
+        <div class="row"><label>主攻方向</label>
+          <select id="f-focus">
+            <option value="auto" selected>自动（按档位推荐）</option>
+            <option value="base">只抓基础送分</option>
+            <option value="mid">基础 + 中档</option>
+            <option value="hard">中档 + 压轴步骤分</option>
+            <option value="all">全模块均衡</option>
+          </select></div>
+        <div class="row"><label>课堂环节</label>
+          <select id="f-flow">
+            <option value="auto" selected>自动（按档位与学段）</option>
+            <option value="f1">预科型 6 环（温故5→概念20→例题15→变式30→小结10）</option>
+            <option value="f2">一轮型 5 环（梳理10→精讲20→变式30→小测15→订正15）</option>
+            <option value="f3">高分型 6 环（模型10→错题溯源10→精讲20→变式30→小测15→总结15）</option>
+            <option value="f4">补差型 5 环（讲解15→示范15→模仿30→小测20→订正20）</option>
+            <option value="f5">同步答疑型（答疑20→梳理15→精讲20→变式20→小结15）</option>
+          </select></div>
+        <div class="row wide"><label>学校已完成一轮复习的模块（会跳过、不重复排课）</label>
+          <div class="pills" id="f-done"></div>
+        </div>
+        <div class="row"><label>检测节奏</label>
+          <select id="f-check">
+            <option value="auto" selected>自动</option>
+            <option value="3">每 3 次课一次小测</option>
+            <option value="5">每 5 次课一次小测</option>
+            <option value="10">每 10 次课一次阶段检测</option>
+            <option value="mod">每个模块结束一次阶段小测</option>
+          </select></div>
+        <div class="row"><label>真题来源</label>
+          <input type="text" id="f-paper" placeholder="如：近五年北京卷 + 海淀/西城一模二模">
+        </div>
+      </div>
+    </div>
+
+    <div class="acts">
+      <button class="go" id="btnGen">生成方案</button>
+      <button id="btnReset">恢复默认</button>
+    </div>
+    <p class="hint" style="margin-top:10px">
+      所有计算都在本机浏览器完成，不上传任何数据。生成后可用「编辑模式」直接改字，<b>改完请先导出</b>——
+      重新生成或切换预设会覆盖手改内容。
+    </p>
+  </aside>
+
+  <!-- ================= 右：方案 ================= -->
+  <main>
+    <div id="editbar" class="editbar" style="display:none">
+      <span>编辑模式已开启：点击表格里的任意单元格即可直接修改</span>
+      <div class="spacer"></div>
+      <button id="btnAddRow">＋ 加一行</button>
+      <button id="btnDelRow">－ 删最后一行</button>
+      <button id="btnExitEdit">完成编辑</button>
+    </div>
+    <div id="out">
+      <div class="empty">
+        <h2>先设置左侧参数，再点「生成方案」</h2>
+        <p>生成后你会得到一套完整方案，包含下面这些板块：</p>
+        <ol>
+          <li>基本信息表 + 卷面结构分析（题型分值 / 难度占比 / 精力分配）</li>
+          <li>学情诊断句 + 可验收的提分目标（总分 / 题型 / 模块 / 动作四层）</li>
+          <li>教学方法六句公式（含分钟级课堂流程、作业与错题机制）</li>
+          <li>三阶段复习节奏与三轮课时分配</li>
+          <li>逐次课表：阶段 / 内容 / 课时数 / 教学目标（目标全部量化）</li>
+          <li>交付前自检清单（自动核账：课时、时间、时长、目标一致性）</li>
+        </ol>
+        <p class="hint" style="margin-top:16px">也可以直接点上方任意一个预设按钮试试。</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* =========================================================================
+   一、考区卷种库（第①段因果链的数据源：卷面结构 → 可得分区间）
+   ========================================================================= */
+const EXAMS = {
+  // sec 顺序固定为：单选 / 多选 / 填空 / 解答；题量×每题分 必须合计 150
+  bj:  {name:"北京卷", sec:[[10,4],[0,0],[5,5],[6,null,85]], diff:[70,18,12],
+        note:"重基础、反套路，解答题按步骤给分；压轴为数列／新定义创新题"},
+  nh1: {name:"新高考 I 卷", sec:[[8,5],[3,6],[3,5],[5,null,77]], diff:[60,25,15],
+        note:"第 8、11、14 题为压轴选填；解答题后两问区分度高，步骤分尤其重要"},
+  nh2: {name:"新高考 II 卷", sec:[[8,5],[3,6],[3,5],[5,null,77]], diff:[62,24,14],
+        note:"与 I 卷结构相同、整体难度略低，基础盘更值得吃满"},
+  qg1: {name:"全国甲卷（理）", sec:[[12,5],[0,0],[4,5],[6,null,70]], diff:[60,25,15],
+        note:"12+4+6 结构，选填题量大，速度与准确率并重"},
+  qg2: {name:"全国乙卷（理）", sec:[[12,5],[0,0],[4,5],[6,null,70]], diff:[62,24,14],
+        note:"基础题占比高，中档题是主要提分区"},
+  tj:  {name:"天津卷", sec:[[9,5],[0,0],[6,5],[5,null,75]], diff:[65,22,13],
+        note:"选填偏基础，解答题前三道是必得分区"},
+  custom:{name:"其它 / 自定", sec:[[8,5],[3,6],[3,5],[5,null,77]], diff:[60,25,15],
+        note:"默认按新高考结构；请按实际卷面结构调整下方题型分值表"}
+};
+const SEC_NAMES = ["选择题（单选）","选择题（多选）","填空题","解答题"];
+
+/* =========================================================================
+   二、模块库（第③段因果链：学情档位 → 模块取舍与权重）
+   字段：id 名称 | topic 薄弱点归属 | g 适用年级学期 | lv 难度级别 | base 基础内容
+        | mid 中档内容 | hard 高阶内容 | target 教学目标（量化）| tags 能力标记
+   ========================================================================= */
+const MODULES = [
+/* ---------- 高一上 ---------- */
+{id:"m01",name:"集合与常用逻辑用语",topic:"集合逻辑",g:"高一上",lv:1,base:"元素与集合关系、集合表示法、交并补运算",mid:"子集个数、含参集合运算、充分必要条件判断",hard:"集合新定义问题、逻辑与不等式综合",target:"集合必考题型正确率≥95%，空集等易错点零失误",tags:["送分题","易错点"]},
+{id:"m02",name:"一元二次函数、方程与不等式",topic:"不等式",g:"高一上",lv:1,base:"一元二次不等式、分式与绝对值不等式解法",mid:"含参不等式分类讨论、三个二次的关系",hard:"含参恒成立与存在性问题、不等式证明入门",target:"各类不等式解法正确率≥90%，分类讨论不重不漏",tags:["基础","易错点"]},
+{id:"m03",name:"基本不等式与最值",topic:"不等式",g:"高一上",lv:2,base:"基本不等式条件辨析、常规最值",mid:"配凑法、常数代换、消元法求最值",hard:"多元最值、恒成立与范围综合",target:"基本不等式题型正确率≥85%，一正二定三相等条件不遗漏",tags:["高频","中档"]},
+{id:"m04",name:"函数的概念与三要素",topic:"函数",g:"高一上",lv:1,base:"定义域、值域、解析式求法、分段函数",mid:"复合函数定义域与值域、抽象函数求解析式",hard:"嵌套函数、分段函数综合与图像分析",target:"函数三要素题型正确率≥90%，定义域限制条件零遗漏",tags:["基础","易错点"]},
+{id:"m05",name:"函数的性质综合",topic:"函数",g:"高一上",lv:2,base:"单调性、奇偶性的判定与应用",mid:"周期性、对称性、性质综合选填",hard:"抽象函数性质推理、新定义函数压轴小题",target:"函数性质选填正确率≥90%，平均每题不超过 2 分钟",tags:["高频","压轴选填"]},
+{id:"m06",name:"指数函数与对数函数",topic:"函数",g:"高一上",lv:2,base:"指对幂运算、图像与性质、定义域值域",mid:"指对幂比大小、不等式与最值、零点分布",hard:"复合指对函数、隐零点与参数讨论",target:"指对运算正确率≥90%，图像比大小与零点题型熟练",tags:["高频","易错点"]},
+{id:"m07",name:"函数的零点与图像变换",topic:"函数",g:"高一上",lv:2,base:"零点存在性定理、基本图像识别",mid:"零点分布与个数问题、图像平移对称伸缩",hard:"复合函数零点、含参零点压轴小题",target:"零点与图像题型正确率≥85%，数形结合分析到位",tags:["中档"]},
+{id:"m08",name:"三角函数的概念与恒等变换",topic:"三角",g:"高一上",lv:1,base:"任意角与弧度制、同角关系、诱导公式",mid:"和差角、二倍角、辅助角公式的化简求值",hard:"角度配凑、给值求角、三角恒等变形综合",target:"三角化简求值正确率≥90%，公式应用零失误",tags:["基础","高频"]},
+{id:"m09",name:"三角函数的图像与性质",topic:"三角",g:"高一上",lv:2,base:"正弦余弦正切函数图像与性质",mid:"y=Asin(ωx+φ) 图像变换与解析式求解",hard:"含 ω、φ 的参数范围与零点、对称性压轴",target:"三角选填正确率≥85%，参数范围题型方法固化",tags:["高频","压轴选填"]},
+
+/* ---------- 高一下 ---------- */
+{id:"m10",name:"平面向量",topic:"向量",g:"高一下",lv:1,base:"线性运算、坐标运算、数量积与模长夹角",mid:"平行垂直判定、向量与解三角形综合",hard:"极化恒等式、等和线、向量几何模型",target:"向量选填正确率≥90%，坐标运算与几何转化熟练",tags:["基础","高频"]},
+{id:"m11",name:"正弦定理与余弦定理",topic:"三角",g:"高一下",lv:2,base:"正余弦定理、面积公式、边角互化",mid:"多条件解三角形、周长面积最值范围",hard:"中线与角平分线、结构不良问题、最值压轴",target:"解三角形大题得分率≥85%，最值范围题方法清晰",tags:["高频","大题"]},
+{id:"m12",name:"复数的概念与运算",topic:"复数",g:"高一下",lv:1,base:"复数概念、四则运算、共轭与模",mid:"复数几何意义、含参复数分类讨论",hard:"复数与方程、轨迹综合",target:"复数题正确率 100%，每题不超过 1 分钟",tags:["送分题"]},
+{id:"m13",name:"立体几何初步",topic:"立体几何",g:"高一下",lv:2,base:"空间几何体表面积与体积、三视图与直观图",mid:"点线面位置关系、平行垂直的判定与证明",hard:"组合体与切割体、截面与动态问题、外接球内切球",target:"立体几何证明题步骤完整规范，正确率≥85%",tags:["高频","大题"]},
+{id:"m14",name:"统计与统计案例",topic:"统计概率",g:"高一下",lv:1,base:"抽样方法、频率分布直方图、数字特征计算",mid:"百分位数、统计图表综合、样本估计总体",hard:"统计与概率综合大题、决策类开放题",target:"统计题正确率≥90%，图表信息提取完整",tags:["送分题","大题"]},
+{id:"m15",name:"概率基础",topic:"统计概率",g:"高一下",lv:1,base:"古典概型、几何概型、互斥与对立事件",mid:"条件概率初步、事件独立性判断",hard:"复杂计数型概率、概率与数列递推综合",target:"概率基础题正确率≥90%，概型判断零失误",tags:["基础","易错点"]},
+
+/* ---------- 高二上 ---------- */
+{id:"m16",name:"空间向量与立体几何",topic:"立体几何",g:"高二上",lv:2,base:"空间直角坐标系、向量坐标运算、法向量求法",mid:"线线角、线面角、二面角的向量求法、点到平面距离",hard:"动点与探索性问题、翻折与最值、建系优化",target:"向量法求角正确率≥90%，大题第一问满分、第二问拿全",tags:["高频","大题"]},
+{id:"m17",name:"直线与圆的方程",topic:"解析几何",g:"高二上",lv:1,base:"直线五种方程、圆的方程、位置关系判定",mid:"弦长与切线、对称问题、最值与定点",hard:"直线与圆综合压轴小题、轨迹方程",target:"直线与圆小题正确率≥90%，运算零失误",tags:["基础","高频"]},
+{id:"m18",name:"椭圆",topic:"解析几何",g:"高二上",lv:2,base:"定义、标准方程、几何性质与离心率",mid:"焦点三角形、弦长问题、定义法求轨迹",hard:"定点定值、范围最值、探索性压轴",target:"椭圆第一问满分，第二问得分率≥60%",tags:["高频","大题"]},
+{id:"m19",name:"双曲线与抛物线",topic:"解析几何",g:"高二上",lv:2,base:"定义、标准方程、渐近线与准线、离心率",mid:"焦点弦、定义转化、几何性质选填",hard:"双曲线与抛物线综合压轴、非对称韦达",target:"双曲线抛物线选填正确率≥85%，特殊性质熟练",tags:["高频","压轴选填"]},
+{id:"m20",name:"圆锥曲线综合",topic:"解析几何",g:"高二上",lv:3,base:"联立方程、判别式、韦达定理、弦长公式",mid:"中点弦、面积问题、定点定值模型",hard:"非对称韦达、点乘双根、齐次化、范围最值压轴",target:"圆锥曲线大题第二问得分率≥50%，运算提速",tags:["压轴","大题"]},
+
+/* ---------- 高二下 ---------- */
+{id:"m21",name:"数列的概念与通项",topic:"数列",g:"高二下",lv:2,base:"数列概念、等差等比通项与性质",mid:"累加法、累乘法、构造法求通项",hard:"递推数列与不动点、数列创新题",target:"通项求解方法掌握齐全，正确率≥85%",tags:["高频"]},
+{id:"m22",name:"数列求和与综合",topic:"数列",g:"高二下",lv:2,base:"公式法、分组求和、裂项相消、错位相减",mid:"数列与不等式、单调性与最值",hard:"放缩法证明、数列与函数综合压轴",target:"数列大题得分率≥85%，求和方法识别准确",tags:["高频","大题"]},
+{id:"m23",name:"导数的概念与运算",topic:"导数",g:"高二下",lv:2,base:"导数公式与四则运算、复合函数求导、切线方程",mid:"公切线与切点偏移、参数求解",hard:"导数与数列不等式、三次函数综合",target:"导数运算正确率≥95%，切线方程零失误",tags:["基础","高频"]},
+{id:"m24",name:"导数与函数单调性极值",topic:"导数",g:"高二下",lv:2,base:"单调区间求解、极值与最值",mid:"含参单调性分类讨论、闭区间最值",hard:"双变量问题、极值点偏移、隐零点",target:"含参讨论不重不漏，第一问满分、第二问拿步骤分",tags:["高频","大题"]},
+{id:"m25",name:"导数综合（恒成立与零点）",topic:"导数",g:"高二下",lv:3,base:"恒成立与存在性的基本转化",mid:"分离参数、必要性探路、零点存在性讨论",hard:"隐零点代换、双变量构造、不等式证明",target:"导数压轴第一问满分，第二问拿关键步骤分",tags:["压轴","大题"]},
+{id:"m26",name:"计数原理与排列组合",topic:"计数概率",g:"高二下",lv:2,base:"分类加法与分步乘法、排列组合公式",mid:"相邻不相邻、分组分配、定序问题",hard:"复杂约束计数、容斥原理",target:"排列组合题正确率≥85%，常见模型识别准确",tags:["基础","易错点"]},
+{id:"m27",name:"二项式定理",topic:"计数概率",g:"高二下",lv:1,base:"通项公式、特定项与系数求解",mid:"系数和、最大系数、赋值法",hard:"二项式与组合恒等式、近似计算",target:"二项式定理题正确率≥90%",tags:["送分题"]},
+{id:"m28",name:"随机变量及其分布",topic:"统计概率",g:"高二下",lv:2,base:"分布列、两点分布、超几何分布、二项分布",mid:"均值方差计算、条件概率与全概率公式",hard:"分布列与数列、决策问题综合",target:"概率统计大题稳定满分或接近满分",tags:["高频","大题"]},
+{id:"m29",name:"成对数据的统计分析",topic:"统计概率",g:"高二下",lv:1,base:"散点图、相关系数、回归直线方程",mid:"独立性检验、残差分析",hard:"统计与概率综合开放题",target:"统计大题步骤规范，得分率≥90%",tags:["送分题","大题"]},
+
+/* ---------- 高三专题 ---------- */
+{id:"m30",name:"集合复数逻辑（选填基础）",topic:"选填基础",g:"高三",lv:1,base:"集合运算、复数计算、充要条件判断",mid:"含参集合与逻辑综合、复数几何意义",hard:"新定义集合问题",target:"基础选填零失误，平均每题不超过 1 分钟",tags:["送分题","限时"]},
+{id:"m31",name:"不等式与极值（选填中档）",topic:"不等式",g:"高三",lv:2,base:"不等式性质、比较大小、基本不等式",mid:"含参不等式、恒成立与最值选填",hard:"多元最值与不等式证明压轴",target:"不等式选填正确率≥85%",tags:["中档","限时"]},
+{id:"m32",name:"函数选填压轴专项",topic:"函数",g:"高三",lv:3,base:"函数性质综合判断",mid:"零点个数、图像交点、比大小技巧",hard:"抽象函数、新定义函数、多结论判断",target:"函数选填压轴得分率≥70%，掌握特值法与排除法",tags:["压轴选填","限时"]},
+{id:"m33",name:"三角选填与解答专项",topic:"三角",g:"高三",lv:2,base:"三角化简求值与图像性质",mid:"参数范围、解三角形最值范围",hard:"结构不良问题、多解取舍、最值压轴",target:"三角解答题满分或接近满分",tags:["高频","限时"]},
+{id:"m34",name:"数列综合专项",topic:"数列",g:"高三",lv:3,base:"等差等比通项求和",mid:"构造与裂项、数列不等式",hard:"数列创新题、放缩证明、与函数导数综合",target:"数列第一问满分，第二问得分率≥70%",tags:["压轴","大题"]},
+{id:"m35",name:"概率统计大题专项",topic:"统计概率",g:"高三",lv:2,base:"分布列与期望、统计图表计算",mid:"条件概率与全概率、独立性检验",hard:"概率与数列递推、决策优化",target:"概率统计大题稳定满分，步骤分不丢",tags:["高频","大题"]},
+{id:"m36",name:"立体几何大题专项",topic:"立体几何",g:"高三",lv:2,base:"平行垂直证明规范书写",mid:"向量法求角与距离",hard:"动点探索、翻折最值、建系优化",target:"立体几何第一问满分，第二问拿到全部步骤分",tags:["高频","大题"]},
+{id:"m37",name:"解析几何大题专项",topic:"解析几何",g:"高三",lv:3,base:"设线联立、韦达定理、弦长面积",mid:"定点定值、范围最值模型",hard:"非对称韦达、齐次化、探索性与存在性",target:"解析几何第一问满分，第二问得分率≥50%",tags:["压轴","大题"]},
+{id:"m38",name:"导数大题专项",topic:"导数",g:"高三",lv:3,base:"切线、单调性、极值最值",mid:"含参讨论、恒成立与零点",hard:"隐零点、极值点偏移、双变量与不等式证明",target:"导数第一问满分，第二问拿关键步骤分",tags:["压轴","大题"]},
+{id:"m39",name:"数学文化与新定义题",topic:"新定义",g:"高三",lv:3,base:"新定义信息转化、按定义代入验证",mid:"反证法与演绎证明入门",hard:"北京卷/新高考数列创新题前两问",target:"新定义题不空题，稳定拿到前两问基础分",tags:["压轴","策略"]},
+{id:"m40",name:"应试策略与答题规范",topic:"应试技巧",g:"高三",lv:1,base:"时间分配、答题顺序、步骤规范",mid:"踩分点训练、卷面书写、难题取舍",hard:"个人最优答题方案定制",target:"形成个人最优答题方案，会做的题不丢分",tags:["策略","限时"]},
+
+/* ---------- 计算与衔接 ---------- */
+{id:"m41",name:"初高中衔接与计算过关",topic:"计算",g:"衔接",lv:1,base:"因式分解、二次方程与根式分式运算、不等式解法",mid:"代数式变形与化简技巧、错题归因",hard:"复杂式子运算速度与准确率训练",target:"计算正确率≥95%，杜绝符号与通分低级失误",tags:["计算","基础"]},
+{id:"m42",name:"计算专项提速（含导数与联立）",topic:"计算",g:"高三",lv:2,base:"求导运算、通分化简、数列求和计算",mid:"联立方程与韦达定理运算、法向量计算",hard:"高压限时下的运算稳定性",target:"运算正确率≥95%，计算类失分降到最低",tags:["计算","限时"]}
+];
+
+/* 高一/高二同步学期的默认模块序列（按教材章序） */
+const SYNC = {
+  "高一下": ["m10","m11","m12","m13","m14","m15"],
+  "高二上": ["m16","m17","m18","m19","m20"],
+  "高二下": ["m21","m22","m23","m24","m25","m26","m27","m28","m29"],
+  "高一上": ["m01","m02","m03","m04","m05","m06","m07","m08","m09"]
+};
+
+/* =========================================================================
+   三、课堂环节表（第③段因果链：学情档位 → 课堂动作）
+   ========================================================================= */
+const FLOWS = {
+  f1:{name:"预科型（6 环）",items:[["温故",5],["情境/概念精讲",20],["例题示范",15],["变式训练",30],["小结与作业",10]],desc:"概念先行、运算扎实，适合新课与预科"},
+  f2:{name:"一轮型（5 环）",items:[["知识梳理",10],["典例精讲",20],["变式训练",30],["限时小测",15],["订正小结",15]],desc:"标准一轮复习流程，适合中档提分"},
+  f3:{name:"高分型（6 环）",items:[["核心模型梳理",10],["典型错题溯源",10],["典例精讲",20],["变式训练",30],["限时小测",15],["归纳总结",15]],desc:"直接切模型，适合高分冲刺"},
+  f4:{name:"补差型（5 环）",items:[["知识讲解",15],["例题示范",15],["模仿练习",30],["限时小测",20],["订正过关",20]],desc:"低起点、小步子、多重复，另设计算过关"},
+  f5:{name:"同步答疑型（5 环）",items:[["校内问题答疑",20],["重点知识梳理",15],["典例精讲",20],["变式训练",20],["小结作业",15]],desc:"先解决校内疑难，再巩固对应模块"}
+};
+
+/* 按单次课时长适配环节分钟数：超出则从最长的环节削减，不足则补给最长的环节 */
+function fitFlow(flow, lenHours){
+  const budget = Math.round(parseFloat(lenHours)*60);
+  const raw = flow.items.reduce((a,x)=>a+x[1],0);
+  const items = flow.items.map(([n,m])=>[n,m]);
+  if(raw === budget) return {name:flow.name, items, desc:flow.desc, mins:raw, adjusted:false};
+
+  const longest = (arr)=>arr.reduce((mi,it,i)=> it[1] > arr[mi][1] ? i : mi, 0);
+  let sum = raw, guard = 0;
+  while(sum !== budget && guard++ < 400){
+    const idx = longest(items);
+    if(sum > budget){
+      if(items[idx][1] <= 5) break;      // 已无法再削减
+      items[idx][1] -= 1; sum -= 1;
+    }else{
+      items[idx][1] += 1; sum += 1;
+    }
+  }
+  const tag = raw > budget ? "（已按时长适配）" : "（含机动时间）";
+  return {name:flow.name+tag, items, desc:flow.desc, mins:sum, adjusted:true};
+}
+
+/* =========================================================================
+   四、文案模板库（第②段因果链：失分归因 → 诊断句与课堂动作）
+   ========================================================================= */
+const BAND_TEXT = {
+  1:{band:"补基础",level:"基础重建",
+     diag:"学生目前数学基础薄弱，高中知识体系断层严重、核心概念模糊、公式记忆残缺、基础题型完全不熟练，做题缺少必要的过程痕迹，校内一轮复习进度偏快、学生跟不上，多数知识点等同于未掌握。",
+     principle:"补断层、建体系、夯基础、学模板、稳提分",
+     give:"完全舍弃难题、压轴题与复杂综合题",
+     fight:"优先攻克集合、复数、平面向量、统计概率、解三角形等门槛低、频率高、易掌握的模块，逐步覆盖高考基础必考知识",
+     slogan:"听得懂、记得住、会模仿、能算对",
+     homework:"3–4 道基础题", errbook:"错题当日整理，下次课前 5 分钟检查订正", check:"每 5 次课一次阶段小测（10–15 题，限时 20–30 分钟）",
+     rate:3.0, thresh:"≥80%", opthr:"≥90%"},
+  2:{band:"提中档",level:"一轮强化提升",
+     diag:"学生具备基础数学知识框架，并非零基础，但知识点掌握不扎实、知识体系零散、中档题型解题思路欠缺、计算偶尔失误、综合题型无从下手，考试分数不稳定，校内一轮复习吸收不透彻。",
+     principle:"夯实基础、主攻中档、舍弃压轴、规范答题、查漏提分",
+     give:"舍弃压轴题与偏难怪题，压轴只拿第一问与步骤分",
+     fight:"重点攻克高考高频中档题型，规范解题步骤、规避高频易错点、搭建完整知识体系",
+     slogan:"基础题满分、中档题多拿分、会做的题不丢分",
+     homework:"4–6 道限时作业", errbook:"错题当日整理，下次课抽查重做同类变式", check:"每模块结束一次阶段小测（限时 30 分钟）",
+     rate:2.0, thresh:"≥85%", opthr:"≥92%"},
+  3:{band:"冲高分",level:"拔高冲刺",
+     diag:"学生基础扎实，基础知识无明显漏洞，常规题型得分稳定，核心短板为：中档题型解题速度慢、综合题型思路不全面、压轴题型无从突破、答题步骤不严谨易扣步骤分、高频易错点反复失分，校内复习偏基础，无法满足拔高需求。",
+     principle:"稳基分、提中档、破压轴、规范书写、限时提速",
+     give:"舍弃简单重复刷题与已熟练掌握的基础板块",
+     fight:"聚焦高频中档难题、常规压轴第一二问、跨模块综合题型，强化解题速度与答题规范",
+     slogan:"基础零失误、中档不丢分、压轴抢第一问",
+     homework:"6–8 道限时作业（含 2 道错题重做）", errbook:"错题本强制建立，每 5 次课一次错题重做测试，正确率低于 85% 的题滚动进入下次检测", check:"每模块 1 次阶段小测 + 全程 4–7 次 120 分钟套卷",
+     rate:1.5, thresh:"≥90%", opthr:"≥95%"}
+};
+
+const PHASE_TEXT = {
+  "秋":"秋季学期（9 月–寒假）","秋寒":"秋季至寒假","寒":"寒假集训","春":"春季（3–6 月）",
+  "暑":"暑期集训","全年":"全年／全托周期"
+};
+
+function fmtScore(v){return (v>=120?"高分":v>=90?"中上":v>=60?"中等偏下":"基础薄弱");}
+
+/* =========================================================================
+   五、规则引擎
+   ========================================================================= */
+function bandOf(score){
+  if(score<50) return 1;
+  if(score<95) return 2;
+  return 3;
+}
+
+function examStructure(ex){
+  const secs = ex.sec.map((s,i)=>{
+    const [n, per, fixed] = s;
+    const total = (per == null) ? fixed : n*per;
+    return {name:SEC_NAMES[i], n, per, total};
+  });
+  const total = secs.reduce((a,s)=>a+s.total, 0);
+  const [b,m,h] = ex.diff;
+  const pick = (p)=>Math.round(total*p/100);
+  return {secs, total, b, m, h,
+    basePts:pick(b), midPts:pick(m), hardPts:pick(h)};
+}
+
+/* 建议每次课可持续提分（分/课时） */
+function rateOf(band, grade, phase, score){
+  let r = BAND_TEXT[band].rate;
+  if(band===3 && score>=115) r = 1.2;
+  if(band===1 && score<35) r = 3.5;
+  return r;
+}
+
+/* 生成诊断句第 2 句 */
+function diagnosisText(o){
+  const b = BAND_TEXT[o.band];
+  let s = b.diag;
+  const extra = [];
+  if(o.weakTopics && o.weakTopics.length) extra.push("其中【"+o.weakTopics.join("、")+"】是主要失分模块");
+  if(o.note && o.note.trim()) extra.push(o.note.trim().replace(/[。；;]$/,""));
+  if(extra.length) s += " 需要特别注意的是：" + extra.join("；") + "。";
+  else s += " 当前需在有限课时内优先补齐上述漏洞，避免在低效模块上耗费时间。";
+  return s;
+}
+
+/* 模块筛选与排序：核心取舍算法 */
+function pickModules(o){
+  const weak = {}, done = {};
+  (o.weakTopics||[]).forEach(t=>weak[t]=true);
+  (o.done||[]).forEach(id=>done[id]=true);
+
+  const focus = (o.focus==="auto")
+      ? (o.band===1?"base":o.band===2?"mid":"hard")
+      : o.focus;
+
+  let pool;
+  if(o.grade==="高三"){
+    // 高三：一轮复习 = 覆盖全部高考模块，按档位与性价比排序
+    pool = MODULES.slice();
+  }else{
+    // 高一 / 高二：以本学期同步章序为准，只做顺序与取舍微调
+    const key = (o.grade==="高一")
+        ? (o.phase==="暑" ? "高一上" : "高一下")
+        : (o.phase==="暑" ? "高二上" : "高二下");
+    const order = SYNC[key] || [];
+    pool = order.map(id=>MODULES.find(m=>m.id===id)).filter(Boolean);
+    if(o.phase==="暑" && o.band<=2){        // 暑期预科：先补衔接计算
+      const link = MODULES.find(m=>m.id==="m41");
+      if(link) pool = [link].concat(pool);
+    }
+  }
+
+  // 去重（防止同一模块被重复纳入）
+  const seen = {};
+  pool = pool.filter(m=>{ if(seen[m.id]) return false; seen[m.id]=true; return true; });
+  pool = pool.filter(m=>!done[m.id]);
+
+  const score = (m)=>{
+    let s = 0;
+    if(o.band===1) s += ({1:30,2:24,3:6})[m.lv];
+    else if(o.band===2) s += ({1:26,2:32,3:14})[m.lv];
+    else s += ({1:16,2:30,3:34})[m.lv];
+    if(focus==="base") s += ({1:20,2:8,3:-16})[m.lv];
+    if(focus==="mid")  s += ({1:8,2:20,3:6})[m.lv];
+    if(focus==="hard") s += ({1:-6,2:16,3:26})[m.lv];
+    if(focus==="all")  s += 4;
+    if(m.tags.includes("送分题")) s += 6;
+    if(m.tags.includes("高频"))   s += 5;
+    if(m.tags.includes("计算"))   s += (o.band===1?12:4);
+    if(weak[m.topic] || weak[m.name]) s += 18;
+    if(o.grade==="高三" && m.g==="高一上") s -= 6;   // 高三优先中后段模块
+    if(o.grade==="高三" && m.g==="高二下") s += 3;
+    return s;
+  };
+
+  pool = pool.map(m=>({m, s:score(m)}));
+  pool.sort((a,b)=>b.s-a.s || b.m.lv-a.m.lv);
+  return pool.map(x=>x.m);
+}
+
+/* 逐次课表：把模块课时拆成「次」 */
+const LESSON_TYPES = [
+  {suf:"（概念与公式梳理）",
+   goalTpl:(m,th)=>`${m.name}核心概念与公式全部过关，基础题正确率${th}，公式默写零失误`,
+   contentExtra:"梳理核心概念、公式与定理，配基础题当堂过关"},
+  {suf:"（基础题型精讲）",
+   goalTpl:(m,th)=>`掌握${m.name}基础题型的标准解法，正确率${th}，解题步骤完整规范`,
+   contentExtra:"基础题型精讲 + 当堂模仿练习 + 步骤规范"},
+  {suf:"（中档题型突破）",
+   goalTpl:(m,th)=>`能独立解决${m.name}中档题型，正确率${th}，解题思路清晰`,
+   contentExtra:"中档题型方法归纳 + 变式题组训练"},
+  {suf:"（高阶与压轴）",
+   goalTpl:(m,th)=>`突破${m.name}高阶考法，压轴第一问稳拿，第二问得分率≥60%`,
+   contentExtra:"高阶考法与压轴模型拆解，多解法对比"},
+  {suf:"（易错点清零）",
+   goalTpl:(m,th)=>`${m.name}高频易错点清零，同类题正确率≥95%，重复性失分降到最低`,
+   contentExtra:"高频错题重做 + 同类变式巩固 + 易错清单"},
+  {suf:"（限时训练与阶段检测）",
+   goalTpl:(m,th)=>`限时完成${m.name}检测卷，正确率${th}，明确仍需补救的薄弱点`,
+   contentExtra:"限时小测 + 逐题讲评 + 错因归类"}
+];
+
+function buildLessons(alloc, o){
+  const rows = [];
+  alloc.forEach(({m,h})=>{
+    const lessons = Math.max(1, Math.round(h/2));
+    for(let i=0;i<lessons;i++){
+      const t = LESSON_TYPES[Math.min(i, LESSON_TYPES.length-1)];
+      const content = (i===0 && m.base) ? m.base : (i===1 && m.mid ? m.mid : (i>=2 && m.hard ? m.hard : t.contentExtra));
+      rows.push({
+        module:m,
+        stage:`${m.name}${t.suf}`,
+        content:content,
+        hours:2,
+        goal:t.goalTpl(m, BAND_TEXT[o.band].thresh)
+      });
+    }
+  });
+  return rows;
+}
+
+/* 把「目标总课时」严格摊到每一行（每行固定 2 课时）：
+   先按权重分，再按行粒度为 2 课时增减，循环校准直到合计精确等于目标 */
+function allocateRows(mods, totalHours){
+  const target = Math.max(1, Math.round(totalHours/2));   // 目标行数
+  const sum = mods.reduce((a,m)=>a+m.lv,0) || 1;
+  let counts = mods.map(m=>Math.max(1, Math.round(target*m.lv/sum)));
+  const adjust = ()=>{
+    let d = target - counts.reduce((a,b)=>a+b,0);
+    let guard = 0;
+    while(d !== 0 && guard++ < 500){
+      const idx = d>0 ? counts.indexOf(Math.min(...counts)) : counts.indexOf(Math.max(...counts));
+      counts[idx] += d>0?1:-1;
+      if(counts[idx] < 1){ counts[idx] = 1; }
+      d = target - counts.reduce((a,b)=>a+b,0);
+    }
+  };
+  adjust();
+  return mods.map((m,i)=>({m, h:counts[i]*2}));
+}
+
+/* 三轮节奏 */
+function threeRounds(o, totalHours){
+  const grade = o.grade;
+  if(grade!=="高三"){
+    return null;
+  }
+  if(o.totalHours>=100){
+    const r1=Math.round(totalHours*0.5/2)*2, r2=Math.round(totalHours*0.3/2)*2;
+    return [
+      {name:"一轮补基础", time:"第一阶段（约 50%）", hours:r1, focus:"地毯式过完所有板块，补齐基础漏洞，训练计算准确率"},
+      {name:"二轮抓题型", time:"第二阶段（约 30%）", hours:r2, focus:"按卷面题型专项突破，强化选填技巧与解答题规范"},
+      {name:"三轮练真题", time:"第三阶段（约 20%）", hours:totalHours-r1-r2, focus:"精练近五年真题与本地一模二模，限时模拟、查漏补缺"}
+    ];
+  }
+  return [
+    {name:"基础过关", time:"第一阶段（约 50%）", hours:Math.round(totalHours*0.5/2)*2, focus:"逐模块补齐基础，公式与题型模板固化"},
+    {name:"专项突破", time:"第二阶段（约 30%）", hours:Math.round(totalHours*0.3/2)*2, focus:"按题型专项训练，强化中档题得分能力"},
+    {name:"真题模拟", time:"第三阶段（约 20%）", hours:totalHours-Math.round(totalHours*0.5/2)*2-Math.round(totalHours*0.3/2)*2, focus:"真题与模拟卷限时训练，模拟考场节奏与取舍策略"}
+  ];
+}
+
+/* 提分目标分解（四层：题型 → 总分） */
+function targetBreakdown(ex, score, target){
+  const st = examStructure(ex);
+  const ratio = score/st.total, tratio = target/st.total;
+  const rows = [];
+  st.secs.forEach(s=>{
+    if(!s.total) return;
+    const cur = Math.round(s.total*ratio), tgt = Math.round(s.total*tratio);
+    rows.push([s.name, cur+" 分", Math.round((cur+tgt)/2)+" 分", tgt+" 分"]);
+  });
+  rows.push(["总分", score+" 分", Math.round((score+target)/2)+" 分", target+" 分"]);
+  return rows;
+}
+
+/* 时间校验 */
+function timeCheck(o){
+  const school = o.weeks*o.freq;
+  const holiday = o.holidayWeeks*o.freqH + o.national + o.holiday;
+  const capacity = school + holiday;
+  const need = Math.round(o.totalHours/2);
+  return {school, holiday, capacity, need,
+          ok: need <= capacity, gap: need - capacity};
+}
+
+/* 自检 */
+function selfCheck(o, plan){
+  const list = [];
+  const recHours = plan.rows.reduce((a,r)=>a+r.hours,0);
+  if(recHours === o.totalHours)
+    list.push(["ok","课时账目",`课表 ${plan.rows.length} 行 × 2 课时 = ${recHours} 课时，与设定的 ${o.totalHours} 课时一致`]);
+  else
+    list.push(["bad","课时账目",`课表合计 ${recHours} 课时 ≠ 设定 ${o.totalHours} 课时，请调整总课时或侧重方向`]);
+
+  const tc = timeCheck(o);
+  if(tc.ok) list.push(["ok","时间可行",`排课容量约 ${tc.capacity} 次课 ≥ 计划 ${tc.need} 次课（在校 ${o.weeks} 周×${o.freq} 次 + 假期 ${o.holidayWeeks} 周×${o.freqH} 次 + 节日加课 ${o.national+o.holiday} 次）`]);
+  else list.push(["bad","时间不足",`排课容量约 ${tc.capacity} 次课 < 计划 ${tc.need} 次课，还差约 ${tc.gap} 次；请提高频次、延长周期或下调总课时`]);
+
+  const mins = plan.flow.mins;
+  const need2 = Math.round(parseFloat(o.len)*60);
+  if(mins === need2) list.push(["ok","环节时长",`课堂环节合计 ${mins} 分钟，与单次 ${need2} 分钟完全吻合（${plan.flow.name}）`]);
+  else list.push(["warn","环节时长",`课堂环节合计 ${mins} 分钟，单次 ${need2} 分钟；请人工微调环节分配`]);
+
+  if(o.target > o.score) list.push(["ok","目标方向",`目标 ${o.target} 分 高于当前 ${o.score} 分，提升 ${o.target-o.score} 分；按每次课可持续提分 ${plan.rate} 分估算，约需 ${Math.ceil((o.target-o.score)/plan.rate)} 课时`]);
+  else list.push(["bad","目标方向",`目标分（${o.target}）不应低于或等于当前分（${o.score}）`]);
+
+  const needByRate = Math.ceil((o.target-o.score)/plan.rate);
+  if(needByRate <= o.totalHours*1.15) list.push(["ok","课时与目标匹配",`按 ${plan.rate} 分/课时的经验值，提 ${o.target-o.score} 分约需 ${needByRate} 课时，当前 ${o.totalHours} 课时基本够用`]);
+  else list.push(["warn","课时与目标匹配",`按经验值提 ${o.target-o.score} 分约需 ${needByRate} 课时，当前仅 ${o.totalHours} 课时，建议延长周期或下调目标 10–15 分`]);
+
+  const dup = {};
+  let dupFound = null;
+  plan.rows.forEach(r=>{const k=r.module.id; dup[k]=(dup[k]||0)+1;});
+  if(Object.keys(dup).length === plan.rows.map(r=>r.module.id).filter((v,i,a)=>a.indexOf(v)===i).length)
+    list.push(["ok","无重复排课","同一模块未被前后重复排入，阶段命名不重复"]);
+  else list.push(["warn","无重复排课","检测到模块重复，请检查"]);
+
+  const unquant = plan.rows.filter(r=>!/[≥≤]|不超过|正确率|得分率|满分|零失误/.test(r.goal));
+  if(!unquant.length) list.push(["ok","目标全部量化",`${plan.rows.length} 行教学目标全部含可验收指标（正确率 / 得分率 / 用时 / 分数阈值）`]);
+  else list.push(["warn","目标量化",`有 ${unquant.length} 行目标缺少量化指标，建议补上正确率或用时要求`]);
+
+  if(plan.rows.length && plan.rows[plan.rows.length-1].stage.includes("检测"))
+    list.push(["ok","检测落地","课表最后一行是限时训练与阶段检测，检测已落成课时"]);
+  else list.push(["warn","检测落地","课表末尾未安排检测课时，建议把承诺的检测节奏落成独立行"]);
+
+  list.push(["ok","可追溯细节",`已绑定考区「${EXAMS[o.exam].name}」与卷面结构，真题来源：${o.paper||"（待填）"}`]);
+  if(o.done && o.done.length) list.push(["ok","衔接校验",`已跳过 ${o.done.length} 个学校已完成模块，不重复排课`]);
+  else list.push(["warn","衔接校验","未标注学校已完成模块；若是插班或续报学生，建议核对上一份方案的已完成清单，避免冲突"]);
+
+  const versions = list.filter(x=>x[0]!=="ok").length;
+  list.push([versions?"warn":"ok","总体结论", versions? `有 ${versions} 项需要人工确认，处理后再交付家长` : "全部通过，可直接交付"]);
+  return list;
+}
+
+/* =========================================================================
+   六、主生成函数
+   ========================================================================= */
+function generate(o){
+  const ex = EXAMS[o.exam];
+  const st = examStructure(ex);
+  const band = bandOf(o.score);
+  o.band = band;
+  const bt = BAND_TEXT[band];
+  const rate = rateOf(band, o.grade, o.phase, o.score);
+  const flow = fitFlow((o.flow==="auto") ? autoFlow(o) : FLOWS[o.flow], o.len);
+
+  let mods = pickModules(o);
+  if(!mods.length) mods = [MODULES.find(m=>m.id==="m41")];
+  // 行数上限：总行数减去 2 行（综合模拟 + 机动）
+  const maxRows = Math.max(2, Math.round(o.totalHours/2) - 2);
+  if(mods.length > maxRows) mods = mods.slice(0, maxRows);
+  const alloc = allocateRows(mods, o.totalHours - 2);   // 预留 2 课时给综合检测
+
+  let rows = buildLessons(alloc, o);
+  // 逐行校准：不足则补行，超出则删行，保证合计精确等于设定课时
+  const want = Math.round((o.totalHours - 2)/2);
+  let guard = 0;
+  while(rows.length < want && guard++ < 500){
+    const base = rows[rows.length-1] || {module:mods[0]};
+    const m = base.module.id === "_final" ? mods[0] : base.module;
+    const t = LESSON_TYPES[LESSON_TYPES.length-1];
+    rows.push({module:m, stage:`${m.name}${t.suf}`, content:t.contentExtra, hours:2,
+               goal:t.goalTpl(m, BAND_TEXT[o.band].thresh)});
+  }
+  while(rows.length > want && rows.length > 1){ rows.pop(); }
+  // 合并相邻同名行，避免出现重复阶段名
+  const merged = [];
+  rows.forEach(r=>{
+    const last = merged[merged.length-1];
+    if(last && last.stage === r.stage){ last.hours += r.hours; }
+    else merged.push({...r});
+  });
+  rows = merged;
+
+  // 综合检测收尾
+  rows.push({
+    module:{id:"_final", name:"综合检测", topic:"应试技巧"},
+    stage:"综合模拟与查漏（限时套卷 + 错题总复习）",
+    content:`限时 120 分钟完成一套${ex.name}难度模拟卷，逐题精讲、错因归类，制定后续冲刺计划`,
+    hours:2,
+    goal:`全卷得分达到 ${o.target} 分，明确仍需补救的模块，形成个人最优答题与取舍方案`
+  });
+
+  const rounds = threeRounds(o, o.totalHours);
+  const plan = {o, ex, st, band, bt, rate, flow, rows, rounds,
+                targets: targetBreakdown(ex, o.score, o.target),
+                tc: timeCheck(o)};
+  plan.checks = selfCheck(o, plan);
+  return plan;
+}
+
+function autoFlow(o){
+  if(o.grade==="高一" || o.grade==="高二"){
+    if(o.phase==="暑" || o.phase==="秋" || o.phase==="春"){
+      return (o.band===1) ? FLOWS.f4 : FLOWS.f1;
+    }
+  }
+  if(o.grade==="高三"){
+    if(o.band===1) return FLOWS.f4;
+    if(o.band===2) return FLOWS.f2;
+    return FLOWS.f3;
+  }
+  if(o.band===1) return FLOWS.f4;
+  return FLOWS.f5;
+}
+
+/* =========================================================================
+   七、渲染
+   ========================================================================= */
+const $ = (s)=>document.querySelector(s);
+const $$ = (s)=>Array.from(document.querySelectorAll(s));
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+let CURRENT = null;
+
+function render(plan){
+  CURRENT = plan;
+  const o = plan.o, ex = plan.ex, st = plan.st, bt = plan.bt, band = plan.band, flow = plan.flow;
+  const h = [];
+  const name = o.name ? o.name + " " : "";
+
+  h.push(`<div class="doc" id="doc">`);
+  h.push(`<h1>锐满分辅导方案</h1>`);
+  h.push(`<div class="meta">${esc(o.campus||"")}${o.campus?" · ":""}学生监护人：＿＿＿＿＿＿　　日期：${new Date().toLocaleDateString("zh-CN")}　　版本：第 1 版</div>`);
+
+  /* 基本信息 */
+  const weekTxt = `${o.weeks} 周 × ${o.freq} 次/周` + (o.holidayWeeks?` ＋ 假期 ${o.holidayWeeks} 周 × ${o.freqH} 次/周`:"") + (o.national+o.holiday?` ＋ 节日加课 ${o.national+o.holiday} 次`:"");
+  h.push(`<table class="kv">
+    <tr><th>学员</th><td>${esc(name||"＿＿")}</td><th>年级</th><td>${o.grade}</td><th>学科</th><td>数学</td><th>教材版本</th><td>${esc(o.book)}</td></tr>
+    <tr><th>学管师</th><td>＿＿</td><th>咨询师</th><td>＿＿</td><th>校区/教师</th><td colspan="3">${esc(o.campus||"＿＿")}</td></tr>
+    <tr><th>考区卷种</th><td>${ex.name}</td><th>当前分数</th><td>${o.score} / ${st.total}</td><th>目标分数</th><td>${o.target} 分</td><th>辅导时间</th><td>${PHASE_TEXT[o.phase]}（${weekTxt}）</td></tr>
+  </table>`);
+
+  /* 卷面结构 */
+  h.push(`<h2>一、卷面结构与得分策略</h2>`);
+  h.push(`<p>本方案面向 <b>${ex.name}</b>。${esc(ex.note)}。卷面结构如下：</p>`);
+  h.push(`<table><thead><tr><th>题型</th><th class="c">题量</th><th class="c">分值</th><th class="c">合计</th><th class="c">学生当前预估得分</th></tr></thead><tbody>`);
+  st.secs.forEach(s=>{
+    if(!s.total) return;
+    h.push(`<tr><td>${s.name}</td><td class="c">${s.n} 题</td><td class="c">${s.per==null?"共 "+s.total+" 分":"每题 "+s.per+" 分"}</td><td class="c">${s.total} 分</td><td class="c">${Math.round(s.total*o.score/st.total)} 分</td></tr>`);
+  });
+  h.push(`<tr class="stage-row"><td>总分</td><td class="c">${st.secs.reduce((a,s)=>a+s.n,0)} 题</td><td class="c">—</td><td class="c">${st.total} 分</td><td class="c">${o.score} 分</td></tr>`);
+  h.push(`</tbody></table>`);
+
+  h.push(`<h3>难度分布与精力分配</h3>`);
+  const eBase = band===1?60:band===2?45:35, eMid = band===1?30:band===2?45:45, eHard = 100-eBase-eMid;
+  h.push(`<table><thead><tr><th>难度层级</th><th class="c">卷面占比</th><th class="c">对应分值</th><th class="c">本方案精力占比</th><th>主要分布与策略</th></tr></thead><tbody>
+    <tr><td>基础题</td><td class="c">约 ${st.b}%</td><td class="c">约 ${st.basePts} 分</td><td class="c">约 ${eBase}%</td><td>${band===1?"必须全部吃满，这是本阶段唯一稳定的得分盘":"必须零失误，作为总分的基本盘"}</td></tr>
+    <tr><td>中档题</td><td class="c">约 ${st.m}%</td><td class="c">约 ${st.midPts} 分</td><td class="c">约 ${eMid}%</td><td>${band===1?"争取拿到一半，重点训练固定题型模板":"主攻方向，是提分空间最大的部分"}</td></tr>
+    <tr><td>难题</td><td class="c">约 ${st.h}%</td><td class="c">约 ${st.hardPts} 分</td><td class="c">约 ${eHard}%</td><td>${band===3?"冲击常规压轴第一二问与步骤分":"只要求拿到第一问与步骤分，不盲目强攻"}</td></tr>
+  </tbody></table>`);
+  h.push(`<p><b>结论：</b>基础题与中档题合计约 <b>${st.basePts+st.midPts} 分</b>，是必须优先抓住的部分；难题只要求拿到第一问或步骤分。本方案的核心动作是——${bt.slogan}。</p>`);
+
+  /* 学情诊断 */
+  h.push(`<h2>二、学情诊断与提分目标</h2>`);
+  h.push(`<p>${esc(plan.diagText)}</p>`);
+  h.push(`<h3>提分目标分解（可验收）</h3>`);
+  h.push(`<table><thead><tr><th>题型 / 指标</th><th class="c">当前水平</th><th class="c">第一阶段目标</th><th class="c">最终目标</th></tr></thead><tbody>`);
+  plan.targets.forEach(r=>{h.push(`<tr><td>${r[0]}</td><td class="c">${r[1]}</td><td class="c">${r[2]}</td><td class="c">${r[3]}</td></tr>`);});
+  h.push(`</tbody></table>`);
+  h.push(`<p class="hint">说明：按每次课可持续提分 <b>${plan.rate} 分</b> 估算，提 ${o.target-o.score} 分约需 <b>${Math.ceil((o.target-o.score)/plan.rate)} 课时</b>；本方案共 ${o.totalHours} 课时。具体进度将根据月考成绩与掌握情况动态调整。</p>`);
+
+  /* 教学方法 */
+  h.push(`<h2>三、教学方法</h2>`);
+  h.push(`<p><b>（1）方案与总量。</b>本方案为${o.grade}${bt.level}方案，共 <b>${o.totalHours} 课时</b>（每次 ${o.len} 小时，按 2 课时/次计，共 ${o.totalHours/2} 次课），${weekTxt}。</p>`);
+  h.push(`<p><b>（2）学情诊断。</b>${esc(plan.diagText)}</p>`);
+  h.push(`<p><b>（3）取舍原则。</b>坚持“<b>${bt.principle}</b>”，${bt.give}；${bt.fight}。</p>`);
+  h.push(`<p><b>（4）课堂流程。</b>采用「${flow.name}」：${flow.items.map(x=>`${x[0]}（${x[1]} 分钟）`).join(" → ")}，合计 ${flow.mins} 分钟。${flow.desc}。${o.band===1?"每节课另设 <b>“计算过关”</b> 环节 15–20 分钟，针对求导、通分、联立、数列求和等高频计算反复训练至准确。":""}</p>`);
+  h.push(`<p><b>（5）课后闭环。</b>每次课后布置 ${bt.homework}，下次课前 5 分钟检查订正；${bt.errbook}；${bt.check}。每节课只安排 2–3 个核心知识点，配 5–8 道梯度练习，当堂批改或互评。</p>`);
+  h.push(`<p><b>（6）目标。</b>由当前 <b>${o.score} 分</b>提升至 <b>${o.target} 分</b>；其中基础题正确率 ${bt.thresh}，运算正确率 ${bt.opthr}，压轴题稳定拿到前两问步骤分。</p>`);
+
+  /* 阶段与课时分配 */
+  if(plan.rounds){
+    h.push(`<h2>四、复习阶段与课时分配</h2>`);
+    h.push(`<table><thead><tr><th>阶段</th><th class="c">时间</th><th class="c">课时</th><th>重点</th></tr></thead><tbody>`);
+    plan.rounds.forEach(r=>{h.push(`<tr><td>${r.name}</td><td class="c">${r.time}</td><td class="c">${r.hours}</td><td>${r.focus}</td></tr>`);});
+    h.push(`<tr class="stage-row"><td>合计</td><td class="c">—</td><td class="c">${plan.rounds.reduce((a,r)=>a+r.hours,0)}</td><td>—</td></tr>`);
+    h.push(`</tbody></table>`);
+  }
+  const secTitle = plan.rounds ? "五" : "四";
+  h.push(`<h2>${secTitle}、逐次课表</h2>`);
+  h.push(`<p>共 ${plan.rows.length} 次课 / ${plan.rows.reduce((a,r)=>a+r.hours,0)} 课时；每次课 2 课时。</p>`);
+  h.push(`<table><thead><tr><th style="width:24%">阶段（章节／单元／模块）</th><th style="width:36%">内容（包括阶段检测）</th><th class="c" style="width:8%">课时数</th><th style="width:32%">教学目标</th></tr></thead><tbody>`);
+  plan.rows.forEach((r,i)=>{
+    h.push(`<tr data-i="${i}"><td>${esc(r.stage)}</td><td>${esc(r.content)}</td><td class="c">${r.hours}</td><td>${esc(r.goal)}</td></tr>`);
+  });
+  h.push(`<tr class="stage-row"><td>合计</td><td>${plan.rows.length} 次课</td><td class="c">${plan.rows.reduce((a,r)=>a+r.hours,0)}</td><td>每次课 2 课时</td></tr>`);
+  h.push(`</tbody></table>`);
+
+  /* 检测与作业机制 */
+  h.push(`<h3>检测与作业机制</h3>`);
+  h.push(`<ul>
+    <li><b>检测节奏：</b>${bt.check}。</li>
+    <li><b>作业量：</b>${bt.homework}，强调按步骤书写，下次课前检查。</li>
+    <li><b>错题机制：</b>${bt.errbook}。</li>
+    <li><b>阶段复盘：</b>每模块结束做一次错因归类，把“概念不清／方法缺失／运算失误／审题遗漏／规范书写”分开统计，针对性补漏。</li>
+  </ul>`);
+
+  /* 自检 */
+  h.push(`<div class="checks"><h2>交付前自检</h2>`);
+  plan.checks.forEach(c=>{
+    const mark = c[0]==="ok"?"✓":c[0]==="warn"?"!":"×";
+    h.push(`<div class="chk ${c[0]}"><div class="dot">${mark}</div><div class="txt"><b>${c[1]}：</b>${esc(c[2])}</div></div>`);
+  });
+  h.push(`</div>`);
+
+  h.push(`</div>`);
+  $("#out").innerHTML = h.join("");
+}
+
+/* =========================================================================
+   八、导出 Word（HTML 格式 .doc，Word 可直接打开并另存为 .docx）
+   ========================================================================= */
+function exportWord(){
+  if(!CURRENT){toast("请先生成方案");return;}
+  const docHtml = $("#doc").outerHTML;
+  const css = `
+    body{font-family:"宋体",SimSun,serif;font-size:10.5pt;line-height:1.5;margin:2cm}
+    h1{font-family:"微软雅黑";font-size:16pt;text-align:center;color:#1f3864}
+    h2{font-family:"微软雅黑";font-size:12pt;color:#1f3864;border-left:4px solid #2e5496;padding-left:8px;margin-top:16pt}
+    h3{font-family:"微软雅黑";font-size:10.5pt;color:#2e5496;margin-top:10pt}
+    table{border-collapse:collapse;width:100%;font-size:9.5pt}
+    th,td{border:1px solid #808080;padding:4px 6px;vertical-align:top}
+    th{background:#dce6f1;text-align:center;font-weight:bold;font-family:"微软雅黑"}
+    td.c{text-align:center}
+    .stage-row td{background:#eef3fb;font-weight:bold}
+    .kv th{width:70pt;background:#f2f6fd;text-align:center}
+    .meta{text-align:center;font-size:9pt;color:#666}
+    .hint{font-size:9pt;color:#666}
+    .checks{page-break-before:auto;border-top:1px dashed #999;padding-top:10pt}
+    .chk{padding:2pt 0}
+    .chk .dot{display:none}
+    .tag{display:none}
+    ul{margin:4pt 0 4pt 0}
+  `;
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+  <head><meta charset="utf-8"><title>辅导方案</title>
+  <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom>
+  </w:WordDocument></xml><![endif]-->
+  <style>${css}</style></head><body>${docHtml}</body></html>`;
+
+  const nm = (CURRENT.o.name || "学生") + "-" + PHASE_TEXT[CURRENT.o.phase].replace(/[（(].*/,"") + "辅导方案.doc";
+  const blob = new Blob(["\ufeff", html], {type:"application/msword;charset=utf-8"});
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url; a.download = nm;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url); a.remove();}, 800);
+  toast("已导出：" + nm);
+}
+
+function toast(msg){
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(t._h);
+  t._h = setTimeout(()=>t.classList.remove("on"), 2200);
+}
+
+/* =========================================================================
+   九、界面绑定
+   ========================================================================= */
+/* 考区初始化 */
+(function initExams(){
+  const sel = $("#f-exam");
+  const order = [["bj","北京卷"],["nh1","新高考 I 卷"],["nh2","新高考 II 卷"],
+                 ["qg1","全国甲卷（理）"],["qg2","全国乙卷（理）"],["tj","天津卷"],["custom","其它 / 自定"]];
+  sel.innerHTML = order.map(([k,v])=>`<option value="${k}">${v}</option>`).join("");
+  sel.value = "nh1";
+})();
+
+/* 薄弱模块与已完成模块的选择条（点击或回车／空格切换，支持键盘操作） */
+(function initPills(){
+  const topics = [...new Set(MODULES.map(m=>m.topic))];
+  $("#f-weak").innerHTML = topics.map(t=>
+    `<span class="pill" role="button" tabindex="0" data-topic="${t}">${t}</span>`).join("");
+  const g3 = MODULES.filter(m=>m.g==="高三" || m.g==="高二上" || m.g==="高二下");
+  $("#f-done").innerHTML = g3.map(m=>
+    `<span class="pill" role="button" tabindex="0" data-id="${m.id}" title="${m.name}">${m.name}</span>`).join("");
+
+  document.addEventListener("click", e=>{
+    if(e.target.classList && e.target.classList.contains("pill")) e.target.classList.toggle("on");
+  });
+  document.addEventListener("keydown", e=>{
+    if((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("pill")){
+      e.preventDefault(); e.target.classList.toggle("on");
+    }
+  });
+})();
+
+function getWeak(){
+  return $$("#f-weak .pill.on").map(x=>x.dataset.topic);
+}
+function getDone(){
+  return $$("#f-done .pill.on").map(x=>x.dataset.id);
+}
+
+/* 读取参数 */
+function readForm(){
+  return {
+    name: $("#f-name").value.trim(),
+    grade: $("#f-grade").value,
+    phase: $("#f-phase").value,
+    exam: $("#f-exam").value,
+    book: $("#f-book").value,
+    campus: $("#f-teacher").value.trim(),
+    score: +$("#f-score").value,
+    target: +$("#f-target").value,
+    totalHours: +$("#f-hours").value,
+    len: $("#f-len").value,
+    freq: +$("#f-freq").value,
+    freqH: +$("#f-freqh").value,
+    weeks: +$("#f-wk").value,
+    holidayWeeks: +$("#f-wkh").value,
+    national: +$("#f-nat").value,
+    holiday: +$("#f-hol").value,
+    focus: $("#f-focus").value,
+    flow: $("#f-flow").value,
+    check: $("#f-check").value,
+    paper: $("#f-paper").value.trim(),
+    weakTopics: getWeak(),
+    done: getDone(),
+    note: $("#f-note").value
+  };
+}
+
+/* 实时提示 */
+function refreshHints(){
+  const o = readForm();
+  const band = bandOf(o.score);
+  const bt = BAND_TEXT[band];
+  const rate = rateOf(band, o.grade, o.phase, o.score);
+  $("#v-score").textContent = o.score + " / 150";
+  $("#v-target").textContent = o.target + " 分";
+  $("#v-hours").textContent = o.totalHours + " 课时";
+  $("#h-band").innerHTML = `档位：<b>${bt.band}</b>　|　建议每次课可持续提分：<b>${rate} 分</b>` +
+      (o.target>o.score ? `　|　提 ${o.target-o.score} 分约需 <b>${Math.ceil((o.target-o.score)/rate)}</b> 课时` : "");
+  $("#h-hours").textContent = `按每次课 2 课时计，共 ${Math.round(o.totalHours/2)} 次课；课表将自动分配到各模块并按难度加权。`;
+  const tc = timeCheck(o);
+  $("#h-time").textContent = `排课容量约 ${tc.capacity} 次课（在校 ${tc.school} + 假期 ${tc.holiday}）` +
+      (tc.ok ? `，可容纳计划的 ${tc.need} 次课。` : `，但计划需要 ${tc.need} 次课，还差约 ${tc.gap} 次。`);
+  $("#h-time").style.color = tc.ok ? "" : "#c0392b";
+}
+
+$$("#f-score,#f-target,#f-hours,#f-grade,#f-phase,#f-freq,#f-freqh,#f-wk,#f-wkh,#f-nat,#f-hol")
+  .forEach(el=>el.addEventListener("input", refreshHints));
+
+$("#btnGen").addEventListener("click", ()=>{
+  const o = readForm();
+  if(o.target <= o.score){ toast("目标分数需要高于当前分数"); return; }
+  const plan = generate(o);
+  plan.diagText = diagnosisText(o);
+  render(plan);
+  $("#out").scrollIntoView({behavior:"smooth", block:"start"});
+  toast("方案已生成：" + plan.rows.length + " 次课 / " + o.totalHours + " 课时");
+});
+
+$("#btnReset").addEventListener("click", ()=>{
+  location.reload();
+});
+
+/* 预设 */
+const PRESETS = {
+  gs1:{grade:"高三",phase:"秋寒",score:38,target:70,hours:120,freq:3,freqH:6,weeks:20,holidayWeeks:3,focus:"base",note:"高中知识体系断层严重，计算薄弱，做题无过程痕迹"},
+  gs2:{grade:"高三",phase:"秋寒",score:62,target:100,hours:120,freq:2,freqH:6,weeks:20,holidayWeeks:3,focus:"mid",note:"中档题型思路欠缺，计算偶尔失误，综合题无从下手"},
+  gs3:{grade:"高三",phase:"秋寒",score:105,target:125,hours:120,freq:2,freqH:6,weeks:20,holidayWeeks:3,focus:"hard",note:"套卷得分不稳定，压轴题得分率不高，步骤易扣分"},
+  g2s:{grade:"高二",phase:"秋",score:95,target:115,hours:60,freq:2,freqH:4,weeks:20,holidayWeeks:2,focus:"auto",note:"基础较好，不重复基础概念，直接针对校内进度中的中档题与易错题强化"},
+  g1p:{grade:"高一",phase:"暑",score:80,target:100,hours:60,freq:4,freqH:4,weeks:9,holidayWeeks:0,focus:"auto",note:"初中数学优异，暑期预科，强调概念讲透、运算准确"},
+  gap:{grade:"高三",phase:"春",score:65,target:95,hours:80,freq:3,freqH:5,weeks:14,holidayWeeks:0,focus:"base",note:"高考仅剩约 100 天，只抓送分题与固定题型模板"}
+};
+$$(".preset button").forEach(b=>b.addEventListener("click", ()=>{
+  const p = PRESETS[b.dataset.preset]; if(!p) return;
+  $("#f-grade").value = p.grade;
+  $("#f-phase").value = p.phase;
+  $("#f-score").value = p.score;
+  $("#f-target").value = p.target;
+  $("#f-hours").value = p.hours;
+  $("#f-freq").value = p.freq;
+  $("#f-freqh").value = p.freqH;
+  $("#f-wk").value = p.weeks;
+  $("#f-wkh").value = p.holidayWeeks;
+  $("#f-focus").value = p.focus;
+  $("#f-note").value = p.note;
+  refreshHints();
+  const o = readForm();
+  const plan = generate(o);
+  plan.diagText = diagnosisText(o);
+  render(plan);
+  toast("已套用预设：" + b.textContent);
+}));
+
+/* 编辑模式 */
+let EDIT = false;
+$("#btnEdit").addEventListener("click", ()=>{
+  if(!CURRENT){toast("请先生成方案");return;}
+  EDIT = !EDIT;
+  $("#doc").classList.toggle("editing", EDIT);
+  $("#editbar").style.display = EDIT ? "flex" : "none";
+  $$("#doc td").forEach(td=>{ td.contentEditable = EDIT ? "true" : "false"; });
+  toast(EDIT ? "编辑模式已开启" : "编辑模式已关闭");
+});
+$("#btnExitEdit").addEventListener("click", ()=>{ if(EDIT) $("#btnEdit").click(); });
+$("#btnAddRow").addEventListener("click", ()=>{
+  const tb = $("#doc table:last-of-type tbody, #doc table tbody");
+  const tables = $$("#doc table");
+  const t = tables[tables.length-1];
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td contenteditable="true">新增阶段</td><td contenteditable="true">填写内容</td><td class="c" contenteditable="true">2</td><td contenteditable="true">填写教学目标</td>`;
+  t.querySelector("tbody").insertBefore(tr, t.querySelector("tbody").lastElementChild);
+  toast("已新增一行");
+});
+$("#btnDelRow").addEventListener("click", ()=>{
+  const tables = $$("#doc table");
+  const t = tables[tables.length-1];
+  const body = t.querySelector("tbody");
+  const rows = body.querySelectorAll("tr");
+  if(rows.length > 1) { body.removeChild(rows[rows.length-2]); toast("已删除一行"); }
+});
+$("#btnPrint").addEventListener("click", ()=>window.print());
+$("#btnDoc").addEventListener("click", exportWord);
+
+/* 首次进入提示 */
+refreshHints();
+</script>
+</body>
+</html>
