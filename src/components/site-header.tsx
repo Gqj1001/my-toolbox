@@ -1,5 +1,7 @@
 import Link from "next/link";
 import SignOutButton from "@/components/sign-out-button";
+import { getMembership } from "@/lib/membership";
+import { PLAN_LABELS, remainingDays } from "@/lib/membership-types";
 
 type SiteHeaderProps = {
   email: string | null;
@@ -7,8 +9,14 @@ type SiteHeaderProps = {
   current?: string;
 };
 
-export default function SiteHeader({ email, role, current }: SiteHeaderProps) {
+export default async function SiteHeader({ email, role, current }: SiteHeaderProps) {
   const isAdmin = role === "admin";
+  const membership = await getMembership();
+  const days = remainingDays(membership.expiresAt);
+
+  // 会员已过期时按免费用户呈现，避免误解
+  const planExpired = membership.plan === "vip" && !membership.isVip;
+  const planLabel = planExpired ? `${PLAN_LABELS[membership.plan]}（已过期）` : PLAN_LABELS[membership.plan];
 
   const linkClass = (href: string) =>
     `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
@@ -19,7 +27,7 @@ export default function SiteHeader({ email, role, current }: SiteHeaderProps) {
 
   return (
     <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3 px-6 py-3">
+      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-3">
         <div className="flex items-center gap-1">
           <span className="mr-2 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             My Toolbox
@@ -37,19 +45,44 @@ export default function SiteHeader({ email, role, current }: SiteHeaderProps) {
           ) : null}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="hidden text-sm text-zinc-500 sm:inline dark:text-zinc-400">
             {email}
           </span>
+
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              membership.isVip
+                ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                : planExpired
+                  ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+                  : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+            }`}
+            title={membership.expiresAt ? `到期：${membership.expiresAt}` : undefined}
+          >
+            {planLabel}
+            {membership.isVip && days !== null ? ` · 剩 ${days} 天` : ""}
+          </span>
+
+          {!membership.isVip ? (
+            <Link
+              href="/upgrade"
+              className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-medium text-white transition hover:bg-amber-600"
+            >
+              开通会员
+            </Link>
+          ) : null}
+
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
               isAdmin
-                ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300"
                 : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
             }`}
           >
             {role}
           </span>
+
           <SignOutButton />
         </div>
       </div>

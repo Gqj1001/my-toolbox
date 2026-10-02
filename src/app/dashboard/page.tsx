@@ -1,8 +1,11 @@
+import Link from "next/link";
 import SignOutButton from "@/components/sign-out-button";
-import ToolGrid from "@/components/tool-grid";
 import SiteHeader from "@/components/site-header";
+import ToolGrid from "@/components/tool-grid";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
-import { getToolsForRole, TOOLS } from "@/lib/tools";
+import { getMembership } from "@/lib/membership";
+import { PLAN_LABELS, remainingDays } from "@/lib/membership-types";
+import { getToolViewsForMembership } from "@/lib/tools-db";
 
 const errorMessages: Record<string, string> = {
   admin_required: "该页面仅对 admin 角色开放，你没有访问权限。",
@@ -10,16 +13,24 @@ const errorMessages: Record<string, string> = {
 };
 
 export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
-  // 未登录用户到不了这里：src/proxy.ts 已经把它重定向到 /login
-  const { user, role } = await getCurrentUserWithRole();
+  // 未登录到不了这里：src/proxy.ts 会重定向到 /login；
+  // status='banned' 也会在 proxy 中拦到 /banned
+  const [membership, { user, role }] = await Promise.all([
+    getMembership(),
+    getCurrentUserWithRole(),
+  ]);
 
   const params = await searchParams;
   const errorKey = typeof params.error === "string" ? params.error : "";
   const errorMessage = errorMessages[errorKey];
 
-  const tools = getToolsForRole(role);
-  const isAdmin = role === "admin";
-  const hiddenCount = TOOLS.length - tools.length;
+  const tools = await getToolViewsForMembership(membership);
+  const lockedCount = tools.filter((t) => t.locked).length;
+  const days = remainingDays(membership.expiresAt);
+
+  // 会员已过期时，界面上按免费用户呈现，避免用户误以为仍是会员
+  const planExpired = membership.plan === "vip" && !membership.isVip;
+  const planLabel = planExpired ? `${PLAN_LABELS[membership.plan]}（已过期）` : PLAN_LABELS[membership.plan];
 
   return (
     <>
@@ -51,20 +62,36 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span
             className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-              isAdmin
+              membership.isVip
                 ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                : planExpired
+                  ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+                  : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
             }`}
           >
-            {isAdmin ? "管理员：可见全部工具" : "普通用户：仅可见已授权工具"}
+            {planLabel}
+            {membership.isVip && days !== null ? `（剩 ${days} 天）` : ""}
           </span>
           <span className="text-zinc-500 dark:text-zinc-400">
             共 {tools.length} 个工具
-            {!isAdmin && hiddenCount > 0 ? `（另有 ${hiddenCount} 个管理员专属工具已隐藏）` : ""}
+            {lockedCount > 0 ? `，其中 ${lockedCount} 个为会员专属` : ""}
           </span>
+          {!membership.isVip && lockedCount > 0 ? (
+            <Link
+              href="/upgrade"
+              className="rounded-full bg-amber-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-amber-600"
+            >
+              查看会员权益
+            </Link>
+          ) : null}
         </div>
 
         <ToolGrid tools={tools} />
+
+        <p className="text-xs text-zinc-400 dark:text-zinc-500">
+          工具清单来自数据库 tools 表（active=true，按 sort_order 排序），
+          最小会员等级 min_plan=vip 的工具需要会员才能进入。
+        </p>
       </main>
     </>
   );

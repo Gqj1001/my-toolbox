@@ -1,11 +1,18 @@
 import SiteHeader from "@/components/site-header";
 import ToolGrid from "@/components/tool-grid";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
-import { getToolsForRole } from "@/lib/tools";
+import { getMembership } from "@/lib/membership";
+import { PLAN_LABELS } from "@/lib/membership-types";
+import { getToolViewsForMembership } from "@/lib/tools-db";
 
 export default async function ToolsPage() {
-  const { user, role } = await getCurrentUserWithRole();
-  const tools = getToolsForRole(role);
+  const [membership, { user, role }] = await Promise.all([
+    getMembership(),
+    getCurrentUserWithRole(),
+  ]);
+
+  const tools = await getToolViewsForMembership(membership);
+  const lockedCount = tools.filter((t) => t.locked).length;
 
   return (
     <>
@@ -17,8 +24,9 @@ export default async function ToolsPage() {
             工具列表
           </h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            当前角色 <span className="font-medium">{role}</span>，共 {tools.length} 个可用工具。
-            本页与百宝箱使用同一份工具目录与权限规则。
+            当前会员等级 <span className="font-medium">{PLAN_LABELS[membership.plan]}</span>，
+            共 {tools.length} 个工具
+            {lockedCount > 0 ? `，其中 ${lockedCount} 个需要会员` : ""}。
           </p>
         </div>
 

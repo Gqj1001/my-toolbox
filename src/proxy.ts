@@ -1,32 +1,21 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { TOOLS } from "@/lib/tools";
 
 /** 无需登录即可访问的路径前缀 */
 const PUBLIC_PATHS = ["/login", "/signup", "/auth"];
 
 /**
- * 需要 admin 角色才能访问的路径。
- * 除固定的 /admin 外，还包括工具目录里标记为 access: "admin" 的工具，
- * 保证「目录声明的权限」与「服务端实际拦截」始终来自同一份数据。
+ * 被封禁用户仍可访问的路径。
+ * 必须包含 /banned 本身，否则会无限重定向。
  */
-const ADMIN_PATHS = [
-  "/admin",
-  ...TOOLS.filter((tool) => tool.access === "admin").map((tool) => tool.href),
-];
+const BANNED_ALLOWED_PATHS = ["/banned", "/login", "/logout", "/signup", "/auth"];
+
+/** 需要 admin 角色才能访问的路径前缀（工具级的会员要求在各页面与 Server Action 中判定） */
+const ADMIN_PATHS = ["/admin"];
 
 function matchesPath(pathname: string, paths: string[]) {
   return paths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
-
-/**
- * 工具静态资源说明（如 public/tools/math-plan.html）：
- *
- * 这类文件由 Next 的静态文件服务直接返回，proxy 会在其之前执行。
- * 由于它们不在 PUBLIC_PATHS 中，**未登录用户会被拦到登录页**，
- * 而已登录用户放行 —— 因此不需要额外的白名单逻辑，
- * 也就避免了「白名单被误用成免登录通道」这类问题。
- */
 
 /**
  * 应急管理员名单（可选）：逗号分隔的邮箱。
@@ -108,26 +97,42 @@ export default async function proxy(request: NextRequest) {
     return redirectTo(loginUrl);
   }
 
-  // 2) 已登录用户不必再看登录/注册页 -> 直接回主页面
+  // 2) 已登录用户不必再看登录/注册页 -> 直接回百宝箱
   if (user && (pathname === "/login" || pathname === "/signup")) {
     const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/";
+    homeUrl.pathname = "/dashboard";
     homeUrl.search = "";
 
     return redirectTo(homeUrl);
   }
 
-  // 3) 管理后台：必须是 admin
-  if (user && matchesPath(pathname, ADMIN_PATHS)) {
-    // 读取 user_roles（受 RLS "users read own role" 策略保护，只能读到自己那一行）
-    const { data, error } = await supabase
+  // 已登录用户：读取一次 user_roles，供封禁判定与管理员判定共用（一次查询）
+  let role: string | null = null;
+  let status: string | null = null;
+
+  if (user && !matchesPath(pathname, BANNED_ALLOWED_PATHS)) {
+    // 受 RLS "users read own role" 策略保护，只能读到自己那一行
+    const { data } = await supabase
       .from("user_roles")
-      .select("role")
+      .select("role, status")
       .eq("user_id", user.id)
       .maybeSingle();
 
-    // 出错时按最小权限处理（不放行），并允许应急名单兜底
-    const role = error ? null : data?.role;
+    role = data?.role ?? null;
+    status = data?.status ?? null;
+
+    // 3) 封禁拦截：status='banned' 的用户访问任何页面都跳到 /banned
+    if (status === "banned") {
+      const bannedUrl = request.nextUrl.clone();
+      bannedUrl.pathname = "/banned";
+      bannedUrl.search = "";
+
+      return redirectTo(bannedUrl);
+    }
+  }
+
+  // 4) 管理后台：必须是 admin（出错时按最小权限处理，并允许应急名单兜底）
+  if (user && matchesPath(pathname, ADMIN_PATHS)) {
     const allowed = role === "admin" || isBootstrapAdmin(user.email);
 
     if (!allowed) {
