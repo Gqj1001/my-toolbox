@@ -1,0 +1,2326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>课后反馈工作台 · 郭庆杰</title>
+<style>
+/* ==================== 设计变量 ==================== */
+:root{
+  --ink:#16202e; --ink2:#4a5a70; --ink3:#8494a8;
+  --line:#e3e9f2; --line2:#eef2f8;
+  --bg:#eef2f8; --card:#fff;
+  --brand:#1a6ce8; --brand-d:#1457c4; --brand-l:#e8f0fe; --brand-l2:#f3f7ff;
+  --ok:#0d904f; --ok-l:#e6f7ee;
+  --warn:#c77700; --warn-l:#fff5e6;
+  --bad:#c62828; --bad-l:#feeaea;
+  --purple:#7048e8; --purple-l:#f0ebff;
+  --r:14px; --r-sm:10px;
+  --sh:0 1px 2px rgba(16,32,64,.05), 0 6px 20px rgba(16,32,64,.06);
+  --sh2:0 2px 6px rgba(16,32,64,.08), 0 14px 40px rgba(16,32,64,.10);
+  --top:58px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font:14px/1.65 system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+button{cursor:pointer;border:none;background:none}
+
+/* ==================== 顶栏 ==================== */
+header{
+  height:var(--top);display:flex;align-items:center;gap:14px;padding:0 16px;
+  background:linear-gradient(100deg,#16233d,#1a6ce8);color:#fff;
+  position:sticky;top:0;z-index:60;box-shadow:0 2px 14px rgba(10,25,55,.22)
+}
+header .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;white-space:nowrap}
+header .brand .dot{
+  width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.2);
+  display:grid;place-items:center;font-size:14px
+}
+header .brand small{font-weight:400;font-size:11.5px;opacity:.72;margin-left:2px}
+header .spacer{flex:1}
+.hbtn{
+  padding:7px 13px;border-radius:9px;background:rgba(255,255,255,.14);
+  border:1px solid rgba(255,255,255,.26);color:#fff;font-size:13px;font-weight:500;
+  white-space:nowrap;transition:.15s
+}
+.hbtn:hover{background:rgba(255,255,255,.26)}
+.hbtn.pri{background:#fff;color:var(--brand-d);border-color:#fff;font-weight:700}
+.hbtn.pri:hover{background:#eef4ff}
+.hbtn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ==================== 布局 ==================== */
+.wrap{display:grid;grid-template-columns:330px 1fr;gap:16px;padding:16px;align-items:start;
+      max-width:1500px;margin:0 auto}
+
+/* 手机上显示的三个区块（桌面端三栏并排；≤1080px 改为单列纵向滚动，全部可见） */
+
+/* 移动端底部悬浮操作条 */
+.fabbar{display:none}
+
+.panel{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden}
+.panel>h2{
+  font-size:13.5px;font-weight:700;padding:11px 14px;border-bottom:1px solid var(--line);
+  color:var(--ink);display:flex;align-items:center;gap:7px;background:#fbfcfe
+}
+.panel>h2 .sp{margin-left:auto;font-weight:400;font-size:12px;color:var(--ink3)}
+.pad{padding:14px}
+
+/* 学生档案 */
+.stu-row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.stu-list{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:26px}
+.stu-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:20px;
+  border:1px solid var(--line);background:#fff;font-size:12.5px;transition:.15s
+}
+.stu-chip:hover{border-color:var(--brand);color:var(--brand)}
+.stu-chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.stu-chip .x{opacity:.5;font-size:14px;line-height:1}
+.stu-chip .x:hover{opacity:1;color:#ff8a8a}
+
+/* 表单 */
+.f{margin-bottom:9px}
+.f>label{display:block;font-size:11.5px;color:var(--ink3);margin-bottom:3px;font-weight:500}
+.f input,.f select,.f textarea{
+  width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);
+  background:#fdfefe;outline:none;transition:.15s
+}
+.f input:focus,.f select:focus,.f textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(26,108,232,.12)}
+.f textarea{resize:vertical;min-height:54px;line-height:1.55}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.f3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.tip{font-size:11.5px;color:var(--ink3);margin-top:5px;line-height:1.5}
+.tip.warn{color:var(--warn)}
+.tip.bad{color:var(--bad)}
+
+/* 按钮 */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:9px 16px;border-radius:22px;font-weight:600;font-size:13.5px;transition:.15s;
+  white-space:nowrap
+}
+.btn-pri{background:var(--brand);color:#fff;box-shadow:0 4px 12px rgba(26,108,232,.28)}
+.btn-pri:hover{background:var(--brand-d);transform:translateY(-1px)}
+.btn-ok{background:var(--ok);color:#fff;box-shadow:0 4px 12px rgba(13,144,79,.26)}
+.btn-ok:hover{filter:brightness(1.08)}
+.btn-out{background:var(--brand-l);color:var(--brand-d)}
+.btn-out:hover{background:#dbe9ff}
+.btn-gh{background:#f1f5fa;color:var(--ink2)}
+.btn-gh:hover{background:#e6ecf5}
+.btn-sm{padding:6px 12px;font-size:12.5px;border-radius:8px}
+.btn-xs{padding:4px 9px;font-size:11.5px;border-radius:7px}
+.btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+
+/* 细分类别块 */
+.cat{border:1px solid var(--line);border-radius:var(--r);margin-bottom:10px;overflow:hidden;background:#fff}
+.cat>summary{
+  padding:9px 12px;font-weight:700;font-size:13px;cursor:pointer;list-style:none;
+  display:flex;align-items:center;gap:8px;background:#fbfcfe;color:var(--ink)
+}
+.cat>summary::-webkit-details-marker{display:none}
+.cat>summary .arw{font-size:10px;color:var(--ink3);transition:.2s}
+.cat[open]>summary .arw{transform:rotate(90deg)}
+.cat>summary .cnt{
+  margin-left:auto;font-size:11px;font-weight:600;color:var(--brand);
+  background:var(--brand-l);padding:1px 8px;border-radius:10px
+}
+.cat>summary .cnt.zero{color:var(--ink3);background:#f1f5fa}
+.cat .body{padding:10px 12px 12px}
+.grid{display:flex;flex-wrap:wrap;gap:6px}
+.chip{
+  display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;
+  border:1px solid var(--line);background:#fff;font-size:12.5px;cursor:pointer;
+  transition:.13s;user-select:none;line-height:1.4
+}
+.chip:hover{border-color:var(--brand);background:var(--brand-l2)}
+.chip input{display:none}
+.chip:has(input:checked){background:var(--brand);border-color:var(--brand);color:#fff;font-weight:500}
+.chip:has(input:checked)::before{content:'✓ ';font-size:11px}
+
+/* 课本选择 */
+.bookbar{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:12.5px;color:var(--ink2)}
+.bookbar select{
+  flex:1;padding:6px 9px;border:1px solid var(--line);border-radius:var(--r-sm);background:#fff;outline:none
+}
+
+/* ==================== 预览区 ==================== */
+.preview{
+  min-height:260px;padding:18px 20px;font-size:14.5px;line-height:1.85;
+  white-space:pre-wrap;outline:none;word-break:break-word
+}
+.preview:empty::before{content:'左边选好参数、勾选关键词，点「生成反馈」，这里会实时出现内容，可直接点击修改。';color:var(--ink3)}
+.preview b{color:var(--brand-d)}
+.pv-head{
+  display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);
+  background:#fbfcfe;flex-wrap:wrap
+}
+.pv-head .name{font-weight:700;font-size:13.5px}
+.pv-head .meta{font-size:11.5px;color:var(--ink3)}
+.pv-head .spacer{flex:1}
+
+/* 字数统计 */
+.stat{font-size:11.5px;color:var(--ink3);padding:7px 14px;border-top:1px solid var(--line2);background:#fcfdff;
+      display:flex;gap:14px;flex-wrap:wrap}
+.stat b{color:var(--brand)}
+
+/* 空态 */
+.empty{padding:60px 24px;text-align:center;color:var(--ink3)}
+.empty .ico{font-size:38px;margin-bottom:12px;opacity:.5}
+.empty h3{color:var(--ink);font-size:15px;margin-bottom:8px}
+.empty ol{display:inline-block;text-align:left;margin-top:10px;font-size:13px;line-height:2;color:var(--ink2)}
+
+/* ==================== 弹层 ==================== */
+.mask{
+  position:fixed;inset:0;background:rgba(14,24,42,.5);z-index:100;
+  display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(2px)
+}
+.mask.on{display:flex}
+.modal{
+  background:#fff;border-radius:18px;box-shadow:var(--sh2);width:100%;max-width:620px;
+  max-height:88vh;display:flex;flex-direction:column;overflow:hidden
+}
+.modal>h3{
+  padding:15px 20px;border-bottom:1px solid var(--line);font-size:15px;display:flex;align-items:center;gap:8px
+}
+.modal>h3 .spacer{flex:1}
+.modal .mbody{padding:18px 20px;overflow-y:auto}
+.modal .mfoot{padding:13px 20px;border-top:1px solid var(--line);display:flex;gap:9px;justify-content:flex-end;background:#fbfcfe}
+
+/* 学生历史 */
+.hist{border-left:3px solid var(--brand-l);padding:8px 0 8px 12px;margin-bottom:12px}
+.hist .h{font-size:12px;color:var(--ink3);margin-bottom:4px;display:flex;gap:8px;align-items:center}
+.hist .t{font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:110px;overflow:hidden;
+         position:relative;line-height:1.6}
+.hist .t.open{max-height:none}
+.hist .more{font-size:12px;color:var(--brand);cursor:pointer;margin-top:3px;display:inline-block}
+
+/* 提示条 */
+.toast{
+  position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
+  background:#16202e;color:#fff;padding:11px 22px;border-radius:11px;font-size:13.5px;
+  opacity:0;pointer-events:none;transition:.25s;z-index:300;box-shadow:0 10px 30px rgba(0,0,0,.3);
+  max-width:88vw;text-align:center
+}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ==================== 移动端适配 ==================== */
+/* 桌面端：三栏并排
+   手机端：单列纵向流式滚动。刻意不使用任何 position:sticky，
+   避免吸顶元素与表单/标题重叠。 */
+#btnGenMobile{display:none}
+.mobilebar{display:none}
+.navJump{display:none}
+
+@media(max-width:1080px){
+  :root{--top:auto}
+  html{scroll-behavior:smooth}
+  body{padding:0}
+
+  /* 顶栏：去掉 sticky，跟着页面滚走，绝不遮挡内容 */
+  header{
+    position:static;height:auto;min-height:0;
+    padding:9px 12px;gap:8px;flex-wrap:wrap;align-items:center
+  }
+  header .brand{font-size:14px;gap:7px}
+  header .brand small{display:none}
+  header .brand .dot{width:22px;height:22px;font-size:12px}
+  #modeBadge{font-size:10px!important;padding:2px 7px!important}
+  .hbtn{padding:8px 12px;font-size:12.5px;border-radius:8px}
+  /* 手机顶栏只留：生成反馈 + 复制反馈（复制是发微信最常用的） */
+  #btnStudents,#btnExport{display:none}
+  #btnGenMobile{display:inline-flex;align-items:center;gap:4px;
+    background:#fff;color:var(--brand-d);border-color:#fff;font-weight:700}
+  #btnCopy{flex:0 0 auto}
+
+  /* 分段导航：不吸顶，就在顶栏下方，滚走即消失 */
+  .mobilebar{
+    display:flex;position:static;background:#fff;
+    border-bottom:1px solid var(--line);padding:0 4px;gap:0;overflow-x:auto;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none
+  }
+  .mobilebar::-webkit-scrollbar{display:none}
+  .mobilebar button{
+    flex:1 0 auto;padding:11px 8px;font-size:12.5px;font-weight:600;color:var(--ink3);
+    white-space:nowrap;border-bottom:2.5px solid transparent
+  }
+  .mobilebar button.on{color:var(--brand);border-bottom-color:var(--brand)}
+
+  /* 单列流式：三个区块依次排列，全部可见 */
+  .wrap{
+    display:block;max-width:none;margin:0;
+    padding:10px 10px calc(20px + env(safe-area-inset-bottom))
+  }
+  .col{display:block!important;margin-bottom:12px}
+  .col:last-child{margin-bottom:0}
+
+  /* 面板标题：普通静态标题，绝不再吸顶 */
+  .panel{border-radius:12px;overflow:visible}
+  .panel>h2{
+    position:static;top:auto;z-index:auto;
+    padding:11px 13px;font-size:13.5px;border-radius:12px 12px 0 0
+  }
+  .pad{padding:13px}
+
+  /* 表单：单列、够大好点、16px 防 iOS 自动缩放 */
+  .f{margin-bottom:12px}
+  .f>label{font-size:12px;margin-bottom:5px}
+  .f input,.f select,.f textarea{
+    padding:11px 12px;font-size:16px;border-radius:10px;line-height:1.35
+  }
+  .f2,.f3{display:block}
+  .f2>div,.f3>div{margin-bottom:12px}
+  .f2>div:last-child,.f3>div:last-child{margin-bottom:0}
+
+  .btn{padding:11px 16px;font-size:14px;border-radius:11px}
+  .btn-sm{padding:9px 14px;font-size:13px}
+  .btn-xs{padding:7px 11px;font-size:12.5px}
+  .btn-row{gap:8px}
+  /* 按钮按内容宽度排布，一行放不下自动换行，不强行拉伸成超宽按钮 */
+  .btn-row .btn{flex:0 1 auto;min-width:0}
+
+  /* 生成按钮：普通大按钮，不做悬浮 */
+  #btnGen{
+    width:100%;padding:15px;font-size:16px;border-radius:12px;
+    position:static;bottom:auto;margin-top:4px
+  }
+
+  /* 关键词 */
+  .chip{padding:9px 13px;font-size:13.5px;border-radius:18px}
+  .grid{gap:7px}
+  .cat>summary{padding:11px 12px;font-size:13.5px}
+  .cat .body{padding:11px 12px 13px}
+  .bookbar{flex-wrap:wrap;gap:6px}
+  .bookbar select{min-width:0;font-size:16px;padding:9px 10px}
+
+  /* 学生标签 */
+  .stu-list{gap:7px;min-height:0}
+  .stu-chip{padding:8px 12px;font-size:13px}
+  .stu-row{flex-wrap:wrap}
+  .stu-row input{font-size:16px!important;padding:11px 12px!important;min-width:0}
+  .stu-row .btn{flex:0 0 auto}
+
+  /* 预览区 */
+  .preview{padding:14px;font-size:15.5px;line-height:1.95;min-height:180px}
+  .pv-head{padding:10px 12px;gap:6px}
+  .pv-head .name{font-size:13px}
+  .pv-head .meta{display:none}
+  .pv-head .btn-xs{padding:6px 10px;font-size:12px}
+  .stat{gap:10px;font-size:11px;padding:8px 12px}
+  /* 手机上不需要的：导出 Word、打印 */
+  #btnExport2,#btnPrint{display:none}
+
+  /* 弹层：底部升起，符合手机习惯 */
+  .mask{padding:0;align-items:flex-end}
+  .modal{max-height:92dvh;border-radius:18px 18px 0 0;max-width:100%}
+  .modal>h3{padding:14px 16px;font-size:14.5px}
+  .modal .mbody{padding:16px}
+  .modal .mfoot{padding:12px 16px;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+
+  /* 提示语不挤 */
+  .tip{font-size:12px;line-height:1.55}
+}
+
+@media(max-width:420px){
+  header .brand{font-size:13px}
+  .hbtn{padding:7px 10px;font-size:12px}
+  .mobilebar button{padding:10px 6px;font-size:11.5px}
+  .wrap{padding:8px 8px calc(18px + env(safe-area-inset-bottom))}
+  .pad{padding:12px}
+  .chip{padding:8px 11px;font-size:13px}
+}
+
+@media print{
+  header,.mobilebar,.noprint,#btnGenMobile,.navJump{display:none!important}
+  .wrap{display:block;padding:0}
+  .panel{box-shadow:none;border-radius:0}
+  .panel>h2{position:static}
+  .preview{padding:0;font-size:12pt}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="dot">📋</span>
+    <span>课后反馈工作台<small>郭庆杰</small></span>
+    <span id="modeBadge" style="font-size:11px;padding:3px 9px;border-radius:10px;background:rgba(255,255,255,.2);font-weight:600">💾 本机版</span>
+  </div>
+  <div class="spacer"></div>
+  <button class="hbtn" id="btnGenMobile">✨ 生成反馈</button>
+  <button class="hbtn" id="btnStudents">👥 学生档案</button>
+  <button class="hbtn" id="btnExport">⬇ 导出 Word</button>
+  <button class="hbtn pri" id="btnCopy">📋 复制反馈</button>
+</header>
+
+<div class="mobilebar">
+  <button class="on" data-col="cSetup">① 学生与参数</button>
+  <button data-col="cKeys">② 选关键词</button>
+  <button data-col="cOut">③ 反馈结果</button>
+</div>
+
+<div class="wrap">
+  <!-- ==================== 左：参数 ==================== -->
+  <div class="col on" id="cSetup">
+    <div class="panel" style="margin-bottom:14px">
+      <h2>👤 当前学生 <span class="sp" id="curStuHint">未选择</span></h2>
+      <div class="pad">
+        <div class="stu-list" id="stuList"></div>
+        <div class="stu-row">
+          <input type="text" id="studentName" placeholder="输入学生姓名" autocomplete="off"
+                 style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:10px;outline:none">
+          <button class="btn btn-out btn-sm" id="btnSaveStu">保存档案</button>
+        </div>
+        <p class="tip">输入姓名后点「保存档案」，以后一点名字就自动带出科目、称呼、老师等信息。</p>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-bottom:14px">
+      <h2>⚙️ 反馈参数</h2>
+      <div class="pad">
+        <div class="f"><label>反馈类型</label><select id="templateSelect"></select></div>
+        <div class="f"><label>📅 日期或课时范围</label>
+          <input type="text" id="dateInput" placeholder="如 4月24日 或 3.16-20" autocomplete="off"></div>
+        <div class="f"><label>科目</label><select id="subjectSelect"></select></div>
+        <div class="f2">
+          <div class="f"><label>👥 称呼</label><select id="salutationSelect">
+            <option value="家长">家长</option><option value="妈妈">妈妈</option>
+            <option value="爸爸">爸爸</option><option value="同学">同学</option>
+          </select></div>
+          <div class="f"><label>👨‍🏫 落款</label>
+            <input type="text" id="teacherInput" placeholder="如 数学郭老师" autocomplete="off"></div>
+        </div>
+        <div class="f"><label>✍️ 开场白话术</label><select id="greetingTemplate"></select>
+          <p class="tip" id="greetPreview"></p>
+        </div>
+        <details class="cat" id="scoreBox">
+          <summary><span class="arw">▶</span>📊 成绩数据（考试/周测类填写）</summary>
+          <div class="body">
+            <div class="f3">
+              <div class="f"><label>得分</label><input type="text" id="scoreGet" placeholder="86"></div>
+              <div class="f"><label>总分</label><input type="text" id="scoreTotal" placeholder="150"></div>
+              <div class="f"><label>难度</label><select id="scoreDiff">
+                <option value="">不写</option><option>偏易</option><option>中等</option>
+                <option>中等偏上</option><option>偏难</option><option>计算量较大</option></select></div>
+            </div>
+            <div class="f2">
+              <div class="f"><label>小题得分 / 满分</label>
+                <input type="text" id="scoreSmall" placeholder="52 / 73"></div>
+              <div class="f"><label>大题得分 / 满分</label>
+                <input type="text" id="scoreBig" placeholder="34 / 77"></div>
+            </div>
+            <div class="f"><label>试卷名称</label>
+              <input type="text" id="scorePaper" placeholder="如 深圳市一模统考卷、2025全国二卷" autocomplete="off"></div>
+          </div>
+        </details>
+        <details class="cat">
+          <summary><span class="arw">▶</span>💬 补充说明（会写进反馈）</summary>
+          <div class="body">
+            <div class="f"><label>个性化说明 / 自定义段落</label>
+              <textarea id="extraNote" placeholder="如：本次课前测 78 分；下周五节课安排……（留空则不显示）"></textarea></div>
+            <div class="f"><label>结尾语</label><select id="closingSelect"></select></div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>🔧 数据</h2>
+      <div class="pad">
+        <div id="serverBox" style="display:none;margin-bottom:10px;padding:9px 11px;border-radius:10px;background:var(--brand-l2);border:1px solid var(--line)">
+          <div style="font-size:12.5px;color:var(--ink2)" id="serverLine">联网版</div>
+          <div style="font-size:12px;margin-top:4px" id="syncHint">—</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-gh btn-sm" id="btnServer">🔗 服务器与AI设置</button>
+          <button class="btn btn-gh btn-sm" id="btnResetKw">恢复默认关键词</button>
+          <button class="btn btn-gh btn-sm noprint" id="btnExportCfg">导出配置</button>
+          <button class="btn btn-gh btn-sm noprint" id="btnImportCfg">导入配置</button>
+        </div>
+        <input type="file" id="importFileInput" accept=".json" style="display:none">
+        <p class="tip">关键词、短语句、学生档案都存在本机浏览器里。换电脑时用「导出配置」搬运。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 中：关键词 ==================== -->
+  <div class="col" id="cKeys">
+    <div class="panel" style="margin-bottom:14px">
+      <h2>🏷️ 勾选关键词 <span class="sp" id="selCount">已选 0 项</span></h2>
+      <div class="pad" style="padding-bottom:6px">
+        <div class="btn-row noprint">
+          <button class="btn btn-out btn-sm" id="btnClearSel">清空选择</button>
+          <button class="btn btn-gh btn-sm" id="btnManage">管理关键词库</button>
+          <button class="btn btn-gh btn-sm" id="btnPhrases">常用短语</button>
+        </div>
+      </div>
+      <div class="pad" id="generateCategories" style="padding-top:4px"></div>
+    </div>
+  </div>
+
+  <!-- ==================== 右：反馈结果 ==================== -->
+  <div class="col" id="cOut">
+    <div class="panel">
+      <div class="pv-head">
+        <span class="name" id="pvName">反馈结果</span>
+        <span class="meta" id="pvMeta"></span>
+        <span class="spacer"></span>
+        <button class="btn btn-pri btn-xs" id="btnGen">✨ 生成反馈</button>
+        <button class="btn btn-ok btn-xs" id="btnPolish">✨ AI 润色</button>
+        <button class="btn btn-gh btn-xs" id="btnRestore">↺ 还原</button>
+      </div>
+      <div class="preview" id="resultText" contenteditable="true"></div>
+      <div class="stat">
+        <span>字数 <b id="stChars">0</b></span>
+        <span>已选关键词 <b id="stKws">0</b></span>
+        <span id="stHint"></span>
+      </div>
+      <div class="pad noprint" style="border-top:1px solid var(--line2)">
+        <div class="btn-row">
+          <button class="btn btn-out btn-sm" id="btnCopy2">📋 复制（保留换行）</button>
+          <button class="btn btn-gh btn-sm" id="btnCopyPlain">📄 复制纯文本</button>
+          <button class="btn btn-gh btn-sm noprint" id="btnExport2">⬇ 导出 Word</button>
+          <button class="btn btn-gh btn-sm" id="btnSaveHist">💾 存入该生记录</button>
+          <button class="btn btn-gh btn-sm noprint" id="btnPrint">🖨 打印</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>🕘 该生历史反馈 <span class="sp" id="histCount"></span></h2>
+      <div class="pad" id="histList"><p class="tip">生成反馈后点「存入该生记录」，这里会累积历史，方便对比孩子前后变化。</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 弹层：管理关键词 ==================== -->
+<div class="mask" id="maskManage">
+  <div class="modal">
+    <h3>⚙️ 管理关键词库 <span class="spacer"></span>
+      <button class="btn btn-gh btn-xs" data-close>关闭</button></h3>
+    <div class="mbody" id="manageCategories"></div>
+    <div class="mfoot">
+      <input type="text" id="newCategoryName" placeholder="新分类名称" style="flex:1;padding:8px 11px;border:1px solid var(--line);border-radius:10px;outline:none">
+      <button class="btn btn-pri btn-sm" id="addCategoryBtn">＋ 添加分类</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 弹层：常用短语 ==================== -->
+<div class="mask" id="maskPhrase">
+  <div class="modal">
+    <h3>💬 常用短语库 <span class="spacer"></span>
+      <button class="btn btn-gh btn-xs" data-close>关闭</button></h3>
+    <div class="mbody" id="phraseList"></div>
+    <div class="mfoot">
+      <input type="text" id="newPhraseInput" placeholder="新增短语" style="flex:1;padding:8px 11px;border:1px solid var(--line);border-radius:10px;outline:none">
+      <button class="btn btn-pri btn-sm" id="addPhraseBtn">＋ 添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 弹层：学生档案 ==================== -->
+<div class="mask" id="maskStudents">
+  <div class="modal">
+    <h3>👥 学生档案 <span class="spacer"></span>
+      <button class="btn btn-gh btn-xs" data-close>关闭</button></h3>
+    <div class="mbody" id="studentList"></div>
+    <div class="mfoot">
+      <button class="btn btn-gh btn-sm" id="btnClearStu">清空全部档案</button>
+      <button class="btn btn-pri btn-sm" id="btnAddStuFromModal">＋ 新建档案</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 弹层：AI ==================== -->
+<div class="mask" id="maskAI">
+  <div class="modal">
+    <h3>🤖 AI 润色设置 <span class="spacer"></span>
+      <button class="btn btn-gh btn-xs" data-close>关闭</button></h3>
+    <div class="mbody">
+      <div class="f"><label>🔑 API Key</label>
+        <input type="password" id="apiKeyInput" placeholder="sk-xxx" autocomplete="off"></div>
+      <div class="f"><label>🌐 API 地址（OpenAI 兼容）</label>
+        <input type="text" id="apiBaseInput" value="https://api.deepseek.com/v1"></div>
+      <div class="f"><label>🧠 模型名称</label>
+        <input type="text" id="modelNameInput" value="deepseek-chat"></div>
+      <div class="f"><label>✍️ 润色要求（可改）</label>
+        <textarea id="promptInput"></textarea></div>
+      <div class="btn-row">
+        <button class="btn btn-pri btn-sm" id="btnSaveApi">保存</button>
+        <button class="btn btn-out btn-sm" id="btnTestApi">测试连接</button>
+        <button class="btn btn-gh btn-sm" id="btnClearApi">清除</button>
+      </div>
+      <p class="tip">配置只保存在本机浏览器，不会上传到任何地方。数据会直接发给上面填的 API 地址。</p>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ==================== 弹层：访问口令 ==================== -->
+<div class="mask" id="maskPass">
+  <div class="modal" style="max-width:400px">
+    <h3>🔒 需要访问口令</h3>
+    <div class="mbody">
+      <div class="f"><label>请输入老师提供的访问口令</label>
+        <input type="password" id="passInput" placeholder="访问口令" autocomplete="off"></div>
+      <p class="tip">口令只保存在本次浏览器会话中，关闭浏览器后需要重新输入。</p>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-pri btn-sm" id="btnPassOk">进入</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 弹层：服务器与AI设置 ==================== -->
+<div class="mask" id="maskServer">
+  <div class="modal">
+    <h3>🔗 服务器与 AI 设置 <span class="spacer"></span>
+      <button class="btn btn-gh btn-xs" data-close>关闭</button></h3>
+    <div class="mbody">
+      <div id="serverModeInfo" style="padding:10px 12px;border-radius:10px;background:var(--brand-l2);margin-bottom:14px;font-size:12.5px"></div>
+
+      <div class="f"><label>🔑 管理员口令（保存公共关键词库时需要）</label>
+        <input type="password" id="writeTokenInput" placeholder="服务器上设置的 ADMIN_TOKEN" autocomplete="off"></div>
+      <p class="tip">只有你自己知道这个口令。填对后，你的关键词改动会保存到服务器，所有学生刷新页面就能看到最新的关键词库。</p>
+
+      <hr style="margin:16px 0;border:0;border-top:1px solid var(--line)">
+
+      <div class="f"><label>🤖 服务器端 API Key（配置后所有用户都能用 AI 润色）</label>
+        <input type="password" id="serverKeyInput" placeholder="sk-xxx" autocomplete="off"></div>
+      <div class="f2">
+        <div class="f"><label>API 地址</label>
+          <input type="text" id="serverBaseInput" placeholder="https://api.deepseek.com/v1"></div>
+        <div class="f"><label>模型名称</label>
+          <input type="text" id="serverModelInput" placeholder="deepseek-chat"></div>
+      </div>
+      <div class="f"><label>润色提示词</label>
+        <textarea id="serverPromptInput"></textarea></div>
+      <p class="tip warn" id="keySafeHint">⚠ Key 只保存在服务器上，网页源码里不会有它，学生看不到也拿不走。</p>
+      <div class="btn-row">
+        <button class="btn btn-pri btn-sm" id="btnSaveServer">保存到服务器</button>
+        <button class="btn btn-gh btn-sm" id="btnReloadFromServer">从服务器拉取最新</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function(){
+
+/* ==========================================================================
+   0. 存储键（沿用你原来的键名，保证旧关键词不丢）
+   ========================================================================== */
+const STORAGE_KEY = 'feedback_builder_data_v5';
+const PHRASE_KEY  = 'feedback_phrases_v5';
+const API_KEY     = 'feedback_api_cfg_v5';
+const STU_KEY     = 'feedback_students_v1';
+const HIST_KEY    = 'feedback_history_v1';
+
+/* ==========================================================================
+   0.5 服务器适配层（关键）
+   --------------------------------------------------------------------------
+   · 离线双击打开      → MODE='local'，数据存本机 localStorage，AI 用自己的 Key
+   · 部署到服务器打开  → MODE='server'，关键词库全员共享、AI Key 只存在服务器
+   同一份 HTML 两种模式自动切换，无需改代码。
+   ========================================================================== */
+const API = { mode:'local', isAdmin:false, serverCfg:{}, writeToken:'' };
+
+/* 集成到 Next 应用时使用内置接口；离线双击打开仍是 local 模式。
+   注意：iframe 加载的是 /tools/feedback.html，因此用 startsWith 匹配前缀，
+   让 /tools/feedback 与 /tools/feedback.html 都识别为云端模式。 */
+const NEXT_MODE = (location.protocol === 'http:' || location.protocol === 'https:')
+  && location.pathname.replace(/\/+$/,'').startsWith('/tools/feedback');
+
+async function apiFetch(path, opts){
+  const o = Object.assign({credentials:'same-origin'}, opts||{});
+  if(o.body && typeof o.body === 'object' && !(o.body instanceof FormData)){
+    o.headers = Object.assign({'Content-Type':'application/json'}, o.headers||{});
+    o.body = JSON.stringify(o.body);
+  }
+  // 带上学生访问口令（如果服务器设置了的话）
+  const p = getAccessPass();
+  if(p) o.headers = Object.assign({'x-fb-pass': p}, o.headers||{});
+
+  const r = await fetch(path, o);
+  if(r.status === 401){
+    let need = true;
+    try{ const d = await r.clone().json(); need = d.needPass !== false; }catch(e){}
+    if(need) askAccessPass();
+  }
+  if(!r.ok) throw new Error('接口 '+path+' 返回 '+r.status);
+  return r.json();
+}
+
+/* 学生访问口令（服务器设了 ACCESS_PASS 时才会用到） */
+function getAccessPass(){
+  try{ return sessionStorage.getItem('fb_pass') || ''; }catch(e){ return ''; }
+}
+function setAccessPass(v){
+  try{ v ? sessionStorage.setItem('fb_pass', v) : sessionStorage.removeItem('fb_pass'); }catch(e){}
+}
+let _passAsked = false;
+function askAccessPass(){
+  if(_passAsked) return;
+  _passAsked = true;
+  const m = document.getElementById('maskPass');
+  if(m){ m.classList.add('on'); const i = document.getElementById('passInput'); if(i) i.focus(); }
+  else{
+    const v = prompt('请输入访问口令：');
+    if(v){ setAccessPass(v); location.reload(); }
+  }
+}
+
+/* 探测是否运行在服务器上 */
+function detectServer(){
+  // 集成到 Next 应用：走内置接口，数据存 Supabase
+  if(NEXT_MODE){
+    API.mode = 'next';
+    return fetch('/api/feedback/data', {credentials:'same-origin'})
+      .then(r=>r.ok ? r.json() : null)
+      .then(d=>{
+        if(d && d.ok){
+          API.isAdmin = !!d.isAdmin;
+          return true;
+        }
+        return false;
+      })
+      .catch(()=>false);
+  }
+  // 非 http/https（即 file:// 双击打开）直接判定为离线模式
+  if(location.protocol !== 'http:' && location.protocol !== 'https:') return Promise.resolve(false);
+  return apiFetch('api/mode').then(d=>{
+    if(d && d.ok){
+      API.mode = 'server';
+      API.isAdmin = !!d.isAdmin;
+      API.serverCfg = d.config || {};
+      return true;
+    }
+    return false;
+  }).catch(()=>false);
+}
+
+/* 把整份数据发布到服务器（全员共享） */
+function publishData(){
+  if(API.mode !== 'server') return Promise.resolve(false);
+  const payload = { data: allData, phrases: phrases, writeToken: getWriteToken() };
+  return apiFetch('api/data', {method:'PUT', body:payload})
+    .then(()=>{ toast('已保存到服务器，所有人刷新后都能看到'); return true; })
+    .catch(e=>{ toast('保存失败：'+e.message, 3000); return false; });
+}
+function getWriteToken(){
+  if(API.writeToken) return API.writeToken;
+  try{ return sessionStorage.getItem('fb_write_token') || ''; }catch(e){ return ''; }
+}
+function setWriteToken(t){
+  API.writeToken = t || '';
+  try{ sessionStorage.setItem('fb_write_token', API.writeToken); }catch(e){}
+}
+
+/* ==========================================================================
+   1. 科目与课本知识点（沿用你原有的数学大纲，并按你真实反馈补充）
+   ========================================================================== */
+const SUBJECTS = [
+  ['math','数学'],['english','英语'],['chinese','语文'],['physics','物理'],
+  ['history','历史'],['politics','政治'],['chemistry','化学'],['general','通用']
+];
+const SUBJECT_NAME = {math:'数学',english:'英语',chinese:'语文',physics:'物理',
+  history:'历史',politics:'政治',chemistry:'化学',general:''};
+
+const MATHEMATICS_BOOKS = [
+  {name:'必修第一册', topics:['集合的概念与关系','集合的基本运算','充分条件与必要条件','全称量词与存在量词','等式与不等式性质','基本不等式','二次函数与方程、不等式','函数概念与表示','函数的单调性、奇偶性、周期性','幂函数','函数的应用（一）','指数与对数运算','指数函数','对数函数','函数的应用（二）','任意角与弧度制','三角函数概念','诱导公式','三角函数图像与性质','三角恒等变换','函数 y=Asin(ωx+φ) 模型及其应用']},
+  {name:'必修第二册', topics:['平面向量的概念及运算','平面向量基本定理与坐标表示','平面向量的应用','正弦定理、余弦定理','解三角形常见题型-极值最值','解三角形常见题型-角平分线与中线','复数概念','复数四则运算','基本立体图形及其直观图','斜二测画法','空间几何体的表面积、体积','空间点、线、面之间的位置关系','线面平行与垂直判定','面面平行与垂直判定','随机抽样','用样本估计总体','随机事件与概率','事件独立性','频率与概率']},
+  {name:'选择性必修第一册', topics:['空间向量运算','空间向量及其运算的坐标表示','空间向量的应用','直线的方程','圆的方程','直线与圆的位置关系','椭圆','双曲线','抛物线','直线与圆锥曲线的综合应用','圆锥曲线定点定值','圆锥曲线范围最值']},
+  {name:'选择性必修第二册', topics:['数列的概念与简单表示','等差数列及其前n项和','等比数列及其前n项和','数列求和','裂项相消','错位相减','数列与不等式综合','导数概念与几何意义','导数运算','导数的应用——函数的单调性','导数的应用——函数的极值','导数的应用——函数的最值','导数恒成立问题','导数零点问题','导数隐零点与极值点偏移']},
+  {name:'选择性必修第三册', topics:['分类加法与分步乘法计数原理','排列与组合','二项式定理','条件概率与全概率公式','离散型随机变量','二项分布','超几何分布','正态分布','相关关系','回归分析','独立性检验']},
+  {name:'高考专题与真题', topics:['近五年高考真题精讲','历年高考卷选择题','历年高考卷大题','周测卷讲解','月考试题讲解分析','一模试卷讲解','二模试卷讲解','省市级模拟卷精讲','选填压轴题专项','多选题专项','解答题规范书写','答题时间分配与取舍','极化恒等式','等和线','外接球与内切球','错题总结与重做']}
+];
+
+/* ==========================================================================
+   2. 默认关键词库（保留你的全部原有内容，按反馈写作顺序重排并补充）
+   ========================================================================== */
+const KW = {
+  /* 课堂内容 */
+  content: ['平面向量','解三角形','正弦定理、余弦定理','复数','立体几何初步','空间几何体的表面积体积','线面平行与垂直判定','面面平行与垂直判定','空间向量','直线的方程','圆的方程','直线与圆的位置关系','椭圆','双曲线','抛物线','圆锥曲线综合','数列','等差数列','等比数列','数列求和','导数','导数与单调性','导数与极值最值','导数恒成立与零点','集合与常用逻辑用语','一元二次不等式','基本不等式','函数的概念与性质','函数的单调性、奇偶性、周期性','指数函数','对数函数','幂函数','函数零点与图像','三角函数','诱导公式','三角恒等变换','三角函数图像与性质','概率','古典概型','条件概率','全概率公式','离散型随机变量分布列','二项分布','超几何分布','统计与抽样','频率分布直方图','回归分析与独立性检验','排列组合','二项式定理','高考真题精讲','周测卷讲解','月考试题讲解','一模试卷讲解','二模试卷讲解','错题重做与总结'],
+  /* 课堂表现（正面） */
+  positive: ['认真听讲','积极发言','互动良好','紧跟课堂节奏','认真整理笔记','学习态度端正','做题认真沉得下心','有上进心','能主动提问','课堂专注认真','学习状态良好','执行力强','接受度较好','理解到位','知识掌握扎实','进步明显','能够独立完成','课上状态很好','学习很认真','愿意动笔练习','能复述解题过程','提问时能准确回答','作业完成情况好','学习习惯良好','自信心提升'],
+  /* 课堂表现（需改进） */
+  improve: ['偶尔走神','需要更专注','互动不积极','作业完成情况不好','课下复习不到位','学习状态下降','笔记需要提醒才记','不怎么看笔记','做题较慢','审题不够细致','计算粗心','计算能力弱','基础知识点掌握不够扎实','知识遗忘较快','存在畏难情绪','不够自信','思路不够清晰','综合运用易失误','大题不愿意动笔','做题顺序不合理','遇难题死磕耗时','课下练习量不足','错题不复盘','考试时心态紧张','解题步骤不规范','题目条件看错','时间分配不合理','中档题得分不稳定','选填速度偏慢','压轴题直接放弃'],
+  /* 知识掌握评价 */
+  mastery: ['概念清晰','理解到位','进步明显','公式不熟','需要巩固','基础掌握扎实','基础较差','做题正确率高','能够独立完成','掌握情况良好','选填部分较稳定','大题第一问能拿分','中档题掌握不牢','知识体系尚未成型','对考点把握准确','知识迁移能力较强','新题型适应能力有待提升','对课本知识不熟悉'],
+  /* 改进建议 */
+  advice: ['多练口算','整理错题','加强复习','注意书写','强化审题能力','精准抓取题干关键条件','熟记公式','夯实基础','多动手练习','调整做题顺序','限时训练','课下加大投入时间','刷题巩固知识点','多看错题本','吃透基础题型','复习讲过的知识','调整学习状态','定下心揣摩条件步骤','先易后难保证基础分','每天限时练一份小题','把大题第一问写全','按模块整理易混概念','建立答题模板','回归课本补漏洞','做题后即时复盘'],
+  /* 分层建议 */
+  adviceTier: ['现阶段先保证基础题零失误','中档题是提分的主要空间','压轴题只要求拿第一问和步骤分','选填争取 40 分钟内完成','把该拿的分稳稳拿到手','稳住已会内容、减少马虎失分','先把会做的题做完再回头攻坚','按高考评分标准规范书写步骤'],
+  /* 作业布置 */
+  homework: ['复习讲过的题目','完成讲义剩余部分','整理错题并分析原因','背诵公式','熟记判定定理','完成学校配套练习','整理笔记并复习','完成高考真题练习','限时完成小题训练','错题重做一遍','完成专项练习册','预习下节内容','整理本次测验错题','补齐落下的作业'],
+  /* 下节课内容 */
+  next: ['继续当前专题','新知识讲解','综合练习','错题精讲','数列综合问题','三角函数恒等变换','平面向量的坐标表示','立体几何证明','圆锥曲线综合','概率统计大题','导数专题','周测卷大题部分讲解','限时套卷训练','模块总复习']
+};
+
+/* 其他科目的关键词（保留原样并小幅补充） */
+const OTHER = {
+  english:{ content:['谓语动词时态','被动语态','非谓语动词','定语从句','状语从句','名词性从句','应用文写作','读后续写','语法填空','阅读理解','完形填空','七选五','作文句式梳理','长难句分析','不规则动词','时态综合复习','一模试卷讲解','单词背诵检查'],
+    positive:['积极回答问题','笔记整理非常好','知识吸收有进步','能主动提问','课上状态很好','背诵完成度高','造句积极','理解能力不错','学习态度端正','进步明显'],
+    improve:['单词背诵不足','作业未补完','知识点遗忘较多','长句书写有语法问题','笔记未及时复习','固定表达不熟','需要加强自主练习','句子成分分析不熟','中文思路直译成英文'],
+    mastery:['语法框架逐渐清晰','词汇量仍需扩充','阅读定位能力提升','书写规范性提高'],
+    advice:['背诵勾画句子','整理范文并背诵','多练习长难句','复习笔记内容','加强单词默写','及时完成作业','背熟不规则动词变化','课上多开口造句','坚持每日单词背诵'],
+    adviceTier:['作文先保证内容完整再追求句式','阅读先定位关键信息再全篇翻译'],
+    homework:['背诵讲解过的作文','完成单词默写练习册','整理范文并背诵','背诵不规则动词变化','完成勾画题目','整理笔记并复习'],
+    next:['作文专题','阅读梳理','续写梳理','定语从句','非谓语动词综合','语法填空技巧'] },
+  chinese:{ content:['病句辨析与修改','论证方法','论证思路','现代文阅读','古诗文鉴赏','作文写作','文言文翻译','语言运用','真题精讲','答题框架梳理'],
+    positive:['专注认真','进步明显','正确率高','课堂状态积极','辨析题掌握扎实','能跟随步骤完成练习','态度端正'],
+    improve:['初次接触不够熟练','答题尚不熟练','需要强化规范作答','部分知识点遗忘'],
+    mastery:['对历年真题把握较好','主观题框架初步建立'],
+    advice:['严格套用答题框架','复习知识框架','多做专项练习','巩固所学内容','加强规范作答训练'],
+    adviceTier:['主观题先搭框架再填充内容'],
+    homework:['完成病句专项练习','完成论证方法练习题','复习知识框架','套用答题框架作答'],
+    next:['继续阅读专项','作文训练','下一专题讲解','综合练习'] },
+  physics:{ content:['动能定理','平抛运动','板块模型','圆周运动','机械能守恒','动量定理','电场强度','电势差','闭合电路欧姆定律','磁场','电磁感应','月考试题讲解','模型综合复习'],
+    positive:['认真听讲做笔记','基础没有问题','思路正确','能复述解题过程','学习很努力','整理笔记认真'],
+    improve:['审题不认真','看错题目条件','模型掌握不清楚','不够自信','知识串联不足','综合性知识掌握不到位','模型要点遗漏','应试心理紧张'],
+    mastery:['基础模型掌握到位','综合题串联能力待提升'],
+    advice:['仔细审题圈关键信息','巩固模型解题思路','增强练习提升自信','从问题出发列方程','多做综合练习','整理错题思路方法','举反例排除错误选项'],
+    adviceTier:['先判断题干问的是什么再列式','把模型里的每个要点都过一遍'],
+    homework:['整理错题及思路','完成月考试卷','复习模型要点','完成专项练习'],
+    next:['综合复习','下一章节预习','错题精讲','模型专题'] },
+  history:{ content:['殖民体系','一战','二战','冷战','亚非拉民族运动','苏联社会主义建设','二轮专题复习','选择题专项练习','材料大题训练'],
+    positive:['紧跟课堂节奏','认真整理笔记','配合完成背诵','学习状态稳定','能跟上复习节奏','知识落实到位','能联系现实活学活用'],
+    improve:['课下背诵懈怠','作业完成度不足','存在畏难情绪','主动动笔意愿弱','答题熟练度不足','选择题正确率起伏'],
+    mastery:['一轮复习已系统完成','阶段特征识记较好','材料题框架待搭建'],
+    advice:['加强课下背诵','认真完成作业','克服畏难情绪','多动笔练习','建立答题自信心','从短句作答入手搭框架'],
+    adviceTier:['材料题先搭框架再填充史实'],
+    homework:['背诵材料题标准答案','背诵历史阶段特征','抄写阶段特征','补齐选择题练习'],
+    next:['二轮专题继续','主观题分层训练','高考真题精讲'] },
+  politics:{ content:['哲学概况','唯物论','辩证法','联系观','发展观','矛盾观','创新观','物质与意识','规律客观性','意识能动作用','马克思主义哲学'],
+    positive:['专注认真','态度端正','紧跟老师思路','主动标记重难点','笔记整理规范完整','理解到位','学习状态积极高效'],
+    improve:['原理对应记忆需强化','结合例题不够熟练','需要提升解题能力'],
+    mastery:['哲学框架掌握扎实','原理关系理解到位'],
+    advice:['回顾笔记强化记忆','强化原理与方法论对应','结合典型例题巩固理解'],
+    adviceTier:['背原理时必须连带方法论一起记'],
+    homework:['回顾课堂笔记','强化原理记忆','完成配套练习'],
+    next:['辩证法深入','认识论','历史唯物主义','综合练习'] },
+  chemistry:{ content:['离子反应','离子共存','氧化还原反应','化学平衡','电化学','元素化合物','有机化学','测试题讲解'],
+    positive:['课堂表现积极','有上进心','学习态度值得肯定','能主动提出问题','有一定认知基础'],
+    improve:['部分问题偏离考点','做题偶尔犯懒','审题不够细致','计算缺乏严谨','基础知识点掌握不够扎实'],
+    mastery:['基础离子组知识有一定认知','综合应用存在漏洞'],
+    advice:['强化审题能力','精准抓取题干条件','熟记常见离子组知识点','夯实基础','计算过程认真严谨'],
+    adviceTier:['先判断反应类型再写方程式'],
+    homework:['整理测验错题','分析错误原因','预习下一专题'],
+    next:['下一专题讲解','综合练习','错题回顾'] },
+  general:{ content:['知识点讲解','习题练习','试卷讲评','专题复习','综合训练','知识梳理'],
+    positive:['认真听讲','积极发言','互动良好','态度端正','进步明显','学习状态好'],
+    improve:['偶尔走神','需要更专注','积极性有待提高','作业完成不理想'],
+    mastery:['基础掌握尚可','综合应用待加强'],
+    advice:['加强复习','多做练习','整理错题','夯实基础'],
+    adviceTier:['先保证基础题不丢分'],
+    homework:['完成课后练习','复习课堂内容','整理笔记'],
+    next:['继续当前专题','新知识讲解','综合练习'] }
+};
+
+/* 分类定义：顺序即反馈里的段落顺序 */
+const CATS = [
+  {id:'content',  name:'课堂内容',        field:'content'},
+  {id:'positive', name:'课堂表现（正面）', field:'positive'},
+  {id:'improve',  name:'课堂表现（需改进）',field:'improve'},
+  {id:'mastery',  name:'知识掌握评价',    field:'mastery'},
+  {id:'advice',   name:'改进建议',        field:'advice'},
+  {id:'adviceTier',name:'分层建议',       field:'adviceTier'},
+  {id:'homework', name:'作业布置',        field:'homework'},
+  {id:'next',     name:'下节课内容',      field:'next'}
+];
+
+/* 组装成你原来的数据结构，兼容旧 localStorage */
+function buildDefaultData(){
+  const d = {};
+  for (const [k,v] of Object.entries(SUBJECTS)){
+    const subj = v[0];
+    const src = (subj === 'math') ? KW : (OTHER[subj] || OTHER.general);
+    d[subj] = { categories: CATS.map(c=>({ name:c.name, keywords:[...(src[c.field]||[])] })) };
+  }
+  return d;
+}
+const DEFAULT_DATA = buildDefaultData();
+
+const DEFAULT_PHRASES = [
+  '有问题及时和我沟通。','辛苦您多叮嘱孩子课下多做题。','希望我们一同努力，帮助孩子实现梦想。',
+  '课下的时间利用才是决定孩子最后成绩的关键。','孩子很聪明，一点就透。','总体上孩子上课学习态度很积极。',
+  '每周都能看到孩子在一点点进步。','孩子现阶段需要加大练习力度。','临近高考，基础和中档题一定要拿住。',
+  '现阶段就是通过刷题巩固知识，同时对中上难度的综合题进行突破。'
+];
+
+/* ==========================================================================
+   3. 开场白与结尾语
+   ========================================================================== */
+const GREETINGS = [
+  {id:'g1', tpl:'{salutation}你好，我是孩子的{teacher}，{date}{subject}课堂记录如下：',
+   desc:'一对一常规（最常用）'},
+  {id:'g2', tpl:'{name}{salutation}你好，我是孩子的{teacher}，{date}{subject}课堂记录如下：',
+   desc:'带姓名，一对一常规'},
+  {id:'g3', tpl:'{salutation}您好，{date}{subject}课反馈如下：',
+   desc:'简短、不带老师称呼'},
+  {id:'g4', tpl:'{name}{salutation}您好，{date}{subject}课反馈如下：',
+   desc:'带姓名 + 简短'},
+  {id:'g5', tpl:'各位家长好，本周{subject}课反馈如下：',
+   desc:'班组课群发'},
+  {id:'g6', tpl:'{salutation}你好，我是孩子的{teacher}，关于{name}的{subject}科目结课反馈与考前嘱托如下：',
+   desc:'结课 / 考前嘱托'},
+  {id:'g7', tpl:'{name}{salutation}你好，我是孩子的{teacher}，{date}首次{subject}课堂记录如下：',
+   desc:'首次课'},
+  {id:'g8', tpl:'{salutation}你好，我是孩子的{teacher}，关于{name}本阶段{subject}学习情况的总结如下：',
+   desc:'阶段总结'},
+  {id:'g9', tpl:'{salutation}你好，我是孩子的{teacher}，{date}{subject}测验成绩反馈如下：',
+   desc:'考试 / 周测成绩'}
+];
+
+const CLOSINGS = [
+  '有问题及时和我沟通。','有问题随时联系我。','辛苦您多叮嘱孩子课下多做题。',
+  '希望我们一同努力，帮助孩子实现梦想。','课下的时间利用才是决定孩子最后成绩的关键。',
+  '（不写结尾）'
+];
+
+/* ==========================================================================
+   4. 反馈类型模板定义
+   on:true 的才会出现在下拉里。想恢复某一种，把它的 on 改成 true 即可。
+   ========================================================================== */
+const TYPES = [
+  {id:'regular', name:'📖 常规课堂反馈',   on:true, greet:['g1','g2','g3','g4'],
+   sections:['greeting','content','performance','mastery','advice','homework','next','extra','closing'],
+   hint:'每次课后发家长的常规反馈'},
+  {id:'exam', name:'📊 考试/成绩分析',     on:true, greet:['g9','g2'],
+   sections:['greeting','score','content','performance','mastery','weakness','advice','plan','extra','closing'],
+   hint:'周测、月考、模考的分数反馈'},
+  {id:'pre_exam', name:'🎯 考前嘱托',      on:true, greet:['g6','g2'],
+   sections:['greeting','content','advice','adviceTier','mindset','skill','timing','review','extra'],
+   hint:'大考前的心态与应试叮嘱'},
+  {id:'final', name:'🎓 结课反馈',         on:true, greet:['g6','g8'],
+   sections:['greeting','overview','content','performance','mastery','advice','adviceTier','extra','closing'],
+   hint:'课程结束时给家长的总结'},
+  {id:'stage', name:'📈 阶段总结',         on:true, greet:['g8','g2'],
+   sections:['greeting','overview','content','performance','mastery','weakness','advice','plan','extra','closing'],
+   hint:'一个月/一个专题结束的复盘'},
+  {id:'first', name:'🌟 首次课反馈',       on:true, greet:['g7','g1'],
+   sections:['greeting','content','performance','mastery','advice','plan','homework','extra','closing'],
+   hint:'第一次课后摸底与规划'},
+
+  /* —— 以下默认不显示，需要时把 on 改成 true —— */
+  {id:'sum',   name:'🔁 续报沟通',         on:false, greet:['g2','g1'],
+   sections:['greeting','overview','performance','mastery','weakness','advice','plan','promo','extra','closing'],
+   hint:'课时将尽、沟通继续上课'},
+  {id:'meet',  name:'👨‍👩‍👧 家长会反馈',    on:false, greet:['g8'],
+   sections:['greeting','overview','performance','mastery','weakness','advice','plan','extra'],
+   hint:'家长会面对面的书面材料'},
+  {id:'group', name:'👥 多人/班组反馈',    on:false, greet:['g5'],
+   sections:['greeting','content','performance','extra','homework','next'],
+   hint:'一个班或几个孩子一起发'},
+  {id:'simple',name:'💬 简要反馈',         on:false, greet:['g3','g4'],
+   sections:['greeting','content','performance','homework','extra'],
+   hint:'两三句话的轻量反馈'}
+];
+const ACTIVE_TYPES = TYPES.filter(t=>t.on);
+
+/* ==========================================================================
+   5. 状态与存储
+   ========================================================================== */
+let allData  = loadData();
+let phrases  = loadPhrases();
+let students = loadStudents();
+let history  = loadHistory();
+let currentStu = null;
+let lastRaw  = '';      // 生成时的原始文本，供「还原」用
+
+function loadData(){
+  if(NEXT_MODE) return JSON.parse(JSON.stringify(DEFAULT_DATA)); // 实际数据由 bootFromApi 注入
+  try{
+    const s = localStorage.getItem(STORAGE_KEY);
+    if(s){
+      const p = JSON.parse(s);
+      const merged = JSON.parse(JSON.stringify(DEFAULT_DATA));
+      for(const [subj, d] of Object.entries(p)){
+        if(d && Array.isArray(d.categories)){
+          // 按分类名合并：旧数据没有的分类补上默认关键词
+          const byName = {};
+          d.categories.forEach(c=>{ if(c && c.name) byName[c.name] = c; });
+          merged[subj] = { categories: CATS.map(c=>{
+            const old = byName[c.name];
+            return old ? { name:c.name, keywords:Array.isArray(old.keywords)?old.keywords:[] }
+                       : { name:c.name, keywords:[...(DEFAULT_DATA[subj]?.categories.find(x=>x.name===c.name)?.keywords || [])] };
+          })};
+          // 保留用户自建的其他分类
+          d.categories.forEach(c=>{
+            if(c && c.name && !CATS.some(x=>x.name===c.name)) merged[subj].categories.push(c);
+          });
+        }
+      }
+      return merged;
+    }
+  }catch(e){}
+  return JSON.parse(JSON.stringify(DEFAULT_DATA));
+}
+function loadPhrases(){
+  if(NEXT_MODE) return [...DEFAULT_PHRASES];
+  try{ const a = JSON.parse(localStorage.getItem(PHRASE_KEY)||'null');
+       if(Array.isArray(a) && a.length) return a; }catch(e){}
+  return [...DEFAULT_PHRASES];
+}
+function loadStudents(){
+  if(NEXT_MODE) return {}; // 由 bootFromApi 注入
+  try{ const o = JSON.parse(localStorage.getItem(STU_KEY)||'{}'); return (o && typeof o==='object')?o:{}; }catch(e){ return {}; }
+}
+function loadHistory(){
+  if(NEXT_MODE) return {};
+  try{ const o = JSON.parse(localStorage.getItem(HIST_KEY)||'{}'); return (o && typeof o==='object')?o:{}; }catch(e){ return {}; }
+}
+const saveData    = ()=>{
+  if(NEXT_MODE){ toast('关键词库由管理员统一维护，你的改动不会保存'); return; }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(allData)); queueServerSync();
+};
+const savePhrases = ()=>{
+  if(NEXT_MODE){ toast('结尾短语库由管理员统一维护，你的改动不会保存'); return; }
+  localStorage.setItem(PHRASE_KEY, JSON.stringify(phrases)); queueServerSync();
+};
+/* 学生档案：整份保存 → 按姓名指向的那一条 POST 到接口 */
+const saveStudents= ()=>{
+  if(NEXT_MODE){
+    const name = val('studentName');
+    const stu = name ? students[name] : null;
+    if(!name || !stu) return;
+    fetch('/api/feedback/data', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({op:'student', name, subject:stu.subject, salutation:stu.salutation,
+        teacher:stu.teacher, type:stu.type, notes:stu.notes})
+    }).then(r=>r.ok ? r.json() : null)
+      .then(d=>{ if(!d || !d.ok) toast('档案保存失败，请刷新后重试', 3000); })
+      .catch(()=>toast('档案保存失败（网络错误）', 3000));
+    return;
+  }
+  localStorage.setItem(STU_KEY, JSON.stringify(students));
+};
+/* 历史记录：整份保存 → 把最后一条追加到接口 */
+const saveHistory = ()=>{
+  if(NEXT_MODE){
+    const name = val('studentName');
+    const list = name ? history[name] : null;
+    const item = Array.isArray(list) && list.length ? list[list.length-1] : null;
+    if(!name || !item) return;
+    fetch('/api/feedback/data', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({op:'history', studentName:name, text:item.text, date:item.date,
+        typeName:item.typeName, subject:item.subject})
+    }).then(r=>r.ok ? r.json() : null)
+      .then(d=>{ if(!d || !d.ok) toast('记录保存失败，请刷新后重试', 3000); })
+      .catch(()=>toast('记录保存失败（网络错误）', 3000));
+    return;
+  }
+  localStorage.setItem(HIST_KEY, JSON.stringify(history));
+};
+/* 删除：单条历史 / 整份档案 */
+function deleteHistoryItemAdapter(studentName, index){
+  if(NEXT_MODE){
+    const item = (history[studentName]||[])[index];
+    if(item && item.id){
+      fetch('/api/feedback/data?id='+encodeURIComponent(item.id), {method:'DELETE', credentials:'same-origin'}).catch(()=>{});
+    }
+    return;
+  }
+  localStorage.setItem(HIST_KEY, JSON.stringify(history));
+}
+function deleteStudentAdapter(name){
+  if(NEXT_MODE){
+    fetch('/api/feedback/data?student='+encodeURIComponent(name), {method:'DELETE', credentials:'same-origin'}).catch(()=>{});
+    return;
+  }
+  localStorage.setItem(STU_KEY, JSON.stringify(students));
+  localStorage.setItem(HIST_KEY, JSON.stringify(history));
+}
+/* 拉取服务端数据（next 模式） */
+function bootFromApi(){
+  return fetch('/api/feedback/data', {credentials:'same-origin', cache:'no-store'})
+    .then(r=> r.ok ? r.json() : null)
+    .then(d=>{
+      if(!d || !d.ok) return false;
+      if(d.keywordTree && Object.keys(d.keywordTree).length){
+        // 与默认库合并：保留分类顺序，缺失分类用默认关键词补齐
+        const merged = JSON.parse(JSON.stringify(DEFAULT_DATA));
+        for(const [subj, dd] of Object.entries(d.keywordTree)){
+          if(!dd || !Array.isArray(dd.categories)) continue;
+          const byName = {};
+          dd.categories.forEach(c=>{ if(c && c.name) byName[c.name] = c; });
+          merged[subj] = { categories: CATS.map(c=>{
+            const hit = byName[c.name];
+            return hit
+              ? { name:c.name, keywords:Array.isArray(hit.keywords)?hit.keywords:[] }
+              : { name:c.name, keywords:[...(DEFAULT_DATA[subj]?.categories.find(x=>x.name===c.name)?.keywords || [])] };
+          })};
+          dd.categories.forEach(c=>{
+            if(c && c.name && !CATS.some(x=>x.name===c.name)) merged[subj].categories.push(c);
+          });
+        }
+        allData = merged;
+      }
+      if(Array.isArray(d.phrases) && d.phrases.length) phrases = d.phrases;
+      if(d.students && typeof d.students === 'object') students = d.students;
+      if(d.history && typeof d.history === 'object') history = d.history;
+      return true;
+    })
+    .catch(()=>false);
+}
+
+/* ---- 服务器同步（仅 server 模式生效）----
+   本地照常存 localStorage（离线可用），同时把关键词库推到服务器，所有人共享。
+   采用 1.2 秒防抖，连续编辑只发一次。 */
+let _syncTimer = null, _syncBusy = false;
+function queueServerSync(){
+  if(API.mode !== 'server') return;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(()=>{
+    if(_syncBusy) return;
+    _syncBusy = true;
+    apiFetch('api/data', {method:'PUT',
+      body:{ data: allData, phrases: phrases, writeToken: getWriteToken() }})
+      .then(d=>{
+        if(d && d.ok){
+          API.isAdmin = !!d.isAdmin;
+          updateModeBadge();
+          const el = document.getElementById('syncHint');
+          if(el){ el.textContent = '✓ 已同步到服务器（' + new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}) + '）'; el.style.color = 'var(--ok)'; }
+        }
+      })
+      .catch(e=>{
+        const el = document.getElementById('syncHint');
+        if(el){ el.textContent = '⚠ 同步失败：' + e.message + '（改动暂存在本机）'; el.style.color = 'var(--bad)'; }
+      })
+      .finally(()=>{ _syncBusy = false; });
+  }, 1200);
+}
+
+/* 从服务器拉取共享数据，覆盖本地缓存 */
+function pullServerData(){
+  if(API.mode !== 'server') return Promise.resolve(false);
+  return apiFetch('api/data').then(d=>{
+    if(!d || !d.ok) return false;
+    if(d.data && typeof d.data === 'object'){
+      allData = Object.assign(JSON.parse(JSON.stringify(DEFAULT_DATA)), d.data);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(allData));
+    }
+    if(Array.isArray(d.phrases) && d.phrases.length){
+      phrases = d.phrases;
+      localStorage.setItem(PHRASE_KEY, JSON.stringify(phrases));
+    }
+    return true;
+  }).catch(()=>false);
+}
+
+function updateModeBadge(){
+  const b = document.getElementById('modeBadge');
+  if(!b) return;
+  if(API.mode === 'next'){
+    b.textContent = API.isAdmin ? '☁️ 云端·管理员' : '☁️ 云端版';
+    b.style.background = 'rgba(255,255,255,.28)';
+    b.title = API.isAdmin
+      ? '关键词库全员共享，你的改动会保存到云端'
+      : '关键词库由管理员统一维护；学生档案与历史记录保存在你的账号下';
+    return;
+  }
+  if(API.mode === 'server'){
+    b.textContent = API.isAdmin ? '🌐 联网·管理员' : '🌐 联网版';
+    b.style.background = 'rgba(255,255,255,.28)';
+    b.title = API.isAdmin
+      ? '你的改动会保存到服务器，所有人可见'
+      : '关键词库由老师统一维护；你的改动只保存在本机';
+  }else{
+    b.textContent = '💾 本机版';
+    b.style.background = 'rgba(255,255,255,.18)';
+    b.title = '数据保存在这台电脑的浏览器里';
+  }
+}
+
+/* 服务器设置弹层 */
+function renderServerModal(){
+  const info = document.getElementById('serverModeInfo');
+  const isServer = (API.mode === 'server');
+  if(info){
+    info.innerHTML = isServer
+      ? `<b>当前：联网版</b><br>关键词库来自服务器，${API.isAdmin?'你已通过管理员验证，改动会同步给所有人。':'你的改动只保存在本机；要让所有人看到，需填对管理员口令。'}<br>
+         服务器端 AI：${API.serverCfg.hasKey ? '✅ 已配置，所有用户可直接点「AI 润色」' : '❌ 未配置（学生点润色会提示先配置）'}`
+      : `<b>当前：本机版</b><br>这份文件是直接双击打开的，数据只存在这台电脑的浏览器里。<br>
+         把它放到你的服务器上（http/https 访问）就会自动切换成联网版，关键词库全员共享、AI Key 也不会暴露。`;
+  }
+  const wt = document.getElementById('writeTokenInput'); if(wt) wt.value = getWriteToken();
+  const sk = document.getElementById('serverKeyInput'); if(sk) sk.value = '';
+  const sb = document.getElementById('serverBaseInput'); if(sb) sb.value = API.serverCfg.apiBase || 'https://api.deepseek.com/v1';
+  const sm = document.getElementById('serverModelInput'); if(sm) sm.value = API.serverCfg.model || 'deepseek-chat';
+  const sp = document.getElementById('serverPromptInput'); if(sp) sp.value = API.serverCfg.prompt || DEFAULT_PROMPT;
+  const safe = document.getElementById('keySafeHint');
+  if(safe) safe.style.display = isServer ? 'block' : 'none';
+}
+
+/* ==========================================================================
+   6. 工具
+   ========================================================================== */
+const $  = s=>document.querySelector(s);
+const $$ = s=>Array.from(document.querySelectorAll(s));
+const esc = t=>String(t==null?'':t).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const val = id=>{ const e=document.getElementById(id); return e? e.value.trim() : ''; };
+
+function toast(msg, ms){
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('on'), ms||2100);
+}
+function openMask(id){ $(id).classList.add('on'); }
+function closeMask(id){ $(id).classList.remove('on'); }
+document.addEventListener('click', e=>{
+  if(e.target.closest('[data-close]')){
+    const m = e.target.closest('.mask'); if(m) m.classList.remove('on');
+  }
+  if(e.target.classList && e.target.classList.contains('mask')) e.target.classList.remove('on');
+});
+
+/* ==========================================================================
+   7. 反馈文本生成引擎
+   ========================================================================== */
+function getSubject(){ return $('#subjectSelect').value; }
+function getCategories(){
+  const s = getSubject();
+  if(!allData[s]) allData[s] = JSON.parse(JSON.stringify(DEFAULT_DATA[s] || DEFAULT_DATA.general));
+  return allData[s].categories;
+}
+function getType(){ return ACTIVE_TYPES.find(t=>t.id===$('#templateSelect').value) || ACTIVE_TYPES[0]; }
+
+/* 收集勾选的关键词：{catName, keyword} */
+function collectSelected(){
+  const out = [];
+  $$('#generateCategories input[type="checkbox"]:checked').forEach(cb=>{
+    const kw = cb.dataset.keyword;
+    const cn = cb.dataset.catName;
+    if(kw && cn){ out.push({catName:cn, keyword:kw}); return; }
+    const ci = parseInt(cb.dataset.catIndex,10), ki = parseInt(cb.dataset.kwIndex,10);
+    const cats = getCategories();
+    if(!isNaN(ci) && !isNaN(ki) && cats[ci] && cats[ci].keywords[ki]!==undefined)
+      out.push({catName:cats[ci].name, keyword:cats[ci].keywords[ki]});
+  });
+  return out;
+}
+
+/* 数字中文/格式小工具 */
+function scoreLine(o){
+  const g = o.scoreGet, t = o.scoreTotal;
+  if(!g) return '';
+  let head = t ? `${o.name||'孩子'}本次${o.examWord}成绩为 ${g} 分` : `本次${o.examWord}得分 ${g}`;
+  if(t) head += `（满分 ${t}）`;
+  const parts = [];
+  if(o.scoreSmall) parts.push(`小题 ${o.scoreSmall}`);
+  if(o.scoreBig)   parts.push(`大题 ${o.scoreBig}`);
+  if(o.scoreDiff)  head += `，本张试卷${o.scoreDiff}`;
+  head += '。';
+  if(parts.length) head += `其中${parts.join('，')}。`;
+  if(o.scorePaper) head += `试卷为${o.scorePaper}。`;
+  return head;
+}
+
+/* 序号列表 */
+function numbered(arr, indent){
+  return arr.map((x,i)=>`${indent||''}${i+1}. ${x}`).join('\n');
+}
+
+/* 主生成函数 */
+function buildText(o){
+  const {name, salutation, subjectName, teacher, dateStr, group, extra, closing} = o;
+  const lines = [];
+  const push = (...xs)=>{ xs.forEach(x=>{ if(x!=='' && x!=null) lines.push(x); }); };
+
+  /* --- 开场白 --- */
+  let greet = o.greetingTpl;
+  greet = greet.replace(/\{name\}/g, name || '孩子')
+               .replace(/\{salutation\}/g, salutation || '家长')
+               .replace(/\{subject\}/g, subjectName || '')
+               .replace(/\{teacher\}/g, teacher || (subjectName? subjectName+'老师':'老师'))
+               .replace(/\{date\}/g, dateStr || '');
+  greet = greet.replace(/，\s*(?=[，。])/g,'').replace(/\s{2,}/g,' ');
+  push(greet);
+  push('');
+
+  const S = o.sections;
+  const has = s=>S.includes(s);
+
+  /* --- 成绩行 --- */
+  if(has('score')){
+    const sl = scoreLine(o);
+    if(sl){ push(sl); push(''); }
+  }
+
+  /* --- 阶段/结课概述 --- */
+  if(has('overview')){
+    const bits = [];
+    if(o.dates && o.dates!==dateStr) bits.push(`孩子${o.dates}`);
+    else if(dateStr) bits.push(`孩子${dateStr}`);
+    if(o.content.length) bits.push(`已完成${o.content.join('、')}的学习`);
+    if(bits.length) push(bits.join('') + '。');
+    if(o.mastery.length) push(`整体来看，${o.mastery.join('，')}。`);
+    push('');
+  }
+
+  /* --- 课堂内容 --- */
+  if(has('content') && o.content.length){
+    const c = o.content;
+    if(o.typeId==='regular' || o.typeId==='simple' || o.typeId==='first'){
+      push(`【课堂内容】`);
+      push(c.length===1 ? `本节课主要讲解${c[0]}。` : c.length<=3 ? `本节课主要讲解了${c.join('、')}。`
+                        : `本节课主要讲解了${c.slice(0,3).join('、')}${c.length>3?'等相关内容':'内容'}。`);
+    }else if(o.typeId==='pre_exam'){
+      push(`【复习重点】`); push(c.join('、') + '。');
+    }else if(o.typeId==='group'){
+      push(`【课堂内容】`); push(numbered(c));
+    }else{
+      push(`【课堂内容】`); push(c.join('、') + '。');
+    }
+    push('');
+  }
+
+  /* --- 课堂表现 --- */
+  if(has('performance') && (o.positive.length || o.improve.length || o.mastery.length)){
+    push(`【课堂表现】`);
+    const N = name || '孩子';
+    if(o.typeId==='regular' || o.typeId==='simple'){
+      // 优势 / 不足 分列（你的常用写法）
+      if(o.positive.length && o.improve.length){
+        push(`优势：${N}${o.positive.join('，')}。`);
+        push(`不足：${o.improve.join('，')}。`);
+      }else if(o.positive.length){
+        push(`${N}${o.positive.join('，')}，整体状态不错，之后继续多动手练习、多复习。`);
+      }else{
+        push(`本节课主要存在的问题是：${o.improve.join('，')}。`);
+      }
+    }else{
+      const items = [];
+      if(o.positive.length) items.push(`${N}${o.positive.join('，')}`);
+      if(o.improve.length)  items.push(...o.improve.map(x=>`存在${x}的情况，需要重点改进`));
+      if(items.length) push(numbered(items));
+    }
+    if(o.mastery.length && !has('mastery')) push(`知识掌握方面${o.mastery.join('，')}。`);
+    push('');
+  }
+
+  /* --- 知识掌握 --- */
+  if(has('mastery') && o.mastery.length){
+    push(`【知识掌握】`);
+    push(o.mastery.join('，') + '。');
+    push('');
+  }
+
+  /* --- 失分原因（考试类） --- */
+  if(has('weakness') && o.improve.length){
+    push(`【主要失分点】`);
+    push(numbered(o.improve));
+    push('');
+  }
+
+  /* --- 改进建议 --- */
+  if(has('advice') && o.advice.length){
+    push(`【改进建议】`);
+    push(o.advice.length<=2 ? o.advice.join('，')+'。' : numbered(o.advice));
+    push('');
+  }
+
+  /* --- 分层策略 --- */
+  if(has('adviceTier') && o.adviceTier.length){
+    push(`【现阶段策略】`);
+    push(o.adviceTier.join('；') + '。');
+    push('');
+  }
+
+  /* --- 考前：心态 --- */
+  if(has('mindset')){
+    push(`【考试心态】`);
+    push(numbered([
+      '选择填空前几道题大多考课本基础，遇到新情景题不要慌，圈出重点、去掉无用文字，静下心就能解出来。',
+      '一道小题琢磨三分钟没思路立刻跳过，大题第一问没头绪也先空着，优先把所有简单题做完。',
+      '选填答案不要随意改动，没有十足把握就相信第一次的想法。',
+      '抓好基础分、减少粗心失分，心态放平就等于多拿分。'
+    ]));
+    push('');
+  }
+  /* --- 考前：做题技巧 --- */
+  if(has('skill')){
+    push(`【考场做题技巧】`);
+    push('（一）选择题');
+    push(numbered([
+      '读题随手圈关键信息：正负、取值范围、增减性、最值这类关键词，避免看错题失分。',
+      '复杂题多用排除法、特殊值法，图像类题目结合题干条件套公式排除错误选项。',
+      '压轴小题标记不确定的，整张卷子做完再回头思考。'
+    ], '  '));
+    push('（二）填空题');
+    push(numbered([
+      '答案写完整，分数、根式、区间化成标准格式，直线写成一般式，对数化简要到位。',
+      '留意多解的题目（不等式求解、三角形解的个数、取值集合等），检查有没有漏写。'
+    ], '  '));
+    push('（三）解答题');
+    push(numbered([
+      '大题一定要认真写步骤，按步骤给分，算不出最终得数，写上相关公式也能拿步骤分，不要整题空着。',
+      '常规大题先想明白逻辑再动笔，步骤条理清楚很容易一口气解下来。',
+      '圆锥曲线大题先做第一问，设直线时注意验证斜率是否存在，韦达定理前先写判别式。',
+      '字迹尽量工整，少乱涂乱画。'
+    ], '  '));
+    push('');
+  }
+  /* --- 考前：用时 --- */
+  if(has('timing')){
+    push(`【考试用时规划】`);
+    push(numbered([
+      '选择填空简单至中档题控制在 40 分钟之内，不要硬啃难题。',
+      '基础大题先作答第一问，写全解题步骤，顺利的话可一口气做完前三题。',
+      '剩余时间回头补之前留下的第二问和中等偏难题，顺带检查计算错误。',
+      '最后五分钟只核对符号、区间、化简，没把握绝不改动已写好的答案。'
+    ]));
+    push('');
+  }
+  /* --- 考前：复习 --- */
+  if(has('review') && o.content.length){
+    push(`【考前复习】`);
+    push(`再抽时间翻看${o.content.slice(0,4).join('、')}等基础题型，过一遍公式，吃透已经会的题目，最大限度减少粗心丢分。`);
+    push('');
+  }
+
+  /* --- 后续计划 --- */
+  if(has('plan') && o.adviceTier.length===0 && (o.next.length || o.advice.length)){
+    if(o.next.length){
+      push(`【后续安排】`);
+      push(`接下来我们将继续${o.next.join('、')}，把今天暴露出来的问题逐个解决。`);
+      push('');
+    }
+  }
+
+  /* --- 作业 --- */
+  if(has('homework') && o.homework.length){
+    push(o.typeId==='group' || o.typeId==='final' ? `【作业安排】` : `【作业】`);
+    push(numbered(o.homework));
+    push('');
+  }
+
+  /* --- 下节课内容 --- */
+  if(has('next') && o.next.length){
+    push(`【下节课内容】`);
+    push(o.next.join('、') + '。');
+    push('');
+  }
+
+  /* --- 多人模式：逐个孩子 --- */
+  if(o.typeId==='group' && o.groupNotes && o.groupNotes.length){
+    push(`各位同学情况简述：`);
+    o.groupNotes.forEach(g=>{ if(g.name && g.text) push(`${g.name}：${g.text}`); });
+    push('');
+  }
+
+  /* --- 续报 --- */
+  if(has('promo') && o.promo){
+    push(`【后续课程建议】`);
+    push(o.promo);
+    push('');
+  }
+
+  /* --- 补充说明 --- */
+  if(has('extra') && extra){
+    push(extra);
+    push('');
+  }
+
+  /* --- 结尾 --- */
+  if(has('closing') && closing && closing !== '（不写结尾）'){
+    push(closing);
+  }
+
+  // 去掉多余空行（最多一个连续空行）
+  return lines.join('\n').replace(/\n{3,}/g,'\n\n').replace(/[ \t]+\n/g,'\n').trim();
+}
+
+/* ==========================================================================
+   8. 界面渲染
+   ========================================================================== */
+function fillSelects(){
+  $('#subjectSelect').innerHTML = SUBJECTS.map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  $('#templateSelect').innerHTML = ACTIVE_TYPES.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
+  refreshGreetingOptions();
+  $('#closingSelect').innerHTML = CLOSINGS.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+}
+function refreshGreetingOptions(){
+  const t = getType();
+  const opts = t.greet.map(id=>GREETINGS.find(g=>g.id===id)).filter(Boolean);
+  const cur = $('#greetingTemplate').value;
+  $('#greetingTemplate').innerHTML = opts.map(g=>`<option value="${esc(g.tpl)}">${esc(g.desc)}</option>`).join('');
+  if(opts.some(g=>g.tpl===cur)) $('#greetingTemplate').value = cur;
+  updateGreetPreview();
+}
+function updateGreetPreview(){
+  const tpl = $('#greetingTemplate').value;
+  const s = {
+    name: val('studentName') || '孩子',
+    salutation: $('#salutationSelect').value,
+    subject: SUBJECT_NAME[getSubject()] || '',
+    teacher: val('teacherInput') || '老师',
+    date: val('dateInput') || 'X月X日'
+  };
+  const out = tpl.replace(/\{name\}/g,s.name).replace(/\{salutation\}/g,s.salutation)
+                 .replace(/\{subject\}/g,s.subject).replace(/\{teacher\}/g,s.teacher)
+                 .replace(/\{date\}/g,s.date);
+  $('#greetPreview').innerHTML = '预览：' + esc(out);
+}
+
+/* --- 关键词勾选区 --- */
+function renderGenerate(){
+  const cats = getCategories();
+  const subj = getSubject();
+  let html = '';
+  cats.forEach((cat, ci)=>{
+    const isBook = (subj==='math' && (cat.name==='课堂内容' || cat.name==='下节课内容'));
+    let body = '';
+    if(isBook){
+      body = `<div class="bookbar"><span>📖 课本</span>
+        <select id="bookSelect_${ci}" data-cat-index="${ci}">
+          ${MATHEMATICS_BOOKS.map((b,i)=>`<option value="${i}">${esc(b.name)}</option>`).join('')}
+        </select></div>
+        <div class="grid" id="bookGrid_${ci}"></div>`;
+      /* 管理员在关键词库里为该分类维护的词条也要显示出来
+         （数学的「课堂内容 / 下节课内容」原本只显示硬编码课本知识点，
+           导致云端关键词库里的词永远看不到） */
+      if(cat.keywords && cat.keywords.length){
+        body += `<div class="tip" style="margin-top:10px">关键词库（${cat.keywords.length} 条）</div>
+          <div class="grid">` + cat.keywords.map((kw,ki)=>`
+            <label class="chip"><input type="checkbox" data-cat-index="${ci}" data-kw-index="${ki}" data-keyword="${esc(kw)}">${esc(kw)}</label>`).join('') + `</div>`;
+      }
+    }else{
+      if(!cat.keywords || !cat.keywords.length){
+        body = `<p class="tip">这个分类还没有关键词，去「管理关键词库」里加，或者用下面的输入框直接加。</p>`;
+      }else{
+        body = `<div class="grid">` + cat.keywords.map((kw,ki)=>`
+          <label class="chip"><input type="checkbox" data-cat-index="${ci}" data-kw-index="${ki}">${esc(kw)}</label>`).join('') + `</div>`;
+      }
+    }
+    html += `<details class="cat" ${ci<2?'open':''} data-cat="${ci}">
+      <summary><span class="arw">▶</span>${esc(cat.name)}<span class="cnt zero" data-cnt="${ci}">0</span></summary>
+      <div class="body">${body}
+        <div style="display:flex;gap:6px;margin-top:9px">
+          <input type="text" placeholder="直接输入并回车，添加「${esc(cat.name)}」关键词"
+                 data-quickadd="${ci}" style="flex:1;padding:6px 10px;border:1px solid var(--line);border-radius:8px;outline:none;font-size:12.5px">
+        </div>
+      </div></details>`;
+  });
+  $('#generateCategories').innerHTML = html || '<p class="tip">暂无分类。</p>';
+
+  // 初始化课本网格
+  if(subj==='math'){
+    cats.forEach((cat,ci)=>{
+      if(cat.name!=='课堂内容' && cat.name!=='下节课内容') return;
+      const sel = document.getElementById('bookSelect_'+ci);
+      const grid = document.getElementById('bookGrid_'+ci);
+      if(!sel || !grid) return;
+      const upd = ()=>{
+        const b = MATHEMATICS_BOOKS[parseInt(sel.value,10)] || {topics:[]};
+        grid.innerHTML = b.topics.map((t,i)=>
+          `<label class="chip"><input type="checkbox" data-cat-name="${esc(cat.name)}" data-keyword="${esc(t)}">${esc(t)}</label>`).join('');
+        bindCount();
+      };
+      sel.addEventListener('change', upd); upd();
+    });
+  }
+  bindCount();
+  // 快捷添加
+  $$('#generateCategories [data-quickadd]').forEach(inp=>{
+    inp.addEventListener('keydown', e=>{
+      if(e.key!=='Enter') return;
+      const ci = parseInt(inp.dataset.quickadd,10);
+      const txt = inp.value.trim(); if(!txt) return;
+      const cats2 = getCategories();
+      if(!cats2[ci]) return;
+      if(cats2[ci].keywords.includes(txt)){ toast('已存在'); return; }
+      cats2[ci].keywords.push(txt);
+      allData[getSubject()].categories = cats2;
+      saveData(); inp.value='';
+      renderGenerate(); toast('已添加：'+txt);
+    });
+  });
+  updateCounts();
+}
+function bindCount(){
+  $$('#generateCategories input[type="checkbox"]').forEach(cb=>{
+    cb.onchange = ()=>{ updateCounts(); };
+  });
+}
+function updateCounts(){
+  const sel = collectSelected();
+  const byCat = {};
+  sel.forEach(x=>{ byCat[x.catName] = (byCat[x.catName]||0)+1; });
+  $$('#generateCategories [data-cnt]').forEach(el=>{
+    const ci = parseInt(el.dataset.cnt,10);
+    const cats = getCategories();
+    const n = byCat[cats[ci] ? cats[ci].name : ''] || 0;
+    el.textContent = n; el.classList.toggle('zero', n===0);
+  });
+  $('#selCount').textContent = '已选 ' + sel.length + ' 项';
+  $('#stKws').textContent = sel.length;
+}
+
+/* --- 生成 --- */
+function generate(){
+  const type = getType();
+  const sel = collectSelected();
+  const grouped = {};
+  sel.forEach(x=>{ (grouped[x.catName] = grouped[x.catName] || []).push(x.keyword); });
+
+  const o = {
+    typeId: type.id,
+    sections: type.sections,
+    greetingTpl: $('#greetingTemplate').value || GREETINGS[0].tpl,
+    name: val('studentName'),
+    salutation: $('#salutationSelect').value,
+    subjectName: SUBJECT_NAME[getSubject()] || '',
+    teacher: val('teacherInput'),
+    dateStr: val('dateInput'),
+    dates: val('dateInput'),
+    content:  grouped['课堂内容'] || [],
+    positive: grouped['课堂表现（正面）'] || [],
+    improve:  grouped['课堂表现（需改进）'] || [],
+    mastery:  grouped['知识掌握评价'] || [],
+    advice:   grouped['改进建议'] || [],
+    adviceTier: grouped['分层建议'] || [],
+    homework: grouped['作业布置'] || [],
+    next:     grouped['下节课内容'] || [],
+    extra:    val('extraNote'),
+    closing:  $('#closingSelect').value,
+    scoreGet: val('scoreGet'), scoreTotal: val('scoreTotal'),
+    scoreSmall: val('scoreSmall'), scoreBig: val('scoreBig'),
+    scoreDiff: $('#scoreDiff').value, scorePaper: val('scorePaper'),
+    examWord: (val('scorePaper')||'').includes('周测') ? '周测'
+              : (val('scorePaper')||'').includes('月考') ? '月考'
+              : (val('scorePaper')||'').includes('一模') ? '一模考试'
+              : (val('scorePaper')||'').includes('二模') ? '二模考试' : '考试',
+    groupNotes: readGroupNotes(),
+    promo: val('extraNote')
+  };
+
+  const text = buildText(o);
+  if(!sel.length && !o.extra && !o.scoreGet){
+    $('#resultText').textContent = '还没有选择任何关键词。\n\n'
+      + '操作顺序：① 左边填好学生姓名与日期 → ② 中间勾选「课堂内容」和「课堂表现」等关键词 → ③ 点这里上方的「↻ 重新生成」。';
+    lastRaw = '';
+  }else{
+    $('#resultText').textContent = text;
+    lastRaw = text;
+  }
+  updatePreviewMeta(o, sel.length, text);
+}
+
+function readGroupNotes(){
+  const box = $('#groupNotes');
+  if(!box) return [];
+  return box.value.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+    const i = l.search(/[:：]/);
+    if(i>0) return {name:l.slice(0,i).trim(), text:l.slice(i+1).trim()};
+    return {name:'', text:l};
+  }).filter(x=>x.text);
+}
+
+function updatePreviewMeta(o, n, text){
+  $('#pvName').textContent = (o.name ? o.name + ' · ' : '') + (SUBJECT_NAME[getSubject()]||'通用') + '反馈';
+  $('#pvMeta').textContent = (o.dateStr? o.dateStr+'　':'') + $('#templateSelect').selectedOptions[0].textContent.replace(/^\S+\s/,'') ;
+  $('#stChars').textContent = (text||'').length;
+  $('#stKws').textContent = n;
+  const warn = [];
+  if(!o.name) warn.push('未填姓名');
+  if(!o.dateStr) warn.push('未填日期');
+  $('#stHint').textContent = warn.length ? '⚠ ' + warn.join('、') : '✓ 信息完整';
+  $('#stHint').style.color = warn.length ? 'var(--warn)' : 'var(--ok)';
+}
+
+/* ==========================================================================
+   9. 学生档案
+   ========================================================================== */
+function renderStuList(){
+  const names = Object.keys(students);
+  const box = $('#stuList');
+  if(!names.length){
+    box.innerHTML = '<span class="tip">还没有档案。填姓名后点「保存档案」。</span>';
+    return;
+  }
+  box.innerHTML = names.map(n=>{
+    const on = (currentStu===n) ? ' on' : '';
+    return `<span class="stu-chip${on}" data-stu="${esc(n)}">${esc(n)}<span class="x" data-del="${esc(n)}">×</span></span>`;
+  }).join('');
+  $$('#stuList .stu-chip').forEach(ch=>{
+    ch.onclick = e=>{
+      if(e.target.dataset.del) return;
+      pickStudent(ch.dataset.stu);
+    };
+  });
+  $$('#stuList [data-del]').forEach(x=>{
+    x.onclick = e=>{
+      e.stopPropagation();
+      const n = x.dataset.del;
+      if(confirm('删除「'+n+'」的档案？')){
+        delete students[n]; saveStudents(); if(currentStu===n) currentStu=null;
+        renderStuList(); toast('已删除');
+      }
+    };
+  });
+}
+function pickStudent(n){
+  const s = students[n]; if(!s) return;
+  currentStu = n;
+  $('#studentName').value = n;
+  if(s.subject) $('#subjectSelect').value = s.subject;
+  if(s.salutation) $('#salutationSelect').value = s.salutation;
+  if(s.teacher !== undefined) $('#teacherInput').value = s.teacher;
+  if(s.type) $('#templateSelect').value = s.type;
+  if(s.notes) $('#extraNote').value = s.notes;
+  $('#curStuHint').textContent = '当前：' + n;
+  refreshGreetingOptions(); renderGenerate(); renderHist();
+  toast('已带出「'+n+'」的信息');
+}
+function saveCurrentStudent(){
+  const n = val('studentName');
+  if(!n){ toast('请先输入学生姓名'); return; }
+  students[n] = {
+    subject: getSubject(),
+    salutation: $('#salutationSelect').value,
+    teacher: val('teacherInput'),
+    type: $('#templateSelect').value,
+    notes: val('extraNote'),
+    updated: new Date().toISOString().slice(0,10)
+  };
+  saveStudents(); currentStu = n; renderStuList();
+  $('#curStuHint').textContent = '当前：' + n;
+  toast('已保存「'+n+'」的档案');
+}
+function renderStudentModal(){
+  const names = Object.keys(students);
+  if(!names.length){
+    $('#studentList').innerHTML = '<p class="tip">还没有学生档案。在左侧填入姓名后点「保存档案」，或点下面的「新建档案」。</p>';
+    return;
+  }
+  $('#studentList').innerHTML = names.map(n=>{
+    const s = students[n];
+    const hist = (history[n]||[]).length;
+    const sn = SUBJECT_NAME[s.subject] || '通用';
+    return `<div class="hist">
+      <div class="h"><b style="font-size:13.5px;color:var(--ink)">${esc(n)}</b>
+        <span>${sn}</span><span>称呼：${esc(s.salutation||'家长')}</span>
+        <span>历史 ${hist} 条</span>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn btn-out btn-xs" data-use="${esc(n)}">使用</button>
+        <button class="btn btn-gh btn-xs" data-rm="${esc(n)}">删除</button>
+      </div>
+    </div>`;
+  }).join('');
+  $$('#studentList [data-use]').forEach(b=>b.onclick=()=>{ pickStudent(b.dataset.use); closeMask('#maskStudents'); });
+  $$('#studentList [data-rm]').forEach(b=>b.onclick=()=>{
+    const n=b.dataset.rm;
+    if(confirm('删除「'+n+'」档案与历史记录？')){
+        delete students[n]; delete history[n];
+        deleteStudentAdapter(n);
+        if(!NEXT_MODE){ saveStudents(); saveHistory(); }
+        renderStudentModal(); renderStuList(); renderHist();
+      }
+  });
+}
+
+/* ==========================================================================
+   10. 历史记录
+   ========================================================================== */
+function renderHist(){
+  const n = currentStu || val('studentName');
+  const list = $('#histList');
+  const items = (n && history[n]) ? history[n] : [];
+  $('#histCount').textContent = items.length ? items.length + ' 条' : '';
+  if(!items.length){
+    list.innerHTML = '<p class="tip">生成反馈后点「存入该生记录」，这里会累积历史，方便对比孩子前后变化。</p>';
+    return;
+  }
+  list.innerHTML = items.slice().reverse().map((h,i)=>
+    `<div class="hist">
+      <div class="h"><b>${esc(h.date||'未填日期')}</b><span>${esc(h.typeName||'')}</span>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn btn-gh btn-xs" data-load="${items.length-1-i}">载入</button>
+        <button class="btn btn-gh btn-xs" data-dh="${items.length-1-i}">删</button>
+      </div>
+      <div class="t" data-t="${items.length-1-i}">${esc(h.text)}</div>
+      <span class="more" data-more="${items.length-1-i}">展开全文</span>
+    </div>`).join('');
+  $$('#histList [data-more]').forEach(b=>b.onclick=()=>{
+    const t = document.querySelector(`#histList .t[data-t="${b.dataset.more}"]`);
+    t.classList.toggle('open');
+    b.textContent = t.classList.contains('open') ? '收起' : '展开全文';
+  });
+  $$('#histList [data-load]').forEach(b=>b.onclick=()=>{
+    const h = items[+b.dataset.load]; if(!h) return;
+    $('#resultText').textContent = h.text; lastRaw = h.text;
+    $('#stChars').textContent = h.text.length;
+    toast('已载入历史反馈，可继续修改');
+    $('#cOut').scrollIntoView({behavior:'smooth',block:'start'});
+  });
+  $$('#histList [data-dh]').forEach(b=>b.onclick=()=>{
+    const n2 = currentStu || val('studentName');
+    if(!history[n2]) return;
+    const _idx = +b.dataset.dh;
+    history[n2].splice(_idx,1);
+    deleteHistoryItemAdapter(n2, _idx);
+    if(!NEXT_MODE) saveHistory();
+    renderHist();
+  });
+}
+function saveToHistory(){
+  const n = val('studentName');
+  const text = $('#resultText').innerText.trim();
+  if(!n){ toast('请先填写学生姓名'); return; }
+  if(!text){ toast('还没有生成内容'); return; }
+  history[n] = history[n] || [];
+  const t = getType();
+  history[n].push({
+    text,
+    date: val('dateInput'),
+    typeId: t.id,
+    typeName: t.name.replace(/^\S+\s*/,''),
+    subject: getSubject(),
+    saved: new Date().toISOString()
+  });
+  saveHistory(); currentStu = currentStu || n;
+  renderHist(); renderStuList();
+  toast('已存入「'+n+'」的记录（共 '+history[n].length+' 条）');
+}
+
+/* ==========================================================================
+   11. 管理关键词
+   ========================================================================== */
+function renderManage(){
+  const cats = getCategories();
+  let html = '';
+  cats.forEach((cat,ci)=>{
+    html += `<div class="cat" style="margin-bottom:12px">
+      <summary style="list-style:none;display:flex;align-items:center;gap:8px;padding:9px 12px;background:#fbfcfe;font-weight:700;font-size:13px">
+        <span>📂 ${esc(cat.name)}</span><span style="margin-left:auto"></span>
+        <button class="btn btn-gh btn-xs" data-act="del-cat" data-ci="${ci}">删除分类</button>
+      </summary>
+      <div class="body">
+        <div class="grid">`;
+    cat.keywords.forEach((kw,ki)=>{
+      html += `<span class="chip" style="cursor:default">${esc(kw)}
+        <button data-act="del-kw" data-ci="${ci}" data-ki="${ki}"
+          style="color:#c62828;font-size:14px;line-height:1;padding:0 2px">×</button></span>`;
+    });
+    if(!cat.keywords.length) html += `<span class="tip">暂无关键词</span>`;
+    html += `</div>
+        <div style="display:flex;gap:6px;margin-top:9px">
+          <input type="text" placeholder="添加关键词，回车即可" data-add="${ci}"
+            style="flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;outline:none">
+          <button class="btn btn-pri btn-xs" data-act="add-kw" data-ci="${ci}">＋ 添加</button>
+        </div>
+      </div></div>`;
+  });
+  $('#manageCategories').innerHTML = html || '<p class="tip">暂无分类。</p>';
+
+  $$('#manageCategories [data-act="del-cat"]').forEach(b=>b.onclick=()=>{
+    const ci=+b.dataset.ci, cats2=getCategories();
+    if(cats2[ci] && confirm('删除分类「'+cats2[ci].name+'」及其全部关键词？')){
+      cats2.splice(ci,1); allData[getSubject()].categories=cats2; saveData(); renderManage(); renderGenerate();
+    }
+  });
+  $$('#manageCategories [data-act="del-kw"]').forEach(b=>b.onclick=()=>{
+    const ci=+b.dataset.ci, ki=+b.dataset.ki, cats2=getCategories();
+    if(cats2[ci] && cats2[ci].keywords[ki]!==undefined){
+      cats2[ci].keywords.splice(ki,1); allData[getSubject()].categories=cats2; saveData(); renderManage(); renderGenerate();
+    }
+  });
+  const addKw = (ci, txt)=>{
+    const cats2=getCategories();
+    if(!cats2[ci]) return;
+    txt = (txt||'').trim(); if(!txt) return;
+    if(cats2[ci].keywords.includes(txt)){ toast('已存在'); return; }
+    cats2[ci].keywords.push(txt); allData[getSubject()].categories=cats2; saveData();
+    renderManage(); renderGenerate(); toast('已添加：'+txt);
+  };
+  $$('#manageCategories [data-act="add-kw"]').forEach(b=>b.onclick=()=>{
+    const ci=+b.dataset.ci;
+    addKw(ci, document.querySelector(`#manageCategories [data-add="${ci}"]`).value);
+  });
+  $$('#manageCategories [data-add]').forEach(inp=>{
+    inp.addEventListener('keydown', e=>{
+      if(e.key==='Enter'){ addKw(+inp.dataset.add, inp.value); }
+    });
+  });
+}
+
+/* ==========================================================================
+   12. 短语库
+   ========================================================================== */
+function renderPhrases(){
+  $('#phraseList').innerHTML = phrases.length
+    ? phrases.map((p,i)=>`<span class="chip" data-copy="${i}" title="点击复制">${esc(p)}
+        <button data-del="${i}" style="color:#c62828;font-size:14px;line-height:1;padding:0 2px">×</button></span>`).join('')
+    : '<p class="tip">还没有短语。</p>';
+  $$('#phraseList [data-copy]').forEach(el=>el.onclick=e=>{
+    if(e.target.dataset.del!==undefined) return;
+    const t = phrases[+el.dataset.copy];
+    navigator.clipboard.writeText(t).then(()=>toast('已复制：'+t)).catch(()=>toast('复制失败'));
+  });
+  $$('#phraseList [data-del]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();
+    phrases.splice(+b.dataset.del,1); savePhrases(); renderPhrases();
+  });
+}
+
+/* ==========================================================================
+   13. 复制与导出
+   ========================================================================== */
+function copyRich(){
+  const txt = $('#resultText').innerText;
+  if(!txt.trim()){ toast('还没有生成内容'); return; }
+  const html = $('#resultText').innerHTML.replace(/\n/g,'<br>');
+  if(window.ClipboardItem && navigator.clipboard.write){
+    const item = new ClipboardItem({
+      'text/html': new Blob([html],{type:'text/html'}),
+      'text/plain': new Blob([txt],{type:'text/plain'})
+    });
+    navigator.clipboard.write([item]).then(()=>toast('已复制（保留换行与加粗）'))
+      .catch(()=>navigator.clipboard.writeText(txt).then(()=>toast('已复制')));
+  }else{
+    navigator.clipboard.writeText(txt).then(()=>toast('已复制'));
+  }
+}
+function fallbackCopy(txt){
+  const ta = document.createElement('textarea');
+  ta.value = txt; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); toast('已复制'); }catch(e){ toast('复制失败，请手动选择'); }
+  ta.remove();
+}
+function copyPlain(){
+  const txt = $('#resultText').innerText;
+  if(!txt.trim()){ toast('还没有生成内容'); return; }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(()=>toast('纯文本已复制')).catch(()=>fallbackCopy(txt));
+  }else fallbackCopy(txt);
+}
+function exportWord(){
+  const txt = $('#resultText').innerText;
+  if(!txt.trim()){ toast('还没有生成内容'); return; }
+  const n = val('studentName') || '学生';
+  const d = val('dateInput') || '';
+  const body = txt.split('\n').map(l=>
+    l.trim()==='' ? '<p style="margin:0">&nbsp;</p>'
+                  : `<p style="margin:0 0 4pt 0;line-height:1.6">${esc(l)}</p>`).join('');
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+  <head><meta charset="utf-8"><title>${esc(n)}反馈</title>
+  <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+  <style>
+    @page{size:A4;margin:2.2cm 2cm}
+    body{font-family:"宋体",SimSun,serif;font-size:11pt;line-height:1.7;color:#000}
+    p{margin:0 0 4pt 0}
+    .hd{font-family:"微软雅黑";font-size:13pt;font-weight:bold;margin-bottom:10pt}
+  </style></head><body>
+  <p class="hd">${esc(n)}　${esc(d)}　${esc(SUBJECT_NAME[getSubject()]||'')}反馈</p>
+  ${body}
+  </body></html>`;
+  const blob = new Blob(['\ufeff', html], {type:'application/msword;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${n}${d?'-'+d.replace(/[\\/:*?"<>|]/g,'') : ''}-反馈.doc`;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 900);
+  toast('已导出 Word 文档');
+}
+
+/* ==========================================================================
+   14. AI 润色
+   ========================================================================== */
+const DEFAULT_PROMPT = '你是资深高中数学教师，正在给家长写课后反馈。请把下面的反馈润色扩写：'
+  + '保留原有的全部事实与关键信息（学生姓名、分数、知识点、作业要求一个都不能改或删），'
+  + '语气温和专业、面向家长，句子更连贯自然，字数扩充 30%~50%。'
+  + '直接输出润色后的正文，不要加任何解释、标题或 markdown 符号。';
+
+function loadApiCfg(){
+  const def = {apiKey:'', apiBase:'https://api.deepseek.com/v1', model:'deepseek-chat', prompt:DEFAULT_PROMPT};
+  try{ const s = localStorage.getItem(API_KEY); if(s) return Object.assign(def, JSON.parse(s)); }catch(e){}
+  return def;
+}
+function applyApiCfg(){
+  const c = loadApiCfg();
+  $('#apiKeyInput').value = c.apiKey || '';
+  $('#apiBaseInput').value = c.apiBase || '';
+  $('#modelNameInput').value = c.model || '';
+  $('#promptInput').value = c.prompt || DEFAULT_PROMPT;
+}
+function saveApiCfg(){
+  localStorage.setItem(API_KEY, JSON.stringify({
+    apiKey: val('apiKeyInput'), apiBase: val('apiBaseInput'),
+    model: val('modelNameInput'), prompt: val('promptInput')
+  }));
+}
+async function polish(){
+  const src = $('#resultText').innerText.trim();
+  if(!src){ toast('请先生成反馈'); return; }
+  const btn = $('#btnPolish');
+  btn.disabled = true; const old = btn.textContent; btn.textContent = '⏳ 润色中';
+
+  try{
+    let out = '';
+
+    /* —— 集成到 Next 应用：只走服务端代理，Key 放在服务器环境变量 —— */
+    if(API.mode === 'next'){
+      const res = await fetch('/api/feedback/ai', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ text: src, prompt: (loadApiCfg().prompt || DEFAULT_PROMPT) })
+      });
+      const d = await res.json().catch(()=>null);
+      if(res.status === 403){
+        toast((d && d.error) || 'AI 润色为会员专属功能', 3200);
+        return;
+      }
+      if(!res.ok || !d || !d.ok) throw new Error((d && d.error) || ('接口返回 '+res.status));
+      out = d.text || '';
+    }
+    /* —— 联网版（另一种后端）：走服务器代理 —— */
+    else if(API.mode === 'server' && API.serverCfg && API.serverCfg.hasKey){
+      const d = await apiFetch('api/ai', {method:'POST', body:{ text: src }});
+      if(!d || !d.ok) throw new Error(d && d.error ? d.error : '服务器未返回内容');
+      out = d.text || '';
+    }
+    /* —— 本机版：用浏览器里自己填的 Key —— */
+    else{
+      const cfg = loadApiCfg();
+      if(!cfg.apiKey){ toast('请先配置 API Key'); openMask('#maskAI'); return; }
+      const res = await fetch(cfg.apiBase.replace(/\/+$/,'') + '/chat/completions', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+cfg.apiKey},
+        body: JSON.stringify({
+          model: cfg.model,
+          messages:[{role:'system',content: cfg.prompt || DEFAULT_PROMPT},
+                    {role:'user',content: src}],
+          temperature:0.7, max_tokens:2000
+        })
+      });
+      if(!res.ok) throw new Error('接口返回 '+res.status);
+      const data = await res.json();
+      out = (data.choices && data.choices[0] && data.choices[0].message
+             && data.choices[0].message.content) || '';
+    }
+
+    if(!out.trim()) throw new Error('返回内容为空');
+    $('#resultText').textContent = out.trim();
+    $('#stChars').textContent = out.trim().length;
+    toast('润色完成，可继续手动修改');
+  }catch(e){
+    toast('润色失败：' + e.message, 3200);
+  }finally{
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+/* ==========================================================================
+   15. 事件绑定
+   ========================================================================== */
+function bind(){
+  $('#subjectSelect').onchange = ()=>{ refreshGreetingOptions(); renderGenerate(); renderManage(); };
+  $('#templateSelect').onchange = ()=>{
+    refreshGreetingOptions();
+    const t = getType();
+    // 多人模式加一个分组说明输入框
+    let box = $('#groupBox');
+    if(t.id==='group' && !box){
+      box = document.createElement('details');
+      box.className='cat'; box.id='groupBox'; box.open = true;
+      box.innerHTML = `<summary><span class="arw">▶</span>👥 逐个孩子的情况（每行一个：姓名：说明）</summary>
+        <div class="body"><textarea id="groupNotes" placeholder="欣怡：基础知识点掌握很好，但综合运用容易失误&#10;韵雅：态度不错，肯动手，但思考不够深入"></textarea></div>`;
+      $('#scoreBox').parentNode.insertBefore(box, $('#scoreBox'));
+    }else if(t.id!=='group' && box){ box.remove(); }
+    $('#scoreBox').open = t.sections.includes('score');
+    toast(t.name.replace(/^\S+\s*/,'') + '：' + t.hint);
+  };
+  ['studentName','salutationSelect','teacherInput','dateInput','greetingTemplate']
+    .forEach(id=>{ const e=document.getElementById(id); if(e) e.addEventListener('input', updateGreetPreview);
+                   if(e) e.addEventListener('change', updateGreetPreview); });
+
+  $('#btnSaveStu').onclick = saveCurrentStudent;
+  $('#btnStudents').onclick = ()=>{ renderStudentModal(); openMask('#maskStudents'); };
+  $('#btnCopy').onclick = copyRich;
+  $('#btnCopy2').onclick = copyRich;
+  $('#btnCopyPlain').onclick = copyPlain;
+  $('#btnExport').onclick = exportWord;
+  $('#btnExport2').onclick = exportWord;
+  $('#btnPrint').onclick = ()=>window.print();
+  $('#btnManage').onclick = ()=>{ renderManage(); openMask('#maskManage'); };
+  $('#btnPhrases').onclick = ()=>{ renderPhrases(); openMask('#maskPhrase'); };
+  $('#btnPolish').onclick = polish;
+  // 生成入口：手机端顶部 + 参数区大按钮 + 结果区按钮，三处都能生成
+  const doGenerate = ()=>{
+    generate();
+    const out = $('#resultText').innerText.trim();
+    toast(out ? ('已生成 ' + out.length + ' 字反馈') : '还没有勾选关键词');
+    if(window.innerWidth <= 1080){
+      const el = document.getElementById('cOut');
+      const top = el.getBoundingClientRect().top + window.pageYOffset
+                - (document.querySelector('header').offsetHeight || 52) - 46;
+      window.scrollTo({top: Math.max(0, top), behavior:'smooth'});
+    }
+  };
+  $('#btnGen').onclick = doGenerate;
+  $('#btnGenMobile').onclick = doGenerate;
+  $('#btnRestore').onclick = ()=>{
+    if(!lastRaw){ toast('没有可还原的原始内容'); return; }
+    $('#resultText').textContent = lastRaw; $('#stChars').textContent = lastRaw.length;
+    toast('已还原为生成时的内容');
+  };
+  $('#btnClearSel').onclick = ()=>{
+    $$('#generateCategories input[type="checkbox"]').forEach(cb=>cb.checked=false);
+    updateCounts(); toast('已清空选择');
+  };
+  $('#btnSaveHist').onclick = saveToHistory;
+
+  $('#addCategoryBtn').onclick = ()=>{
+    if(NEXT_MODE){ toast('关键词库由管理员统一维护，如需修改请联系管理员（管理后台 → 反馈关键词）', 3600); return; }
+    const n = val('newCategoryName'); if(!n){ toast('请输入分类名称'); return; }
+    const cats = getCategories();
+    if(cats.some(c=>c.name===n)){ toast('已存在'); return; }
+    cats.push({name:n, keywords:[]});
+    allData[getSubject()].categories = cats; saveData();
+    $('#newCategoryName').value=''; renderManage(); renderGenerate(); toast('已添加分类');
+  };
+  $('#addPhraseBtn').onclick = ()=>{
+    if(NEXT_MODE){ toast('关键词库由管理员统一维护，如需修改请联系管理员（管理后台 → 反馈关键词）', 3600); return; }
+    const t = val('newPhraseInput'); if(!t){ toast('请输入短语'); return; }
+    if(phrases.includes(t)){ toast('已存在'); return; }
+    phrases.push(t); savePhrases(); $('#newPhraseInput').value=''; renderPhrases();
+  };
+  $('#btnAddStuFromModal').onclick = ()=>{ closeMask('#maskStudents'); $('#studentName').focus(); toast('请在左侧输入姓名后点「保存档案」'); };
+  $('#btnClearStu').onclick = ()=>{
+    if(confirm('清空全部学生档案与历史记录？此操作不可恢复。')){
+      if(NEXT_MODE) toast('正在从云端删除…', 1600);
+      const _names = Object.keys(students);
+      students={}; history={}; currentStu=null;
+      if(NEXT_MODE){ _names.forEach(n=>deleteStudentAdapter(n)); }
+      else { saveStudents(); saveHistory(); }
+      renderStudentModal(); renderStuList(); renderHist(); toast('已清空');
+    }
+  };
+
+  $('#btnResetKw').onclick = ()=>{
+    if(NEXT_MODE){ toast('关键词库由管理员统一维护，如需修改请联系管理员（管理后台 → 反馈关键词）', 3600); return; }
+    const s = getSubject();
+    if(!confirm('恢复「'+(SUBJECT_NAME[s]||s)+'」的默认关键词？当前自定义会被覆盖。')) return;
+    allData[s] = JSON.parse(JSON.stringify(DEFAULT_DATA[s] || DEFAULT_DATA.general));
+    saveData(); renderGenerate(); renderManage(); toast('已恢复默认');
+  };
+  $('#btnExportCfg').onclick = ()=>{
+    if(NEXT_MODE) toast('导出内容为你账号下的档案与历史', 2600);
+    const blob = new Blob([JSON.stringify({allData, phrases, students, history, time:new Date().toISOString()},null,2)],
+      {type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='反馈工作台配置-'+new Date().toISOString().slice(0,10)+'.json'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 900);
+  };
+  $('#btnImportCfg').onclick = ()=>$('#importFileInput').click();
+  $('#importFileInput').onchange = e=>{
+    const f = e.target.files[0]; if(!f) return;
+    const r = new FileReader();
+    r.onload = ev=>{
+      try{
+        const d = JSON.parse(ev.target.result);
+        if(NEXT_MODE){ toast('云端版不支持导入配置（会覆盖共享关键词库）', 3600); return; }
+        if(!confirm('导入将覆盖当前的关键词与档案，确定继续？')) return;
+        if(d.allData) { allData = d.allData; saveData(); }
+        if(d.phrases){ phrases = d.phrases; savePhrases(); }
+        if(d.students){ students = d.students; saveStudents(); }
+        if(d.history){ history = d.history; saveHistory(); }
+        fillSelects(); renderGenerate(); renderManage(); renderPhrases(); renderStuList(); renderHist();
+        toast('导入成功');
+      }catch(err){ toast('文件格式不对'); }
+    };
+    r.readAsText(f);
+  };
+
+  // AI
+  $('#btnSaveApi').onclick = ()=>{ saveApiCfg(); toast('已保存'); };
+  $('#btnTestApi').onclick = async ()=>{
+    const c = loadApiCfg();
+    if(!c.apiKey){ toast('请先填 API Key'); return; }
+    toast('测试中…');
+    try{
+      const r = await fetch(c.apiBase.replace(/\/+$/,'')+'/models',
+        {headers:{Authorization:'Bearer '+c.apiKey}});
+      toast(r.ok ? '连接成功' : '连接失败：'+r.status);
+    }catch(e){ toast('无法连接，检查地址或网络'); }
+  };
+  $('#btnClearApi').onclick = ()=>{
+    localStorage.removeItem(API_KEY); applyApiCfg(); toast('已清除');
+  };
+
+  /* ---- 服务器与 AI 设置 ---- */
+  $('#btnServer').onclick = ()=>{
+    renderServerModal(); openMask('#maskServer');
+  };
+  $('#btnSaveServer').onclick = async ()=>{
+    const tok = val('writeTokenInput');
+    if(tok) setWriteToken(tok);
+    const body = {
+      writeToken: getWriteToken(),
+      apiKey: val('serverKeyInput'),
+      apiBase: val('serverBaseInput'),
+      model: val('serverModelInput'),
+      prompt: val('serverPromptInput')
+    };
+    try{
+      const d = await apiFetch('api/config', {method:'POST', body});
+      if(d && d.ok){
+        toast('已保存到服务器，所有用户都能用 AI 润色了');
+        API.isAdmin = true; API.serverCfg.hasKey = !!(body.apiKey || API.serverCfg.hasKey);
+        await pullServerData(); renderGenerate(); renderManage(); renderPhrases(); updateModeBadge();
+      }else{
+        toast('保存失败：' + (d && d.error ? d.error : '口令可能不对'), 3200);
+      }
+    }catch(e){ toast('保存失败：' + e.message, 3200); }
+  };
+  $('#btnReloadFromServer').onclick = async ()=>{
+    const okp = await pullServerData();
+    renderGenerate(); renderManage(); renderPhrases();
+    toast(okp ? '已从服务器拉取最新关键词库' : '拉取失败');
+  };
+
+  /* ---- 访问口令 ---- */
+  const submitPass = async ()=>{
+    const v = val('passInput');
+    if(!v){ toast('请输入口令'); return; }
+    setAccessPass(v);
+    try{
+      const d = await apiFetch('api/login', {method:'POST', body:{pass:v}});
+      if(d && d.ok){
+        closeMask('#maskPass'); _passAsked = false;
+        toast('口令正确，正在载入关键词库…');
+        const okp = await pullServerData();
+        if(okp){ renderGenerate(); renderManage(); renderPhrases(); }
+        updateModeBadge();
+      }else{ toast('口令不正确'); setAccessPass(''); }
+    }catch(e){
+      if(String(e.message).includes('401')) toast('口令不正确');
+      else toast('连接失败：' + e.message);
+      setAccessPass('');
+    }
+  };
+  $('#btnPassOk').onclick = submitPass;
+  const pi = document.getElementById('passInput');
+  if(pi) pi.addEventListener('keydown', e=>{ if(e.key === 'Enter') submitPass(); });
+
+  // 移动端顶部导航：三个区块都常显，这里只负责「跳转 + 高亮」
+  $$('.mobilebar button').forEach(b=>b.onclick=()=>{
+    $$('.mobilebar button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    const el = document.getElementById(b.dataset.col);
+    if(el){
+      const top = el.getBoundingClientRect().top + window.pageYOffset
+                - (document.querySelector('header').offsetHeight || 52) - 46;
+      window.scrollTo({top: Math.max(0, top), behavior:'smooth'});
+    }
+  });
+
+  // 滚动时自动高亮当前所在区块
+  if('IntersectionObserver' in window){
+    const secs = ['cSetup','cKeys','cOut'].map(id=>document.getElementById(id)).filter(Boolean);
+    const io = new IntersectionObserver(entries=>{
+      entries.forEach(en=>{
+        if(!en.isIntersecting) return;
+        const id = en.target.id;
+        $$('.mobilebar button').forEach(x=>x.classList.toggle('on', x.dataset.col===id));
+      });
+    }, {rootMargin:'-25% 0px -60% 0px'});
+    secs.forEach(s=>io.observe(s));
+  }
+
+  // 预览区字数
+  $('#resultText').addEventListener('input', ()=>{ $('#stChars').textContent = $('#resultText').innerText.length; });
+}
+
+/* ==========================================================================
+   16. 启动
+   ========================================================================== */
+
+/* 手机端：默认收起次要的折叠组，页面短、不乱、一眼看到重点 */
+function compactForPhone(){
+  if(!(window.matchMedia && window.matchMedia('(max-width:1080px)').matches)) return;
+  // 参数区：收起「成绩数据」「补充说明」
+  document.querySelectorAll('#cSetup details').forEach(d=>{ d.open = false; });
+  // 关键词区：默认全部收起，只看到分类名与已选数量
+  document.querySelectorAll('#generateCategories details.cat').forEach(d=>{ d.open = false; });
+}
+function init(){
+  fillSelects();
+  // 日期默认今天
+  const now = new Date();
+  $('#dateInput').value = (now.getMonth()+1) + '月' + now.getDate() + '日';
+  $('#subjectSelect').value = 'math';
+  $('#templateSelect').value = 'regular';
+  $('#teacherInput').value = '数学郭老师';
+  refreshGreetingOptions();
+  applyApiCfg();
+  bind();
+  renderStuList();
+  renderGenerate();
+  renderManage();
+  renderPhrases();
+  renderHist();
+  updateGreetPreview();
+  $('#curStuHint').textContent = '未选择';
+  updateModeBadge();
+  compactForPhone();
+
+  /* 探测服务器模式：是联网版就拉取共享关键词库 */
+  detectServer().then(isServer=>{
+    updateModeBadge();
+    const box = document.getElementById('serverBox');
+    const line = document.getElementById('serverLine');
+    if(API.mode === 'next'){
+      if(box) box.style.display = 'block';
+      if(line) line.textContent = API.isAdmin
+        ? '☁️ 云端版（管理员）— 关键词库全员共享，可在此维护'
+        : '☁️ 云端版 — 关键词库来自服务器；档案与历史保存在你的账号下';
+      const sh = document.getElementById('syncHint');
+      if(sh) sh.textContent = '✅ AI 润色由服务器代理（会员专属）';
+      return bootFromApi().then(okp=>{
+        if(okp){
+          renderGenerate(); renderManage(); renderPhrases(); renderStuList(); renderHist();
+          if(sh) sh.textContent = '✓ 已载入云端数据';
+        }else if(sh){
+          sh.textContent = '⚠️ 云端数据载入失败，请刷新重试';
+        }
+      });
+    }
+    if(isServer){
+      if(box) box.style.display = 'block';
+      if(line) line.textContent = API.isAdmin ? '🌐 联网版（管理员）— 关键词库全员共享' : '🌐 联网版 — 关键词库来自服务器';
+      const sh = document.getElementById('syncHint');
+      if(sh) sh.textContent = API.serverCfg.hasKey ? '✅ 服务器已配置 AI，直接点「AI 润色」即可' : 'ℹ️ 服务器未配置 AI';
+      return pullServerData().then(okp=>{
+        if(okp){
+          renderGenerate(); renderManage(); renderPhrases();
+          if(sh) sh.textContent = '✓ 已载入服务器关键词库';
+        }
+      });
+    }else if(box){
+      box.style.display = 'block';
+      if(line) line.textContent = '💾 本机版 — 数据只保存在这台设备的浏览器';
+      const sh = document.getElementById('syncHint');
+      if(sh) sh.textContent = '放到服务器上访问即自动切换为联网版';
+    }
+  }).catch(()=>{});
+}
+init();
+
+})();
+</script>
+</body>
+</html>

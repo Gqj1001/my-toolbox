@@ -73,3 +73,23 @@ export async function isCurrentUserBanned(): Promise<boolean> {
 
   return data?.status === "banned";
 }
+
+/**
+ * 校验调用者是否为有效会员（Server Action / API Route 的权威校验）。
+ * 与 requireAdmin 一样，前端判断不构成安全边界。
+ */
+export async function requireVip() {
+  const membership = await getMembership();
+
+  if (!membership.user) {
+    return { ok: false as const, reason: "unauthenticated" as const };
+  }
+  if (membership.status === "banned") {
+    return { ok: false as const, reason: "banned" as const };
+  }
+  if (!membership.isVip) {
+    return { ok: false as const, reason: "not_vip" as const };
+  }
+
+  return { ok: true as const, membership };
+}

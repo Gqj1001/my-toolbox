@@ -18,6 +18,15 @@ function matchesPath(pathname: string, paths: string[]) {
 }
 
 /**
+ * API 路径：未登录时返回 401 JSON，而不是重定向到登录页。
+ * 否则前端 fetch 拿到的是 HTML 登录页，且无法按状态码区分 401/403。
+ * （各 API Route 内部仍会自行校验身份，这里是第一道防线。）
+ */
+function isApiPath(pathname: string) {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
+/**
  * 应急管理员名单（可选）：逗号分隔的邮箱。
  * 用途仅限「user_roles 表尚未建好 / 尚未把自己设为 admin」时进入后台完成初始化。
  * 权限判定仍以数据库中的 role 为准。
@@ -86,9 +95,20 @@ export default async function proxy(request: NextRequest) {
     return redirectResponse;
   };
 
-  // 1) 未登录访问受保护页面 -> 跳转登录页，并记住原本要去的地址。
+  // 1) 未登录访问受保护页面 / API -> 跳转登录页（页面）或返回 401 JSON（API）。
   //    未登录时只认 PUBLIC_PATHS：包括 .html 工具资源在内，一律拦截，避免内容泄露。
   if (!user && !matchesPath(pathname, PUBLIC_PATHS)) {
+    if (isApiPath(pathname)) {
+      const unauthorized = NextResponse.json(
+        { ok: false, error: "请先登录。", code: "unauthenticated" },
+        { status: 401 },
+      );
+      for (const cookie of response.cookies.getAll()) {
+        unauthorized.cookies.set(cookie);
+      }
+      return unauthorized;
+    }
+
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = "";
@@ -122,7 +142,19 @@ export default async function proxy(request: NextRequest) {
     status = data?.status ?? null;
 
     // 3) 封禁拦截：status='banned' 的用户访问任何页面都跳到 /banned
+    //    API 路径返回 403 JSON，避免前端 fetch 拿到 HTML
     if (status === "banned") {
+      if (isApiPath(pathname)) {
+        const forbidden = NextResponse.json(
+          { ok: false, error: "账号已被封禁。", code: "banned" },
+          { status: 403 },
+        );
+        for (const cookie of response.cookies.getAll()) {
+          forbidden.cookies.set(cookie);
+        }
+        return forbidden;
+      }
+
       const bannedUrl = request.nextUrl.clone();
       bannedUrl.pathname = "/banned";
       bannedUrl.search = "";
