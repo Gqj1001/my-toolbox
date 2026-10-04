@@ -50,12 +50,20 @@ export default async function AdminPage() {
               ? `共 ${users.length} 位用户：${adminCount} 位管理员、${vipCount} 位有效会员、${bannedCount} 位已封禁。修改后立即生效。`
               : "读取用户列表失败。"}
           </p>
-          <Link
-            href="/admin/feedback-keywords"
-            className="mt-1 w-fit rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-          >
-            ✎ 反馈关键词管理 →
-          </Link>
+          <div className="mt-1 flex flex-wrap gap-2">
+            <Link
+              href="/admin/feedback-keywords"
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              ✎ 反馈关键词管理 →
+            </Link>
+            <Link
+              href="/admin/feedback-candidates"
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              🤖 AI 关键词审核 →
+            </Link>
+          </div>
         </div>
 
         {!result.ok ? (
