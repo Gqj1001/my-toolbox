@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>试卷分析工作台 · 郭庆杰</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="dot">📊</span>
+    <span>试卷分析工作台<small>郭庆杰</small></span>
+    <span id="modeBadge" class="badge">💾 本机版</span>
+  </div>
+  <div class="spacer"></div>
+  <button class="hbtn" id="btnGenMobile">✨ 生成报告</button>
+  <button class="hbtn" id="btnExport">⬇ 导出 Word</button>
+  <button class="hbtn pri" id="btnCopy">📋 复制报告</button>
+</header>
+
+<div class="steps">
+  <button class="on" data-col="cPaper"><b>①</b> 导入试卷</button>
+  <button data-col="cScore"><b>②</b> 录入成绩</button>
+  <button data-col="cReport"><b>③</b> 生成报告</button>
+</div>
+
+<div class="wrap">
+
+  <!-- ==================== ① 试卷 ==================== -->
+  <section class="col on" id="cPaper">
+    <div class="panel">
+      <h2>📥 从学科网导入试卷 <span class="sp" id="paperHint">未导入</span></h2>
+      <div class="pad">
+        <p class="tip">
+          三种方式任选：<b>① 上传文件</b>（推荐，.docx 最准）→ <b>② 粘贴文字</b>（从 Word 全选复制）→ <b>③ 上传截图</b>（需要配置视觉模型）。<br>
+          要导入的是学科网那份含<b>「整体难度／试卷题型／试卷难度／细目表分析／知识点分析」</b>的报告。
+        </p>
+        <div class="btn-row">
+          <input type="file" id="fileInput" accept=".docx,.doc,.pdf,.txt,image/*" style="display:none">
+          <button class="btn btn-pri" id="btnUpload">📎 上传文件解析</button>
+          <button class="btn btn-gh" id="btnPasteToggle">⌨️ 改用粘贴文字</button>
+          <button class="btn btn-gh" id="btnDemo">载入示例</button>
+          <button class="btn btn-gh" id="btnClearPaper">清空</button>
+        </div>
+        <p class="tip" id="uploadHint">
+          支持 <b>.docx</b>（直接解包抽文本，最准）、<b>.doc</b>、<b>.pdf</b>、<b>截图</b>。
+          截图与扫描版 PDF 需要先在「服务器与AI设置」里配置视觉模型。
+        </p>
+        <div id="pasteBox" style="display:none">
+          <textarea id="paperPaste" placeholder="在此粘贴学科网「试卷分析报告」的全部文字…"></textarea>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="btn btn-pri" id="btnParse">🔍 解析文字</button>
+          </div>
+        </div>
+        <div id="parseResult"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="paperPanel" style="display:none">
+      <h2>📋 试卷信息 <span class="sp" id="paperTitle"></span></h2>
+      <div class="pad">
+        <div class="f3">
+          <div class="f"><label>考试名称</label><input type="text" id="examName" placeholder="如 入学测试 / 结课测试 / 周测"></div>
+          <div class="f"><label>考试日期</label><input type="text" id="examDate" placeholder="如 2026年8月29日"></div>
+          <div class="f"><label>时长</label><input type="text" id="examDuration" value="120min"></div>
+        </div>
+        <div class="f2">
+          <div class="f"><label>卷面总分</label><input type="number" id="examTotal" value="150" min="10" max="300"></div>
+          <div class="f"><label>卷面结构（决定每题分值）</label><select id="examPreset"></select></div>
+        </div>
+        <div class="f"><label>考试范围（默认取自报告的「考试范围」）</label>
+          <input type="text" id="examScope" placeholder="逗号分隔的模块名"></div>
+        <div class="f"><label>授课内容（本次考前已讲过的模块，可留空）</label>
+          <input type="text" id="examTaught" placeholder="如 平面向量,解三角形"></div>
+
+        <h3 class="sub">分值分配（可直接改）</h3>
+        <table class="kv" id="scoreTable"></table>
+        <p class="tip" id="scoreSumHint"></p>
+        <div class="f2" style="margin-top:8px">
+          <div class="f"><label>整体难度（取自报告）</label><input type="text" id="examDiff" placeholder="适中"></div>
+          <div class="f"><label>难度分档对照</label><input type="text" id="diffMapping" readonly></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="qPanel" style="display:none">
+      <h2>🔎 解析结果 <span class="sp" id="qCount"></span></h2>
+      <div class="pad" id="qListWrap"></div>
+    </div>
+  </section>
+
+  <!-- ==================== ② 录入成绩 ==================== -->
+  <section class="col" id="cScore">
+    <div class="panel">
+      <h2>👤 学生信息</h2>
+      <div class="pad">
+        <div class="f3">
+          <div class="f"><label>姓名</label><input type="text" id="stuName" placeholder="必填" autocomplete="off"></div>
+          <div class="f"><label>性别</label><select id="stuGender"><option value="">不填</option><option>男</option><option>女</option></select></div>
+          <div class="f"><label>年级</label><select id="stuGrade"></select></div>
+        </div>
+        <div class="f3">
+          <div class="f"><label>科目</label><select id="stuSubject"></select></div>
+          <div class="f"><label>教师</label><input type="text" id="stuTeacher" value="郭庆杰"></div>
+          <div class="f"><label>学管师</label><input type="text" id="stuManager" placeholder="可不填"></div>
+        </div>
+        <div class="f3">
+          <div class="f"><label>班级（手填项，默认留白）</label><input type="text" id="stuClass" placeholder="不填则导出的 Word 里留空"></div>
+          <div class="f" style="display:flex;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12.5px;color:var(--ink2);margin:0;padding-bottom:9px">
+              <input type="checkbox" id="fillClass" style="width:16px;height:16px;flex:none">
+              导出时把班级填进 Word
+            </label>
+          </div>
+          <div class="f"><label> </label><span class="tip" style="margin:0">不勾选 → 班级格保持空白，由你手写</span></div>
+        </div>
+        <div class="btn-row" id="stuChips"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>✍️ 逐题得分 <span class="sp" id="scoreHint"></span></h2>
+      <div class="pad">
+        <div class="btn-row" style="margin-bottom:10px">
+          <button class="btn btn-out btn-sm" id="btnFillFull">全部按满分</button>
+          <button class="btn btn-out btn-sm" id="btnFillEasy">容易题满分·其余留空</button>
+          <button class="btn btn-gh btn-sm" id="btnFillZero">全部清零</button>
+          <button class="btn btn-gh btn-sm" id="btnPhoto">📷 拍照识别答题卡</button>
+          <input type="file" id="photoInput" accept="image/*" style="display:none">
+        </div>
+        <p class="tip">
+          只填<b>失分的题</b>即可，没填的默认按满分算。也可以在备注里写一句话（如"第二问空白"），
+          程序会结合它判断失分类型——写了的备注会优先用作该题的原因原文。
+        </p>
+        <div id="scoreList"></div>
+        <div class="scoreTotal" id="scoreTotal"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>📝 学情补充 <span class="sp">会写进报告</span></h2>
+      <div class="pad">
+        <div class="f"><label>学生进步点（留空则程序自动推导）</label>
+          <input type="text" id="stuProgress" placeholder="如 知识掌握较快，但需多加巩固"></div>
+        <div class="f"><label>学习态度与课堂表现</label>
+          <input type="text" id="stuAttitude" placeholder="如 课上认真、愿意动笔，但课下练习量不足"></div>
+        <div class="f"><label>需要特别强调的话（会原样附在建议段末尾）</label>
+          <textarea id="stuNote" placeholder="如：家长会时已沟通过，本轮重点是先把基础题的正确率提上来"></textarea></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== ③ 报告 ==================== -->
+  <section class="col" id="cReport">
+    <div class="panel">
+      <div class="pv-head">
+        <span class="name" id="pvName">试卷分析报告</span>
+        <span class="meta" id="pvMeta"></span>
+        <span class="spacer"></span>
+        <button class="btn btn-pri btn-xs" id="btnGen">✨ 生成报告</button>
+        <button class="btn btn-ok btn-xs" id="btnPolishAll">✨ AI 润色</button>
+        <button class="btn btn-gh btn-xs" id="btnRestore">↺ 还原</button>
+      </div>
+      <div class="preview" id="reportText" contenteditable="true"></div>
+      <div class="stat">
+        <span>字数 <b id="stChars">0</b></span>
+        <span>错题 <b id="stWrong">0</b></span>
+        <span id="stHint"></span>
+      </div>
+      <div class="pad noprint" style="border-top:1px solid var(--line2)">
+        <div class="btn-row">
+          <button class="btn btn-ok btn-sm" id="btnDocx">⬇ 导出 Word 表格（.docx）</button>
+          <button class="btn btn-out btn-sm" id="btnCopy2">📋 复制文字版</button>
+          <button class="btn btn-gh btn-sm" id="btnSaveHist">💾 存入该生记录</button>
+          <button class="btn btn-gh btn-sm noprint" id="btnPrint">🖨 打印</button>
+          <button class="btn btn-gh btn-sm noprint" id="btnExport2">⬇ 导出 HTML</button>
+        </div>
+        <p class="tip">「导出 Word 表格」会生成和你模板一样的表格文档（学员信息／试卷分析／题型分布／错题分析），可直接打开填写打印。</p>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>🧠 AI 只重写「教学辅导建议」段 <span class="sp">可选</span></h2>
+      <div class="pad">
+        <p class="tip">
+          报告里的<b>表格数据</b>（试卷信息、题型分布、逐题分析）由程序按规则生成，保证准确；
+          <b>建议段</b>交给 AI 润色会更像你亲手写的。点一下按钮即可，AI 拿到的是已经算好的诊断结论，
+          不会改你的数据。
+        </p>
+        <div class="btn-row">
+          <button class="btn btn-ok btn-sm" id="btnAIAdvice">✨ AI 改写建议段</button>
+          <button class="btn btn-gh btn-sm" id="btnServer">🔗 服务器与AI设置</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>🕘 该生历史报告 <span class="sp" id="histCount"></span></h2>
+      <div class="pad" id="histList"></div>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 服务器与 AI 设置 -->
+<div class="mask" id="maskServer">
+  <div class="modal">
+    <h3>🔗 服务器与 AI 设置 <span class="spacer"></span><button class="btn btn-gh btn-xs" data-close>关闭</button></h3>
+    <div class="mbody">
+      <div id="serverModeInfo" class="info"></div>
+      <div class="f"><label>🔑 管理员口令（保存公共配置时需要）</label>
+        <input type="password" id="writeTokenInput" placeholder="服务器上的 ADMIN_TOKEN" autocomplete="off"></div>
+      <hr>
+      <div class="f"><label>🤖 服务器端 API Key（配置后所有用户都能用 AI）</label>
+        <input type="password" id="serverKeyInput" placeholder="sk-xxx" autocomplete="off"></div>
+      <div class="f2">
+        <div class="f"><label>API 地址</label><input type="text" id="serverBaseInput" placeholder="https://api.deepseek.com/v1"></div>
+        <div class="f"><label>模型名称</label><input type="text" id="serverModelInput" placeholder="deepseek-chat"></div>
+      </div>
+      <div class="f2">
+        <div class="f"><label>视觉模型（用于拍照识别答题卡）</label>
+          <input type="text" id="visionModelInput" placeholder="如 glm-4v-flash / gpt-4o"></div>
+        <div class="f"><label> </label><span class="tip">留空则关闭拍照识别功能</span></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-pri btn-sm" id="btnSaveServer">保存到服务器</button>
+        <button class="btn btn-gh btn-sm" id="btnTestServer">测试连接</button>
+      </div>
+      <p class="tip">Key 只保存在服务器上，网页源码里搜不到，学生拿不走。</p>
+    </div>
+  </div>
+</div>
+
+<!-- 访问口令 -->
+<div class="mask" id="maskPass">
+  <div class="modal" style="max-width:400px">
+    <h3>🔒 需要访问口令</h3>
+    <div class="mbody">
+      <div class="f"><label>请输入老师提供的访问口令</label>
+        <input type="password" id="passInput" placeholder="访问口令" autocomplete="off"></div>
+    </div>
+    <div class="mfoot"><button class="btn btn-pri btn-sm" id="btnPassOk">进入</button></div>
+  </div>
+</div>
+
+<script src="js/kp-dict.js"></script>
+<script src="js/knowledge-classifier.js"></script>
+<script src="js/paper-parser.js"></script>
+<script src="js/error-engine.js"></script>
+<script src="js/narrator.js"></script>
+<script src="js/docx-builder.js"></script>
+<script src="js/template-data.js"></script>
+<script src="js/report-template.js"></script>
+<script src="js/report-docx.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

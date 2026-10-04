@@ -13,5 +13,16 @@
 *.woff2 binary
 *.zip binary
 
+# Office 文档同样是 zip 容器，绝不能被当文本处理
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.doc binary
+*.xls binary
+*.ppt binary
+
+# 内嵌了 Word 模板 base64 的生成文件：换行规范化会破坏内嵌数据
+public/tools/paper-analysis/js/template-data.js binary
+
 # 锁文件不参与 diff 统计
 pnpm-lock.yaml -diff
