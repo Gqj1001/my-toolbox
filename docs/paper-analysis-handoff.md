@@ -54,19 +54,46 @@ my-toolbox 网站已上线，此前已接入**课后反馈工作台**、完成**
 
 | 项目 | 状态 |
 |---|---|
-| 最新 commit | `d6a6b3a067fb6b7c6ec8a70ba9c251688cd26f33` —「接入试卷分析工作台到 my-toolbox」 |
-| 上一提交 | `fe1a6fab`（你之前的「模板化 Word 导出 + 第一批 6 个正确性修复」，本次一并推送） |
-| 是否已 push | ✅ 已推送。远端 `main` = `d6a6b3a0`，与本地 HEAD **SHA 完全相同**（非仅内容一致） |
-| 远端文件数 | 126（本地 126，无缺失、无多余） |
+| 最新 commit | `bc718e9f89a1d6047fa93c044d4a1bf3bf1b8767` —「试卷分析工作台：解答题分值逐题可编辑」 |
+| 上一提交 | `9992a5d`（`fe1a6fa` / `d6a6b3a` / `9992a5d` 在推送前就已在远端，随本次一并包含在历史里） |
+| 是否已 push | ✅ 已推送。远端 `main` = `bc718e9f`，与本地 HEAD **SHA 完全相同**（非仅内容一致） |
+| 远端文件数 | 130（推送前 127，+3 = 本次新增的 3 个验证脚本） |
 | Vercel 部署 | ❓ **未在本机 link**（无 `.vercel` 目录），我也没有执行任何部署。线上是否已自动构建需你确认 |
 | 本地 dev 服务器 | 当前**未运行**。需手动启动：`pnpm dev` → http://localhost:3000 |
 | 工作区 | 干净 |
-| 测试 | `next build` ✅ · `tests/paper-analysis.test.mjs` **56/56** ✅ · `tests/paper-regression.test.mjs` **17/17** ✅ |
+| 测试 | `next build` ✅ · `tests/paper-analysis.test.mjs` **56/56** ✅ · `tests/paper-regression.test.mjs` **17/17** ✅ · `tests/paper-score-edit.test.mjs` **59/59** ✅ · `tests/paper-score-ui.test.mjs` **35/35** ✅ · `tests/paper-score-report.test.mjs` **15/15** ✅ |
 
 **推送时的 SHA 对齐有个坑，记录在此**：我的推送脚本读 commit message 时用了 `.trim()`，
 去掉了结尾换行符，导致远端对象与本地对象字节不同 → SHA 不同（内容/tree 一致）。
 最后用穷举（时区 × 结尾换行 × ±1 秒）解出参数精确复刻，本地 ref 才指到远端 SHA。
 **以后改推送脚本不要 trim message。**
+
+---
+
+## 第二批：解答题分值逐题可编辑（已完成）
+
+**要解决的问题**：原来解答题按题型平均分配（77 ÷ 5 = 15.4），真实考卷每题分值不同（如 13/15/15/17/17），程序不该替老师平均。
+
+**改了什么**（只动 2 个文件：`js/app.js` +228/-29、`css/app.css` +46；`index.html` 未改）
+
+| # | 改动 |
+|---|---|
+| 1 | 分值分配表改「主行 + 可折叠子行」：主行显示题型/题量/`平均 X`，点 `▶` 展开该题型逐题分值输入框（`colspan=4` 子行内 flex 排）；默认全部收起 |
+| 2 | **拆掉核心 bug**：删除 `info.spread = Array.from(...)` 那句「改一下就压回平均」的覆写。改完后 `spread` 是唯一权威数据源，`info.total = sum(spread)`、`info.per` 降级为派生值（仅作收起态展示与兜底） |
+| 3 | 新增区间批量设置：「第[起]到[止]题，每题[V]分 + 应用」，按**题号**换算成该题型内的 `spread` 下标，只影响该题型 |
+| 4 | **事件委托**（第一批踩坑的根治）：`#scoreTable` 上在 `init()` 里只挂一次 `click` + 一次 `change`，靠 `data-*` 分派。改一道题只重建该题型的子行（`syncTypeAfterEdit`），**整表不再重建**，从结构上消灭「在事件处理器里重渲染整表 → change 监听器自我叠加」 |
+| 5 | 分值合理性提示：`computeScores()` 里抓 `baselineTotals` 快照，某题型总分与卷面预设不一致时在 `#scoreSumHint` 给温和提示（只提示不阻止，改回一致即消失） |
+| 6 | 新增 `ensureSpread()`：`assignScores` 在**非预设分支**不给客观题生成 `spread`（`paper-parser.js:389-394`），渲染前统一补齐，让逐题编辑对客观题也有落点；`seedRecords()` 的下标读取加越界兜底 |
+
+**未改**：`assignScores()` 的生成逻辑、`seedRecords()` 的缩放逻辑（`got/full` 比例缩放 + clamp 保留原样）。
+
+**验证**（3 个新脚本，共 109 项全绿）
+- `paper-score-edit.test.mjs` 59/59 —— 纯逻辑：分配/改分/批量/缩放 + 结构校验（含「`info.spread =` 全文件只允许出现 1 次」这类防回退断言）
+- `paper-score-ui.test.mjs` 35/35 —— 无头 Edge 真点：折叠/展开/改分/批量/提示消失/页面 0 异常
+- `paper-score-report.test.mjs` 15/15 —— **把生成的 docx 拆开抽回正文断言**：第 15 题 `13 | 7`、第 19 题 `17 | 12`、解答题总分 77、全文无 `15.4`（证明逐题分值真的进了 Word）
+- 原有 `56/56` + `17/17` 改后复跑仍全绿
+
+**验收缺口**：真实报告 docx 未入库，`模板-占位符.docx` 那条链路已覆盖。**待你在线上用真实月考报告实测**（重点看：① 是否命中卷面预设 ② 展开后题号是否与细目表一致）。
 
 ---
 
@@ -94,6 +121,9 @@ supabase/migrations/0010_seed_paper_analysis_tool.sql  tools 表注册（幂等�
 scripts/patch-paper-next.mjs                           接入补丁（幂等，可重放）
 tests/paper-analysis.test.mjs                          功能测试 56 项
 tests/paper-regression.test.mjs                        回归测试 17 项
+tests/paper-score-edit.test.mjs                        第二批·纯逻辑 59 项
+tests/paper-score-ui.test.mjs                          第二批·浏览器端到端 35 项
+tests/paper-score-report.test.mjs                      第二批·Word 报告链路 15 项
 .backup/paper-analysis/app.js.orig                     改造前原版（不进仓库）
 ```
 
@@ -113,16 +143,19 @@ tests/paper-regression.test.mjs                        回归测试 17 项
 - **不要动 membership 系统**（`src/lib/membership*`、`user_roles`、升级/封禁逻辑）。
 - 数据继续用 `localStorage`，**Supabase 迁移留待后续**（按既定约束）。
 - 工具本体是 `public/` 下的静态资源，**改动后不需要重新构建页面**，刷新即可。
+- **分值表的两条铁律**（第二批立下，别破坏）：① `scoreAssign.perType[t].spread` 是逐题分值的**唯一权威源**，
+  不要再写任何「整体覆写 spread」的代码（全文件只允许 `ensureSpread()` 一处）；
+  ② 事件一律走 `#scoreTable` 上的**委托**（`init()` 里只挂一次），**不要**在事件处理器里调用
+  `renderScoreAssignTable()` 重渲染整表 —— 那正是第一批「change 监听器自我叠加」的成因。
 - `.backup/`、`templates/parts/`、`*.legacy.mjs` 均已 gitignore，**不要提交**。
 
 ---
 
 ## 已知遗留问题
 
-1. **解答题分值还是平均值** —— 当前按题型平均分配，不能逐题单独设分。**第二批要做**。
-2. **视觉识别未启用** —— 上传图片/拍照识别答题卡都返回友好降级提示，非功能性。
-3. **会员 90 天按钮未做** —— 升级页缺少「90 天」档位的快捷按钮。
-4. **九大学科未做** —— 试卷分析的学科适配目前以数学为主（模板、词典、归因规则）。
+1. **视觉识别未启用** —— 上传图片/拍照识别答题卡都返回友好降级提示，非功能性。
+2. **会员 90 天按钮未做** —— 升级页缺少「90 天」档位的快捷按钮。
+3. **九大学科未做** —— 试卷分析的学科适配目前以数学为主（模板、词典、归因规则）。
 
 其他两个历史遗留（非本次引入，记录备查）：
 
@@ -136,11 +169,14 @@ tests/paper-regression.test.mjs                        回归测试 17 项
 
 ## 下一步计划
 
-**第二批：解答题分值逐题可编辑**
+**暂无指定的下一批。** 第二批（解答题分值逐题可编辑）已完成，见上方「第二批」小节。
 
-详细需求见下一条消息（新会话里再给）。要点预判：现在的 `scoreAssign.perType[type].spread`
-已经是「该题型逐题分值的数组」，UI 上只需把它从只读平均值改成可逐题编辑，
-并让 `seedRecords()` 的缩放逻辑继续生效（它已按 `spread[idx]` 取每题满分）。
+**唯一待办**：线上用真实月考报告实测一遍（真实报告 docx 未入库，`模板-占位符.docx` 那条链路已覆盖）。
+
+后续可做方向（未排期，按需选）：
+- **视觉识别启用** —— 路由结构已完整，配好 `AI_VISION_MODEL`（+ `AI_KEY`）即自动可用，不需要改代码。
+- **会员 90 天按钮** —— 升级页补「90 天」档位快捷按钮。
+- **九大学科适配** —— 目前模板、词典、归因规则都以数学为主。
 
 ---
 
