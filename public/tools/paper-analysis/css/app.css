@@ -104,6 +104,52 @@ table.kv th{background:#f5f8fd;font-weight:600;color:var(--ink2);text-align:cent
 table.kv input{width:100%;border:0;background:transparent;padding:4px;text-align:center;outline:none}
 table.kv input:focus{background:var(--brand-l2);border-radius:4px}
 
+/* ---------- 分值分配表：展开/收起（第二批） ----------
+   结构：每个题型两行 —— 主行 tr.trow + 子行 tr.sub（colspan=4）。
+   主行「题型」格里放一个 button.tgl 负责展开；子行内放逐题输入与区间批量设置。 */
+
+/* .tgl —— 主行左侧的展开箭头按钮 */
+.tgl{
+  border:none;background:none;cursor:pointer;padding:0 4px 0 0;
+  font-size:10px;line-height:1;color:var(--brand);vertical-align:middle
+}
+.tgl:hover{color:var(--brand-d)}
+.tgl[data-open="1"]{color:var(--ink3)}
+
+/* tr.sub —— 子行（展开后才显示）。用 [hidden] 显式隐藏，避免被 display 规则盖掉 */
+tr.sub>td{background:var(--brand-l2);padding:8px 10px}
+tr.sub[hidden]{display:none!important}
+
+/* .detail —— 子行内容容器（逐题输入 + 批量栏的竖向流） */
+.detail{display:flex;flex-direction:column;gap:4px}
+
+/* .qcell —— 一道题的「第N题 [分值] 分」一行 */
+.qcell{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2)}
+.qcell .qno{min-width:52px;color:var(--ink3)}
+.qcell input{
+  width:74px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;
+  background:#fff;text-align:center;outline:none
+}
+.qcell input:focus{border-color:var(--brand);background:var(--brand-l2)}
+.qcell .qunit{color:var(--ink3)}
+
+/* .batch —— 「第 [ ] 到 [ ] 题，每题 [ ] 分 [应用]」批量设置栏 */
+.batch{
+  display:flex;align-items:center;flex-wrap:wrap;gap:5px;
+  margin-top:4px;padding-top:7px;border-top:1px dashed var(--line);
+  font-size:12.5px;color:var(--ink2)
+}
+.batch .bnum{
+  width:58px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;
+  background:#fff;text-align:center;outline:none
+}
+.batch .bnum:focus{border-color:var(--brand);background:var(--brand-l2)}
+.batch .bbtn{
+  padding:4px 12px;border-radius:7px;background:var(--brand);color:#fff;
+  font-size:12.5px;font-weight:600
+}
+.batch .bbtn:hover{background:var(--brand-d)}
+
 /* 题目列表 */
 .qitem{display:grid;grid-template-columns:44px 1fr 88px;gap:8px;align-items:start;
        padding:8px 0;border-bottom:1px solid var(--line2)}

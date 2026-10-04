@@ -26,6 +26,8 @@ const K_TOKEN = 'paper_analysis_token_v1';
 /* ---------- 状态 ---------- */
 let paper = null;          // 解析后的试卷
 let scoreAssign = null;    // 分值分配
+let scoreExpand = new Set();  // 已展开逐题分值的题型（不持久化，刷新回全收起）
+let baselineTotals = {};   // 题型 → assignScores 刚算出的应有总分（用于「与预设不一致」提示）
 let records = {};          // 题号 → {full, got, note}
 let students = {};         // 姓名 → 档案
 let history = {};          // 姓名 → [报告]
@@ -410,46 +412,181 @@ function computeScores(){
   const total = num($('#examTotal').value) || 150;
   const preset = $('#examPreset').value || '';
   scoreAssign = PaperParser.assignScores(paper.typeDist, total, preset);
+  // 抓「应有总分」快照：此后老师在界面上改的每一笔都跟它比对，
+  // 不一致就给温和提示（只提示、不阻止）。换总分/换预设会重跑本函数，快照随之更新。
+  baselineTotals = {};
+  Object.entries(scoreAssign.perType).forEach(([type, v]) => { baselineTotals[type] = round2(v.total); });
+  scoreExpand = new Set();   // 换卷面后题号会变，展开态一律复位
   renderScoreAssignTable();
   seedRecords();
 }
 
+/** 画分值分配表（仅此处负责 scoreTable 的 DOM） */
 function renderScoreAssignTable(){
   const t = $('#scoreTable');
+  if(!t){ return; }
   if(!scoreAssign){ t.innerHTML = ''; return; }
+  const types = Object.keys(scoreAssign.perType);
+  types.forEach(ensureSpread);
+
   let html = '<thead><tr><th>题型</th><th>题量</th><th>每题分值</th><th>总分值</th></tr></thead><tbody>';
-  Object.entries(scoreAssign.perType).forEach(([type, v]) => {
-    html += `<tr><td>${esc(type)}</td><td>${v.count}</td>`
-      + `<td><input type="number" step="0.5" min="0" value="${v.per}" data-per="${esc(type)}"></td>`
-      + `<td>${v.total}</td></tr>`;
+  let sumCount = 0;
+  types.forEach(type => {
+    const info = scoreAssign.perType[type];
+    sumCount += info.count;
+    const open = scoreExpand.has(type);
+    const avg = info.count ? info.total / info.count : 0;
+    html += `<tr class="trow">
+      <td class="tname"><button type="button" class="tgl" data-tgl="${esc(type)}" data-open="${open ? 1 : 0}">${open ? '▼' : '▶'}</button>${esc(type)}</td>
+      <td>${info.count}</td>
+      <td class="percell">平均 ${round2(avg)}</td>
+      <td class="typetotal" data-totalcell="${esc(type)}">${round2(info.total)}</td>
+    </tr>`;
+    html += `<tr class="sub" data-subrow="${esc(type)}"${open ? '' : ' hidden'}>`
+      + `<td colspan="4">${typeDetailHtml(type)}</td></tr>`;
   });
-  html += `<tr><th>合计</th><th>${Object.values(scoreAssign.perType).reduce((a,x)=>a+x.count,0)}</th>`
-    + `<th>—</th><th id="sumCell">${scoreAssign.fullScore}</th></tr></tbody>`;
+  html += `<tr><th>合计</th><th>${sumCount}</th>`
+    + `<th>—</th><th id="sumCell">${round2(scoreAssign.fullScore)}</th></tr></tbody>`;
   t.innerHTML = html;
-  // 允许手工改单题分值（改完重算该题型总分）
-  $$('#scoreTable input[data-per]').forEach(inp => {
-    inp.addEventListener('change', () => {
-      const type = inp.dataset.per;
-      const per = num(inp.value);
-      const info = scoreAssign.perType[type];
-      info.per = per; info.total = Math.round(per * info.count * 100) / 100;
-      info.spread = Array.from({length: info.count}, () => per);
-      scoreAssign.fullScore = Object.values(scoreAssign.perType).reduce((a,x)=>a+x.total,0);
-      const cell = $('#sumCell'); if(cell) cell.textContent = round2(scoreAssign.fullScore);
-      // 这里只更新总分的单元格即可。原来调用的是 renderScoreTable()（函数不存在，
-      // 会抛 ReferenceError）；即使改成 renderScoreAssignTable() 也不该在这里调——
-      // 它会重建整张表，而重建过程会重新绑定额外的 change 监听器，
-      // 等于在事件处理器内部给自己叠加监听器。
-      seedRecords(); renderScoreList();
-    });
-  });
-  const hint = $('#scoreSumHint');
-  if(hint){
-    let h = `分值方案：<b>${esc(scoreAssign.preset)}</b>`;
-    if(scoreAssign.warnings && scoreAssign.warnings.length)
-      h += '<br><span style="color:var(--warn)">⚠ ' + scoreAssign.warnings.map(esc).join('<br>⚠ ') + '</span>';
-    hint.innerHTML = h;
+  buildScoreSumHint();
+}
+
+/** 画一个题型的逐题编辑区 + 区间批量设置 */
+function typeDetailHtml(type){
+  const info = scoreAssign.perType[type];
+  const nos = typeQuestionNos(type);
+  let h = '<div class="detail">';
+  for(let i = 0; i < info.count; i++){
+    const no = nos[i] != null ? nos[i] : (i + 1);
+    h += `<div class="qcell"><span class="qno">第${no}题</span>`
+      + `<input type="number" step="0.5" min="0" value="${round2(info.spread[i])}" data-scell="${esc(type)}" data-i="${i}">`
+      + `<span class="qunit">分</span></div>`;
   }
+  const lo = nos[0] != null ? nos[0] : 1;
+  const hi = nos[info.count - 1] != null ? nos[info.count - 1] : info.count;
+  h += '<div class="batch">按区间批量设：第 '
+    + `<input type="number" class="bnum" min="1" step="1" value="${lo}" data-bfrom="${esc(type)}"> 到 `
+    + `<input type="number" class="bnum" min="1" step="1" value="${hi}" data-bto="${esc(type)}"> 题，每题 `
+    + `<input type="number" class="bnum" min="0" step="0.5" placeholder="分值" data-bval="${esc(type)}"> 分 `
+    + `<button type="button" class="bbtn" data-bapply="${esc(type)}">应用</button></div>`;
+  return h + '</div>';
+}
+
+/**
+ * 该题型下「每道题」的题号（按 paper.questions 出现次序），
+ * 下标与 spread 一一对应。批量设置按题号操作，靠它换算成 spread 下标。
+ */
+function typeQuestionNos(type){
+  if(!paper || !paper.questions) return [];
+  return paper.questions.filter(q => q.section === type).map(q => q.no);
+}
+
+/**
+ * 保证每个题型都有 spread（逐题分值数组），且长度与题量一致。
+ * assignScores 在「非预设」分支下不给客观题生成 spread，这里就地补齐；
+ * spread 是这批改造后的唯一权威数据源，info.per/total 都由它派生。
+ */
+function ensureSpread(type){
+  const info = scoreAssign.perType[type]; if(!info) return;
+  const n = info.count || 0;
+  if(!Array.isArray(info.spread) || info.spread.length !== n){
+    info.spread = Array.from({length: n}, () => num(info.per));
+  }
+}
+
+/** 改一道题的分值；只动 spread[i]，不再把整列压回平均 */
+function applyTypeCell(type, i, rawValue){
+  const info = scoreAssign.perType[type]; if(!info) return;
+  ensureSpread(type);
+  const inp = $(`#scoreTable input[data-scell="${type}"][data-i="${i}"]`);
+  let v = num(rawValue);
+  if(!(v >= 0)) v = 0;                     // 空值/负数/NaN 一律当 0，并回写输入框
+  if(inp && num(inp.value) !== v) inp.value = round2(v);
+  info.spread[i] = v;
+  syncTypeAfterEdit(type);
+}
+
+/** 批量设置某题型内 [fromNo, toNo] 题号区间的每题分值 */
+function applyBatch(type){
+  const info = scoreAssign.perType[type]; if(!info) return;
+  ensureSpread(type);
+  const nos = typeQuestionNos(type);
+  const fromEl = $(`#scoreTable input[data-bfrom="${type}"]`);
+  const toEl   = $(`#scoreTable input[data-bto="${type}"]`);
+  const vEl    = $(`#scoreTable input[data-bval="${type}"]`);
+  if(!fromEl || !toEl || !vEl) return;
+  const from = num(fromEl.value);
+  const to   = num(toEl.value);
+  const v    = num(vEl.value);
+  if(!vEl.value.trim()){ toast('请先填每题分值'); vEl.focus(); return; }
+  if(!from || !to){ toast('请填题号区间'); return; }
+  if(from > to){ toast('起始题号不能大于结束题号'); return; }
+  const hit = [];
+  for(let i = 0; i < info.count; i++){
+    const no = nos[i] != null ? nos[i] : (i + 1);
+    if(no >= from && no <= to) hit.push(i);
+  }
+  if(!hit.length){ toast(`这个区间里没有「${type}」的题（本区题号：${nos.join('、')}）`); return; }
+  hit.forEach(i => { info.spread[i] = v; });
+  // 同步该题型逐题输入框的显示值
+  hit.forEach(i => {
+    const inp = $(`#scoreTable input[data-scell="${type}"][data-i="${i}"]`);
+    if(inp) inp.value = round2(v);
+  });
+  syncTypeAfterEdit(type);
+  toast(`已把「${type}」第 ${from}–${to} 题设为每题 ${round2(v)} 分`);
+}
+
+/**
+ * 逐题分值改动后的统一收尾：
+ *   spread → 题型总分(逐题之和) → 整卷合计 → 刷新该行/合计/提示 → 重算逐题记录。
+ * 只改单元格内容、重建该题型的子行，不对整表调 renderScoreAssignTable()——
+ * 全表重渲染会打断输入焦点，也是第一批「监听器在自身处理器里叠加」的根源。
+ */
+function syncTypeAfterEdit(type){
+  const info = scoreAssign.perType[type]; if(!info) return;
+  info.total = round2(info.spread.reduce((a, x) => a + num(x), 0));
+  info.per = info.count ? round2(info.total / info.count) : 0;   // 仅作收起态展示与兜底
+
+  const totalCell = $(`[data-totalcell="${type}"]`);
+  if(totalCell) totalCell.textContent = round2(info.total);
+  const perCell = totalCell && totalCell.parentElement ? totalCell.parentElement.querySelector('.percell') : null;
+  if(perCell) perCell.textContent = '平均 ' + round2(info.per);
+
+  const mainRow = totalCell ? totalCell.closest('tr') : null;
+  const subRow = mainRow ? mainRow.nextElementSibling : null;
+  if(subRow && subRow.classList.contains('sub')){
+    subRow.innerHTML = `<td colspan="4">${typeDetailHtml(type)}</td>`;
+  }
+  updateScoreTotals();
+  seedRecords();       // 保留既有得分：按 got/full 比例缩放 + clamp
+  renderScoreList();
+}
+
+/** 重算整卷合计并刷新合计单元格与提示 */
+function updateScoreTotals(){
+  if(!scoreAssign) return;
+  scoreAssign.fullScore = round2(Object.values(scoreAssign.perType).reduce((a, x) => a + num(x.total), 0));
+  const cell = $('#sumCell'); if(cell) cell.textContent = round2(scoreAssign.fullScore);
+  buildScoreSumHint();
+}
+
+/** 提示行：分值方案 + assignScores 的告警 + 「与应有总分不一致」的温和提醒 */
+function buildScoreSumHint(){
+  const hint = $('#scoreSumHint'); if(!hint || !scoreAssign) return;
+  let h = `分值方案：<b>${esc(scoreAssign.preset)}</b>`;
+  if(scoreAssign.warnings && scoreAssign.warnings.length)
+    h += '<br><span style="color:var(--warn)">⚠ ' + scoreAssign.warnings.map(esc).join('<br>⚠ ') + '</span>';
+  const drift = [];
+  Object.keys(scoreAssign.perType).forEach(type => {
+    const now = round2(scoreAssign.perType[type].total);
+    const want = baselineTotals[type];
+    if(want != null && now !== want)
+      drift.push(`${esc(type)}总分现在是 <b>${now}</b> 分，与卷面预设的 ${want} 分不一致，是否调整？`);
+  });
+  if(drift.length)
+    h += '<br><span style="color:var(--warn)">💡 ' + drift.join('<br>💡 ') + '</span>';
+  hint.innerHTML = h;
 }
 
 /**
@@ -470,7 +607,10 @@ function seedRecords(){
     const info = scoreAssign.perType[type];
     if(!info) return;
     idx[type] = idx[type] || 0;
-    const full = info.spread ? info.spread[idx[type]] : info.per;
+    // 逐题分值以 info.spread 为准；下标越界或缺失时回落到题型平均分（正常路径不会走到）
+    const sp = info.spread;
+    const spv = Array.isArray(sp) ? sp[idx[type]] : undefined;
+    const full = num(spv != null ? spv : info.per);
     idx[type]++;
 
     const old = records[q.no];
@@ -1198,10 +1338,40 @@ function bind(){
     $('#paperPaste').value = ''; $('#parseResult').innerHTML = '';
     $('#paperPanel').style.display = 'none'; $('#qPanel').style.display = 'none';
     paper = null; scoreAssign = null; records = {};
+    scoreExpand = new Set(); baselineTotals = {};
+    $('#scoreTable').innerHTML = ''; $('#scoreSumHint').innerHTML = '';
     $('#paperHint').textContent = '未导入'; toast('已清空');
   };
   $('#examTotal').oninput = computeScores;
   $('#examPreset').onchange = computeScores;
+
+  // 分值分配表：一次性事件委托（不在渲染函数里逐个绑监听器）。
+  // 第一批的坑是「在事件处理器内部重渲染整表 → change 监听器自我叠加」；
+  // 改为委托后，渲染与绑定彻底分离，改一道题的分数不会再重建整张表。
+  const scoreTable = $('#scoreTable');
+  if(scoreTable){
+    scoreTable.addEventListener('click', e => {
+      const tgl = e.target.closest('button[data-tgl]');
+      if(tgl){
+        const type = tgl.dataset.tgl;
+        const open = !scoreExpand.has(type);
+        if(open) scoreExpand.add(type); else scoreExpand.delete(type);
+        const row = tgl.closest('tr');
+        const sub = row ? row.nextElementSibling : null;
+        if(sub && sub.classList.contains('sub')) sub.hidden = !open;
+        tgl.dataset.open = open ? '1' : '0';
+        // 箭头字符与 data-open 保持一致（CSS 也可据此旋转）
+        tgl.textContent = open ? '▼' : '▶';
+        return;
+      }
+      const apply = e.target.closest('button[data-bapply]');
+      if(apply){ applyBatch(apply.dataset.bapply); }
+    });
+    scoreTable.addEventListener('change', e => {
+      const cell = e.target.closest('input[data-scell]');
+      if(cell) applyTypeCell(cell.dataset.scell, +cell.dataset.i, cell.value);
+    });
+  }
 
   // ② 成绩
   $('#btnFillFull').onclick = () => fillAll('full');
