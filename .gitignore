@@ -45,3 +45,9 @@ next-env.d.ts
 
 # 本地备份（改造前的原版文件）
 /.backup/
+
+# CSV 写回候选表时的本地快照（含原始数据，属运行时产物，不入库）
+/docs/csv-apply-backup-*.json
+
+# dev 服务器日志（本地排查用）
+/.dev-server.log*
