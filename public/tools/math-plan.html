@@ -452,17 +452,22 @@ const MODULES = [
 {id:"m31",name:"不等式与极值（选填中档）",topic:"不等式",g:"高三",lv:2,base:"不等式性质、比较大小、基本不等式",mid:"含参不等式、恒成立与最值选填",hard:"多元最值与不等式证明压轴",target:"不等式选填正确率≥85%",tags:["中档","限时"]},
 {id:"m32",name:"函数选填压轴专项",topic:"函数",g:"高三",lv:3,base:"函数性质综合判断",mid:"零点个数、图像交点、比大小技巧",hard:"抽象函数、新定义函数、多结论判断",target:"函数选填压轴得分率≥70%，掌握特值法与排除法",tags:["压轴选填","限时"]},
 {id:"m33",name:"三角选填与解答专项",topic:"三角",g:"高三",lv:2,base:"三角化简求值与图像性质",mid:"参数范围、解三角形最值范围",hard:"结构不良问题、多解取舍、最值压轴",target:"三角解答题满分或接近满分",tags:["高频","限时"]},
-{id:"m34",name:"数列综合专项",topic:"数列",g:"高三",lv:3,base:"等差等比通项求和",mid:"构造与裂项、数列不等式",hard:"数列创新题、放缩证明、与函数导数综合",target:"数列第一问满分，第二问得分率≥70%",tags:["压轴","大题"]},
+{id:"m34",name:"数列综合专项",topic:"数列",g:"高三",lv:3,must:true,base:"等差等比通项求和",mid:"构造与裂项、数列不等式",hard:"数列创新题、放缩证明、与函数导数综合",target:"数列第一问满分，第二问得分率≥70%",tags:["压轴","大题"]},
 {id:"m35",name:"概率统计大题专项",topic:"统计概率",g:"高三",lv:2,base:"分布列与期望、统计图表计算",mid:"条件概率与全概率、独立性检验",hard:"概率与数列递推、决策优化",target:"概率统计大题稳定满分，步骤分不丢",tags:["高频","大题"]},
 {id:"m36",name:"立体几何大题专项",topic:"立体几何",g:"高三",lv:2,base:"平行垂直证明规范书写",mid:"向量法求角与距离",hard:"动点探索、翻折最值、建系优化",target:"立体几何第一问满分，第二问拿到全部步骤分",tags:["高频","大题"]},
-{id:"m37",name:"解析几何大题专项",topic:"解析几何",g:"高三",lv:3,base:"设线联立、韦达定理、弦长面积",mid:"定点定值、范围最值模型",hard:"非对称韦达、齐次化、探索性与存在性",target:"解析几何第一问满分，第二问得分率≥50%",tags:["压轴","大题"]},
-{id:"m38",name:"导数大题专项",topic:"导数",g:"高三",lv:3,base:"切线、单调性、极值最值",mid:"含参讨论、恒成立与零点",hard:"隐零点、极值点偏移、双变量与不等式证明",target:"导数第一问满分，第二问拿关键步骤分",tags:["压轴","大题"]},
+{id:"m37",name:"解析几何大题专项",topic:"解析几何",g:"高三",lv:3,must:true,base:"设线联立、韦达定理、弦长面积",mid:"定点定值、范围最值模型",hard:"非对称韦达、齐次化、探索性与存在性",target:"解析几何第一问满分，第二问得分率≥50%",tags:["压轴","大题"]},
+{id:"m38",name:"导数大题专项",topic:"导数",g:"高三",lv:3,must:true,base:"切线、单调性、极值最值",mid:"含参讨论、恒成立与零点",hard:"隐零点、极值点偏移、双变量与不等式证明",target:"导数第一问满分，第二问拿关键步骤分",tags:["压轴","大题"]},
 {id:"m39",name:"数学文化与新定义题",topic:"新定义",g:"高三",lv:3,base:"新定义信息转化、按定义代入验证",mid:"反证法与演绎证明入门",hard:"北京卷/新高考数列创新题前两问",target:"新定义题不空题，稳定拿到前两问基础分",tags:["压轴","策略"]},
 {id:"m40",name:"应试策略与答题规范",topic:"应试技巧",g:"高三",lv:1,base:"时间分配、答题顺序、步骤规范",mid:"踩分点训练、卷面书写、难题取舍",hard:"个人最优答题方案定制",target:"形成个人最优答题方案，会做的题不丢分",tags:["策略","限时"]},
 
 /* ---------- 计算与衔接 ---------- */
 {id:"m41",name:"初高中衔接与计算过关",topic:"计算",g:"衔接",lv:1,base:"因式分解、二次方程与根式分式运算、不等式解法",mid:"代数式变形与化简技巧、错题归因",hard:"复杂式子运算速度与准确率训练",target:"计算正确率≥95%，杜绝符号与通分低级失误",tags:["计算","基础"]},
-{id:"m42",name:"计算专项提速（含导数与联立）",topic:"计算",g:"高三",lv:2,base:"求导运算、通分化简、数列求和计算",mid:"联立方程与韦达定理运算、法向量计算",hard:"高压限时下的运算稳定性",target:"运算正确率≥95%，计算类失分降到最低",tags:["计算","限时"]}
+{id:"m42",name:"计算专项提速（含导数与联立）",topic:"计算",g:"高三",lv:2,base:"求导运算、通分化简、数列求和计算",mid:"联立方程与韦达定理运算、法向量计算",hard:"高压限时下的运算稳定性",target:"运算正确率≥95%，计算类失分降到最低",tags:["计算","限时"]},
+
+/* ---------- 必开模块（must:true —— 不进 done 过滤、不被 slice 砍、三轮节奏专用） ---------- */
+{id:"m43",name:"高考真题精讲",topic:"真题",g:"高三",lv:2,must:true,base:"近五年高考真题基础题与中档题按题型串讲",mid:"按卷面结构分类精讲，提炼每题型的命题角度与解法入口",hard:"真题压轴题的切入口与取舍策略",target:"真题中基础与中档题得分率≥90%，熟悉命题角度",tags:["高频","限时"]},
+{id:"m44",name:"错题清零",topic:"错题",g:"高三",lv:1,must:true,base:"个人错题本逐题重做，标注错因",mid:"按错因归类，同类变式巩固",hard:"易错点的二次检验与限时过关",target:"错题重做正确率≥95%，重复性失分降到最低",tags:["高频","易错点"]},
+{id:"m45",name:"综合模拟",topic:"模拟",g:"高三",lv:2,must:true,base:"完整套卷限时训练，模拟考场节奏",mid:"按卷面结构分配时间，训练取舍策略",hard:"难题取舍与检查回看流程固化",target:"套卷得分稳定达到目标分，考场节奏可控",tags:["限时","策略"]}
 ];
 
 /* 高一/高二同步学期的默认模块序列（按教材章序） */
@@ -616,6 +621,11 @@ function pickModules(o){
   const seen = {};
   pool = pool.filter(m=>{ if(seen[m.id]) return false; seen[m.id]=true; return true; });
   pool = pool.filter(m=>!done[m.id]);
+  // 必开模块（must:true）绕过 done：语义是「无论学校是否已复习过，本次都要排」
+  // 三轮节奏的真题精讲／错题清零／综合模拟、以及三大压轴专项都在此列
+  MODULES.filter(m=>m.must).forEach(m=>{
+    if(!seen[m.id]){ pool.push(m); seen[m.id]=true; }
+  });
 
   const score = (m)=>{
     let s = 0;
@@ -701,24 +711,41 @@ function allocateRows(mods, totalHours){
   return mods.map((m,i)=>({m, h:counts[i]*2}));
 }
 
-/* 三轮节奏 */
-function threeRounds(o, totalHours){
-  const grade = o.grade;
-  if(grade!=="高三"){
-    return null;
-  }
-  if(o.totalHours>=100){
-    const r1=Math.round(totalHours*0.5/2)*2, r2=Math.round(totalHours*0.3/2)*2;
+/* 行 → 轮次：集中定义一处，避免「文字说三轮、课表没有」再次脱节
+   · 收尾检测行 / 真题精讲 / 错题清零 / 综合模拟 → 第三轮
+   · 名字含「专项」「压轴」的 → 第二轮抓题型
+   · 计算、真题、错题、模拟类 topic → 第三轮
+   · 其余基础与中档模块 → 第一轮
+   注意：三大压轴专项（m34/m37/m38）虽然也是必开，但按语义属第二轮，
+   所以这里**不能**写成 if(m.must) return 3 —— 那会把二轮挤空。 */
+function roundIndexOf(mod){
+  if(!mod) return 1;
+  if(mod.id === "_final") return 3;
+  if(["m43","m44","m45"].includes(mod.id)) return 3;
+  if(/专项|压轴/.test(mod.name||"")) return 2;
+  if(["计算","真题","错题","模拟"].includes(mod.topic)) return 3;
+  return 1;
+}
+
+/* 三轮节奏：直接按课表各行统计，因此三段之和恒等于课表总课时
+   名称按课时分支，保持原有文案不变：
+     · <100 课时 → 基础过关 / 专项突破 / 真题模拟
+     · ≥100 课时 → 一轮补基础 / 二轮抓题型 / 三轮练真题 */
+function threeRounds(o, rows, totalHours){
+  if(o.grade!=="高三") return null;
+  const h = [0,0,0,0];
+  (rows||[]).forEach(r=>{ h[roundIndexOf(r.module||{})] += r.hours; });
+  if(o.totalHours >= 100){
     return [
-      {name:"一轮补基础", time:"第一阶段（约 50%）", hours:r1, focus:"地毯式过完所有板块，补齐基础漏洞，训练计算准确率"},
-      {name:"二轮抓题型", time:"第二阶段（约 30%）", hours:r2, focus:"按卷面题型专项突破，强化选填技巧与解答题规范"},
-      {name:"三轮练真题", time:"第三阶段（约 20%）", hours:totalHours-r1-r2, focus:"精练近五年真题与本地一模二模，限时模拟、查漏补缺"}
+      {name:"一轮补基础", time:"第一阶段（约 50%）", hours:h[1], focus:"地毯式过完所有板块，补齐基础漏洞，训练计算准确率"},
+      {name:"二轮抓题型", time:"第二阶段（约 30%）", hours:h[2], focus:"按卷面题型专项突破，强化选填技巧与解答题规范"},
+      {name:"三轮练真题", time:"第三阶段（约 20%）", hours:h[3], focus:"精练近五年真题与本地一模二模，限时模拟、查漏补缺"}
     ];
   }
   return [
-    {name:"基础过关", time:"第一阶段（约 50%）", hours:Math.round(totalHours*0.5/2)*2, focus:"逐模块补齐基础，公式与题型模板固化"},
-    {name:"专项突破", time:"第二阶段（约 30%）", hours:Math.round(totalHours*0.3/2)*2, focus:"按题型专项训练，强化中档题得分能力"},
-    {name:"真题模拟", time:"第三阶段（约 20%）", hours:totalHours-Math.round(totalHours*0.5/2)*2-Math.round(totalHours*0.3/2)*2, focus:"真题与模拟卷限时训练，模拟考场节奏与取舍策略"}
+    {name:"基础过关", time:"第一阶段（约 50%）", hours:h[1], focus:"逐模块补齐基础，公式与题型模板固化"},
+    {name:"专项突破", time:"第二阶段（约 30%）", hours:h[2], focus:"按题型专项训练，强化中档题得分能力"},
+    {name:"真题模拟", time:"第三阶段（约 20%）", hours:h[3], focus:"真题与模拟卷限时训练，模拟考场节奏与取舍策略"}
   ];
 }
 
@@ -782,9 +809,22 @@ function selfCheck(o, plan){
   if(!unquant.length) list.push(["ok","目标全部量化",`${plan.rows.length} 行教学目标全部含可验收指标（正确率 / 得分率 / 用时 / 分数阈值）`]);
   else list.push(["warn","目标量化",`有 ${unquant.length} 行目标缺少量化指标，建议补上正确率或用时要求`]);
 
-  if(plan.rows.length && plan.rows[plan.rows.length-1].stage.includes("检测"))
-    list.push(["ok","检测落地","课表最后一行是限时训练与阶段检测，检测已落成课时"]);
+  // 收尾行判定放宽：收尾行文案是「综合模拟与查漏（…）」，不含"检测"二字，
+  // 所以用 /检测|综合模拟/ 二者任一即可，不改动交付给家长的文案。
+  if(plan.rows.length && /检测|综合模拟/.test(plan.rows[plan.rows.length-1].stage))
+    list.push(["ok","检测落地","课表末尾已安排综合模拟/限时检测，检测已落成课时"]);
   else list.push(["warn","检测落地","课表末尾未安排检测课时，建议把承诺的检测节奏落成独立行"]);
+
+  // 模块覆盖：明确告诉老师「哪些模块这次没排进去」，被截断不再静默
+  if(o._pool && o._pool.length){
+    const usedIds = {};
+    plan.rows.forEach(r=>{ usedIds[r.module.id] = true; });
+    const missing = o._pool.filter(m=>!usedIds[m.id]);
+    if(!missing.length)
+      list.push(["ok","模块覆盖",`候选 ${o._pool.length} 个模块全部排入本次方案`]);
+    else
+      list.push(["warn","未排入模块",`本次未排入的模块：${missing.map(m=>m.name).join("、")}（课时不足以全部覆盖，可延长周期或上调单次课时）`]);
+  }
 
   list.push(["ok","可追溯细节",`已绑定考区「${EXAMS[o.exam].name}」与卷面结构，真题来源：${o.paper||"（待填）"}`]);
   if(o.done && o.done.length) list.push(["ok","衔接校验",`已跳过 ${o.done.length} 个学校已完成模块，不重复排课`]);
@@ -808,10 +848,18 @@ function generate(o){
   const flow = fitFlow((o.flow==="auto") ? autoFlow(o) : FLOWS[o.flow], o.len);
 
   let mods = pickModules(o);
-  if(!mods.length) mods = [MODULES.find(m=>m.id==="m41")];
-  // 行数上限：总行数减去 2 行（综合模拟 + 机动）
+  // 必开模块（must:true）无条件参与，不受 done 过滤与截断影响：
+  // 注意 pickModules 可能返回空数组（例如学生把所有模块都勾成"已完成"），
+  // 那种情况下不能用兜底值整体替换列表，否则会连必开模块一起丢掉。
+  const mustMods = MODULES.filter(m=>m.must);
+  let flexMods = mods.filter(m=>!m.must);
+  if(!flexMods.length && !mustMods.length) flexMods = [MODULES.find(m=>m.id==="m41")];
+  // 槽位预算 maxRows 只约束「可取舍模块」，必开模块不占槽位
   const maxRows = Math.max(2, Math.round(o.totalHours/2) - 2);
-  if(mods.length > maxRows) mods = mods.slice(0, maxRows);
+  if(flexMods.length > maxRows) flexMods.length = maxRows;
+  mods = mustMods.concat(flexMods);
+  // 供 selfCheck 汇报「本次未排入的模块」用（内部字段，不进界面）
+  o._pool = mods.slice();
   const alloc = allocateRows(mods, o.totalHours - 2);   // 预留 2 课时给综合检测
 
   let rows = buildLessons(alloc, o);
@@ -844,7 +892,15 @@ function generate(o){
     goal:`全卷得分达到 ${o.target} 分，明确仍需补救的模块，形成个人最优答题与取舍方案`
   });
 
-  const rounds = threeRounds(o, o.totalHours);
+  // 按轮次排序：一轮 → 二轮 → 三轮，让家长看到的顺序就是三轮节奏的顺序。
+  // 用「装饰-排序-还原」保证稳定排序（同一模块的多次课保持原有次序）；
+  // 收尾检测行 roundIndexOf=3 且带 _stable 保证仍排在最后。
+  rows = rows
+    .map((r, i) => ({ r, i, k: roundIndexOf(r.module || {}) }))
+    .sort((a, b) => a.k - b.k || a.i - b.i)
+    .map(x => x.r);
+
+  const rounds = threeRounds(o, rows, o.totalHours);   // 收尾行已入 rows，计入第三轮
   const plan = {o, ex, st, band, bt, rate, flow, rows, rounds,
                 targets: targetBreakdown(ex, o.score, o.target),
                 tc: timeCheck(o)};
