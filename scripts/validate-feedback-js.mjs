@@ -37,6 +37,18 @@ const checks = [
   ["deleteHistoryItemAdapter", /function deleteHistoryItemAdapter\(/],
   ["deleteStudentAdapter", /function deleteStudentAdapter\(/],
   ["NEXT_MODE 分支数量", /NEXT_MODE/g],
+  // 第 7 步：学段 × 科目 × 教材
+  ["STAGES 常量", /const STAGES = /],
+  ["subjectsForStage 函数", /function subjectsForStage\(/],
+  ["fillSubjectSelect 函数", /function fillSubjectSelect\(/],
+  ["renderTextbookSelect 函数", /function renderTextbookSelect\(/],
+  ["loadCloudScoped 函数", /function loadCloudScoped\(/],
+  ["applyCloudKeywordStore 函数", /function applyCloudKeywordStore\(/],
+  ["clearSelectedKeywords 函数", /function clearSelectedKeywords\(/],
+  ["#stageSelect 元素", /id="stageSelect"/],
+  ["#textbookSelect 元素", /id="textbookSelect"/],
+  ["生物科目", /code:'biology'/],
+  ["地理科目", /code:'geography'/],
 ];
 console.log("\n=== 结构确认 ===");
 for (const [label, re] of checks) {

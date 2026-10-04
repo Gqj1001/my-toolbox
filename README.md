@@ -38,37 +38,65 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 
 ### 工具目录与角色可见性
 
-工具清单位于 `src/lib/tools.ts`，是**单一数据源**：
+工具清单存在数据库 `tools` 表（**单一数据源**），字段：
 
-```ts
-{ slug, name, description, icon, href, access: "all" | "admin" }
+```
+slug | name | description | icon | route | min_plan | sort_order | active
 ```
 
-- `access: "all"` → 所有登录用户可见
-- `access: "admin"` → 仅管理员可见
+- `min_plan = 'free'` → 所有登录用户可打开
+- `min_plan = 'vip'`  → 仅有效会员可打开，非会员点进去会跳到 `/upgrade?tool=<slug>`
 
-`proxy.ts` 的 `ADMIN_PATHS` 直接由该目录推导（`/admin` 加上所有 `access: "admin"` 工具的 `href`），
-因此「声明权限」与「服务端拦截」不会脱节——新增管理员专属工具只需改 `tools.ts` 一处。
+读取逻辑在 `src/lib/tools-db.ts`（`getActiveTools` / `getToolByRoute` / `toToolView`），
+图标名走 `src/lib/tool-icon-names.ts` 的白名单。
 
-> 目前是**按角色**控制可见性。若后续要「按用户逐个授权」，
-> 可在 `tools.ts` 基础上加一张授权表，把 `access` 换成用户列表，
-> `ToolGrid` 与 `dashboard` 无需改动。
+`proxy.ts` 的 `ADMIN_PATHS` 由 `/admin` 前缀控制，工具可见性则在
+`src/components/tool-page-shell.tsx` 里按 `min_plan` 判定，两层不脱节。
+
+### 课后反馈工作台的数据模型（学段 × 科目 × 教材 × 章节）
+
+`public/tools/feedback.html` 是一个完整的单文件工具，被 `/tools/feedback` 用 iframe 承载。
+它的关键词库按四个维度组织：
+
+| 表 | 作用 |
+| --- | --- |
+| `feedback_categories` | 8 个通用分类（课堂表现、学情、建议、作业…），`stage` 留空 = 全学段通用 |
+| `feedback_textbooks` | 教材：`stage` + `subject` + `name`（如「高中 / 数学 / 人教A版 必修第一册」） |
+| `feedback_chapters` | 章节，挂在教材下 |
+| `feedback_keywords` | 关键词，带 `stage / subject / category / textbook_id / chapter_id / archived_at` |
+
+关键约定：
+
+- **只有「课堂内容」「下节课内容」两个分类按教材章节区分**，其余 6 个分类所有科目共用
+  （这些行的 `textbook_id` 与 `chapter_id` 为空）。
+- 章节关键词在「课堂内容」「下节课内容」下**各存一行**（同一知识点两处可选），
+  接口返回时按分类去重，前端不会看到重复项。
+- `archived_at` 是**软删除**标记：归档的词不参与渲染与统计，但数据仍在，
+  用 `update feedback_keywords set archived_at = null where ...` 即可恢复。
+- 所有查询都必须带 `archived_at is null`（`getKeywords` 已强制）。
+
+服务端口：
+
+```
+GET /api/feedback/data                          → 全量关键词树（向后兼容）
+GET /api/feedback/data?stage=&subject=          → 按学段/科目取
+     &textbook=<id>&chapter=<id>                → 再限定教材/章节
+```
+
+管理页 `/admin/feedback-keywords` 用 URL 查询参数驱动级联选择
+（`?stage=&subject=&textbook=&chapter=`），两种模式：
+选到章节 → 编辑该章关键词；只选科目 → 编辑通用分类关键词。
+
+> 免费用户能打开工具页并生成反馈；**AI 润色是 VIP 专属**（服务端 `requireVip` 返回 403）。
 
 ### 接入单文件 HTML 工具（以 math-plan 为例）
 
 现成的单文件 HTML 工具可以直接挂进来，无需改动它的源码：
 
 1. 把 HTML 放到 `public/tools/<slug>.html`（如 `public/tools/math-plan.html`）
-2. 新建页面 `src/app/tools/<slug>/page.tsx`，用 iframe 承载：
-
-   ```tsx
-   <main className="flex w-full flex-1 flex-col overflow-hidden">
-     <iframe src="/tools/<slug>.html" className="block h-full min-h-0 w-full border-0" />
-   </main>
-   ```
-
-3. 在 `src/lib/tools.ts` 里加一条目录项（`access: "all"` 或 `"admin"`）
-4. 若要新建示例工具页，复制 `src/components/tool-page-shell.tsx` 的用法即可
+2. 新建页面 `src/app/tools/<slug>/page.tsx`，用 `<ToolPageShell route="/tools/<slug>" />` 承载
+   （它内部用 iframe 指向 `/tools/<slug>.html`，并做登录/封禁/VIP 三重判定）
+3. 在数据库 `tools` 表里加一条目录项（`min_plan` 决定谁能打开）
 
 **访问控制说明**：`public/tools/*.html` 由 Next 的静态文件服务直接返回，
 但 `proxy.ts` 会在其之前执行，因此**未登录访问会被重定向到 `/login`**，

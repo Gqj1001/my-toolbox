@@ -1,7 +1,11 @@
 // 校验生成的 SQL 是否语法安全（引号配对、括号平衡、无换行污染）
+// 用法：node scripts/validate-sql.mjs [SQL 文件路径]
+//       不传参数时校验 0004（含 470 条关键词种子的那个文件）
 import { readFileSync } from "node:fs";
 
-const SQL = "D:/my-website/my-toolbox/supabase/migrations/0004_feedback_tables.sql";
+const SQL =
+  process.argv[2] ?? "D:/my-website/my-toolbox/supabase/migrations/0004_feedback_tables.sql";
+console.log("校验文件:", SQL.split("/").pop());
 const sql = readFileSync(SQL, "utf8");
 
 console.log("=== 1. 单引号配对检查（逐行） ===");

@@ -1,14 +1,19 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
 import {
+  assembleCategoryKeywords,
   buildKeywordTree,
+  getCategories,
+  getChapters,
   getHistory,
   getKeywords,
   getPhrases,
   getStudents,
+  getTextbooks,
   historyByStudent,
   studentsByName,
 } from "@/lib/feedback-db";
+import { parseScope, subjectHasTextbook } from "@/lib/feedback-taxonomy";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -18,7 +23,9 @@ import { createClient } from "@/lib/supabase/server";
  * 因此 RLS 会对 feedback_students / feedback_history 自动按 auth.uid() 隔离，
  * 前端无法越权访问他人数据。
  *
- * GET    /api/feedback/data                    拉取全部数据
+ * GET    /api/feedback/data                    拉取全部关键词树（向后兼容）
+ * GET    /api/feedback/data?stage=&subject=…    按「学段 × 科目」拉取
+ *        可选 &textbook=<id>&chapter=<id>       进一步限定教材/章节
  * POST   /api/feedback/data  { op: 'student' | 'history', ... }   写入
  * DELETE /api/feedback/data?student=姓名        删除档案（同时删其历史）
  * DELETE /api/feedback/data?id=<historyId>      删除单条历史
@@ -41,32 +48,117 @@ async function requireUser() {
   return { ok: true as const, user, role: role ?? "user" };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireUser();
   if (!guard.ok) {
     return NextResponse.json({ ok: false, error: guard.message }, { status: guard.status });
   }
 
-  const [keywords, phrases, students, history] = await Promise.all([
-    getKeywords(),
-    getPhrases(),
-    getStudents(),
-    getHistory(),
-  ]);
+  const sp = request.nextUrl.searchParams;
+  const hasScope = ["stage", "subject", "textbook", "chapter"].some((k) => sp.get(k));
+  const scope = parseScope({
+    // 缺少 stage 时默认高中：数据库里历史数据都是 senior，
+    // 不设默认会让「漏传 stage」的调用方拿到跨学段的混合结果
+    stage: sp.get("stage") ?? (hasScope ? "senior" : null),
+    subject: sp.get("subject"),
+    textbook: sp.get("textbook"),
+    chapter: sp.get("chapter"),
+  });
 
-  return NextResponse.json({
-    ok: true,
+  const [phrases, students, history] = await Promise.all([getPhrases(), getStudents(), getHistory()]);
+  const base = {
+    ok: true as const,
     // 当前登录用户（前端用于区分档案归属、调试）
     userId: guard.user.id,
     email: guard.user.email ?? null,
-    // 全局共享，所有登录用户可读
-    keywordTree: buildKeywordTree(keywords),
     phrases: phrases.map((p) => p.phrase),
     // 按 user_id 隔离（RLS）
     students: studentsByName(students),
     history: historyByStudent(history),
     // 前端据此决定是否显示「管理关键词」入口
     isAdmin: guard.role === "admin",
+  };
+
+  // ---------- 带维度参数：只取所需关键词，并附上分类/教材/章节清单 ----------
+  if (hasScope) {
+    const { stage, subject, textbookId, chapterId } = scope;
+    const categories = stage || subject ? await getCategories(stage) : await getCategories();
+    const categoryNames = categories.map((c) => c.name);
+
+    const textbooks = subject ? await getTextbooks({ stage, subject }) : await getTextbooks({ stage });
+    const chapters = textbookId ? await getChapters(textbookId) : [];
+
+    // 每本教材附上自己的章节名（供工具页在云端模式下渲染「课本知识点」面板）
+    const textbooksWithTopics = await Promise.all(
+      textbooks.map(async (t) => {
+        const chs = t.id === textbookId && chapters.length ? chapters : await getChapters(t.id);
+        return {
+          id: t.id,
+          name: t.name,
+          version: t.version,
+          stage: t.stage,
+          subject: t.subject,
+          topics: chs.map((c) => c.name),
+        };
+      }),
+    );
+
+    // 当前维度下的关键词，分两类：
+    //   ① 通用词：教材/章节都为空的词（内容类的通用词 + 6 个通用分类的词）
+    //      —— 无论是否选了教材/章节，都必须只取「无归属」的词，
+    //         否则会把章节词混进通用词里造成重复。
+    //   ② 章节词：选了章节取该章；只选教材则取该教材全部章节的词。
+    const genericScope = { ...scope, textbookId: null, chapterId: null };
+    const [genericRows, chapterRows] = await Promise.all([
+      getKeywords(genericScope),
+      typeof chapterId === "number"
+        ? getKeywords({ stage, subject, chapterId })
+        : typeof textbookId === "number"
+          ? getKeywords({ stage, subject, textbookId })
+          : Promise.resolve([]),
+    ]);
+
+    const chapterKeywordList = chapterRows.map((r) => r.keyword);
+    const chapterKeywordCount = new Set(chapterKeywordList).size;
+    // 内容类分类若已选中章节/教材，用该维度的词；否则用通用内容词
+    const categoryKeywords = assembleCategoryKeywords(categoryNames, genericRows);
+    if (chapterRows.length) {
+      for (const name of ["课堂内容", "下节课内容"]) {
+        if (!(name in categoryKeywords)) continue;
+        // 章节关键词在「课堂内容」和「下节课内容」下各存一行（同一知识点两处可选），
+        // 渲染时按关键词去重，避免同一章出现重复项
+        const seen = new Set<string>();
+        const list: string[] = [];
+        for (const r of chapterRows) {
+          if (r.category !== name) continue;
+          if (seen.has(r.keyword)) continue;
+          seen.add(r.keyword);
+          list.push(r.keyword);
+        }
+        categoryKeywords[name] = list;
+      }
+    }
+
+    return NextResponse.json({
+      ...base,
+      stage: stage ?? null,
+      subject: subject ?? null,
+      hasTextbook: subject ? subjectHasTextbook(subject) : false,
+      categories: categoryNames,
+      categoryKeywords,
+      textbooks: textbooksWithTopics,
+      chapters: chapters.map((c) => ({ id: c.id, name: c.name })),
+      selectedTextbookId: textbookId,
+      selectedChapterId: chapterId,
+      chapterKeywordCount,
+    });
+  }
+
+  // ---------- 不带参数：保留原有的全量关键词树（向后兼容） ----------
+  const keywords = await getKeywords();
+  return NextResponse.json({
+    ...base,
+    keywordTree: buildKeywordTree(keywords),
   });
 }
 

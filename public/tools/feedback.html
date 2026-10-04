@@ -385,7 +385,17 @@ header .spacer{flex:1}
         <div class="f"><label>反馈类型</label><select id="templateSelect"></select></div>
         <div class="f"><label>📅 日期或课时范围</label>
           <input type="text" id="dateInput" placeholder="如 4月24日 或 3.16-20" autocomplete="off"></div>
+        <div class="f"><label>学段</label><select id="stageSelect">
+          <option value="senior">高中</option><option value="junior">初中</option>
+        </select></div>
         <div class="f"><label>科目</label><select id="subjectSelect"></select></div>
+        <div class="f" id="textbookField" style="display:none">
+          <label id="textbookLabel">教材版本</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <select id="textbookVersionSelect" style="flex:1;min-width:105px"></select>
+            <select id="textbookSelect" style="flex:1;min-width:105px"></select>
+          </div>
+        </div>
         <div class="f2">
           <div class="f"><label>👥 称呼</label><select id="salutationSelect">
             <option value="家长">家长</option><option value="妈妈">妈妈</option>
@@ -428,23 +438,6 @@ header .spacer{flex:1}
       </div>
     </div>
 
-    <div class="panel">
-      <h2>🔧 数据</h2>
-      <div class="pad">
-        <div id="serverBox" style="display:none;margin-bottom:10px;padding:9px 11px;border-radius:10px;background:var(--brand-l2);border:1px solid var(--line)">
-          <div style="font-size:12.5px;color:var(--ink2)" id="serverLine">联网版</div>
-          <div style="font-size:12px;margin-top:4px" id="syncHint">—</div>
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-gh btn-sm" id="btnServer">🔗 服务器与AI设置</button>
-          <button class="btn btn-gh btn-sm" id="btnResetKw">恢复默认关键词</button>
-          <button class="btn btn-gh btn-sm noprint" id="btnExportCfg">导出配置</button>
-          <button class="btn btn-gh btn-sm noprint" id="btnImportCfg">导入配置</button>
-        </div>
-        <input type="file" id="importFileInput" accept=".json" style="display:none">
-        <p class="tip">关键词、短语句、学生档案都存在本机浏览器里。换电脑时用「导出配置」搬运。</p>
-      </div>
-    </div>
   </div>
 
   <!-- ==================== 中：关键词 ==================== -->
@@ -493,6 +486,27 @@ header .spacer{flex:1}
     <div class="panel" style="margin-top:14px">
       <h2>🕘 该生历史反馈 <span class="sp" id="histCount"></span></h2>
       <div class="pad" id="histList"><p class="tip">生成反馈后点「存入该生记录」，这里会累积历史，方便对比孩子前后变化。</p></div>
+    </div>
+
+    <!-- 「数据 / 服务器与AI设置」移到最底部：日常生成反馈用不到它，
+         夹在「反馈参数」和「勾选关键词」之间会打断工作流 -->
+    <div class="panel noprint" style="margin-top:14px">
+      <h2>🔧 数据与设置</h2>
+      <div class="pad">
+        <div id="serverBox" style="display:none;margin-bottom:10px;padding:9px 11px;border-radius:10px;background:var(--brand-l2);border:1px solid var(--line)">
+          <div style="font-size:12.5px;color:var(--ink2)" id="serverLine">联网版</div>
+          <div style="font-size:12px;margin-top:4px" id="syncHint">—</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-gh btn-sm" id="btnServer">🔗 服务器与AI设置</button>
+          <button class="btn btn-gh btn-sm" id="btnResetKw">恢复默认关键词</button>
+          <button class="btn btn-gh btn-sm" id="btnExportCfg">导出配置</button>
+          <button class="btn btn-gh btn-sm" id="btnImportCfg">导入配置</button>
+        </div>
+        <input type="file" id="importFileInput" accept=".json" style="display:none">
+        <p class="tip">关键词、短语句、学生档案在本机版下存在浏览器里，换电脑时用「导出配置」搬运；
+          接入服务器后关键词库与档案都存在云端账号下。</p>
+      </div>
     </div>
   </div>
 </div>
@@ -726,20 +740,50 @@ function setWriteToken(t){
 /* ==========================================================================
    1. 科目与课本知识点（沿用你原有的数学大纲，并按你真实反馈补充）
    ========================================================================== */
-const SUBJECTS = [
-  ['math','数学'],['english','英语'],['chinese','语文'],['physics','物理'],
-  ['history','历史'],['politics','政治'],['chemistry','化学'],['general','通用']
-];
-const SUBJECT_NAME = {math:'数学',english:'英语',chinese:'语文',physics:'物理',
-  history:'历史',politics:'政治',chemistry:'化学',general:''};
+const STAGES = [{code:'senior',name:'高中'},{code:'junior',name:'初中'}];
 
+/* 九大科目 × 两个学段；general 为无教材科目的兜底 */
+const SUBJECTS = [
+  {code:'chinese',   name:'语文', stages:['senior','junior'], textbook:true},
+  {code:'math',      name:'数学', stages:['senior','junior'], textbook:true},
+  {code:'english',   name:'英语', stages:['senior','junior'], textbook:true},
+  {code:'physics',   name:'物理', stages:['senior','junior'], textbook:true},
+  {code:'chemistry', name:'化学', stages:['senior','junior'], textbook:true},
+  {code:'biology',   name:'生物', stages:['senior','junior'], textbook:true},
+  {code:'politics',  name:'政治', stages:['senior'],          textbook:true},
+  {code:'history',   name:'历史', stages:['senior','junior'], textbook:true},
+  {code:'geography', name:'地理', stages:['senior','junior'], textbook:true},
+  {code:'general',   name:'通用', stages:['senior','junior'], textbook:false}
+];
+const SUBJECT_NAME = {};
+SUBJECTS.forEach(s=>{ SUBJECT_NAME[s.code] = s.code==='general' ? '' : s.name; });
+function subjectsForStage(stage){
+  return SUBJECTS.filter(s=>s.code!=='general' && s.stages.indexOf(stage)>=0);
+}
+
+/* 云端模式下的维度状态（学段/教材/章节 记在 localStorage，科目也记住） */
+let cloudData = null;
+const CLOUD_STAGE_KEY = 'fb_stage_v1';
+const CLOUD_TB_KEY = 'fb_textbook_v1';
+const CLOUD_CH_KEY = 'fb_chapter_v1';
+const CLOUD_SUBJ_KEY = 'fb_subject_v1';
+function getStage(){ const el = document.getElementById('stageSelect'); return el ? el.value : 'senior'; }
+function isCloudSubject(subj){
+  if(cloudData) return !!cloudData.hasTextbook;
+  const d = SUBJECTS.find(s=>s.code===subj);
+  return !!(d && d.textbook);
+}
+
+/* 高中数学课本知识点（离线模式用；云端模式的章节词来自数据库。
+   grade 标注学段：这套书全部是高中，初中数学没有对应课本，
+   因此「初中·数学」不应渲染这个面板） */
 const MATHEMATICS_BOOKS = [
-  {name:'必修第一册', topics:['集合的概念与关系','集合的基本运算','充分条件与必要条件','全称量词与存在量词','等式与不等式性质','基本不等式','二次函数与方程、不等式','函数概念与表示','函数的单调性、奇偶性、周期性','幂函数','函数的应用（一）','指数与对数运算','指数函数','对数函数','函数的应用（二）','任意角与弧度制','三角函数概念','诱导公式','三角函数图像与性质','三角恒等变换','函数 y=Asin(ωx+φ) 模型及其应用']},
-  {name:'必修第二册', topics:['平面向量的概念及运算','平面向量基本定理与坐标表示','平面向量的应用','正弦定理、余弦定理','解三角形常见题型-极值最值','解三角形常见题型-角平分线与中线','复数概念','复数四则运算','基本立体图形及其直观图','斜二测画法','空间几何体的表面积、体积','空间点、线、面之间的位置关系','线面平行与垂直判定','面面平行与垂直判定','随机抽样','用样本估计总体','随机事件与概率','事件独立性','频率与概率']},
-  {name:'选择性必修第一册', topics:['空间向量运算','空间向量及其运算的坐标表示','空间向量的应用','直线的方程','圆的方程','直线与圆的位置关系','椭圆','双曲线','抛物线','直线与圆锥曲线的综合应用','圆锥曲线定点定值','圆锥曲线范围最值']},
-  {name:'选择性必修第二册', topics:['数列的概念与简单表示','等差数列及其前n项和','等比数列及其前n项和','数列求和','裂项相消','错位相减','数列与不等式综合','导数概念与几何意义','导数运算','导数的应用——函数的单调性','导数的应用——函数的极值','导数的应用——函数的最值','导数恒成立问题','导数零点问题','导数隐零点与极值点偏移']},
-  {name:'选择性必修第三册', topics:['分类加法与分步乘法计数原理','排列与组合','二项式定理','条件概率与全概率公式','离散型随机变量','二项分布','超几何分布','正态分布','相关关系','回归分析','独立性检验']},
-  {name:'高考专题与真题', topics:['近五年高考真题精讲','历年高考卷选择题','历年高考卷大题','周测卷讲解','月考试题讲解分析','一模试卷讲解','二模试卷讲解','省市级模拟卷精讲','选填压轴题专项','多选题专项','解答题规范书写','答题时间分配与取舍','极化恒等式','等和线','外接球与内切球','错题总结与重做']}
+  {name:'必修第一册', grade:'senior', topics:['集合的概念与关系','集合的基本运算','充分条件与必要条件','全称量词与存在量词','等式与不等式性质','基本不等式','二次函数与方程、不等式','函数概念与表示','函数的单调性、奇偶性、周期性','幂函数','函数的应用（一）','指数与对数运算','指数函数','对数函数','函数的应用（二）','任意角与弧度制','三角函数概念','诱导公式','三角函数图像与性质','三角恒等变换','函数 y=Asin(ωx+φ) 模型及其应用']},
+  {name:'必修第二册', grade:'senior', topics:['平面向量的概念及运算','平面向量基本定理与坐标表示','平面向量的应用','正弦定理、余弦定理','解三角形常见题型-极值最值','解三角形常见题型-角平分线与中线','复数概念','复数四则运算','基本立体图形及其直观图','斜二测画法','空间几何体的表面积、体积','空间点、线、面之间的位置关系','线面平行与垂直判定','面面平行与垂直判定','随机抽样','用样本估计总体','随机事件与概率','事件独立性','频率与概率']},
+  {name:'选择性必修第一册', grade:'senior', topics:['空间向量运算','空间向量及其运算的坐标表示','空间向量的应用','直线的方程','圆的方程','直线与圆的位置关系','椭圆','双曲线','抛物线','直线与圆锥曲线的综合应用','圆锥曲线定点定值','圆锥曲线范围最值']},
+  {name:'选择性必修第二册', grade:'senior', topics:['数列的概念与简单表示','等差数列及其前n项和','等比数列及其前n项和','数列求和','裂项相消','错位相减','数列与不等式综合','导数概念与几何意义','导数运算','导数的应用——函数的单调性','导数的应用——函数的极值','导数的应用——函数的最值','导数恒成立问题','导数零点问题','导数隐零点与极值点偏移']},
+  {name:'选择性必修第三册', grade:'senior', topics:['分类加法与分步乘法计数原理','排列与组合','二项式定理','条件概率与全概率公式','离散型随机变量','二项分布','超几何分布','正态分布','相关关系','回归分析','独立性检验']},
+  {name:'高考专题与真题', grade:'senior', topics:['近五年高考真题精讲','历年高考卷选择题','历年高考卷大题','周测卷讲解','月考试题讲解分析','一模试卷讲解','二模试卷讲解','省市级模拟卷精讲','选填压轴题专项','多选题专项','解答题规范书写','答题时间分配与取舍','极化恒等式','等和线','外接球与内切球','错题总结与重做']}
 ];
 
 /* ==========================================================================
@@ -839,8 +883,8 @@ const CATS = [
 /* 组装成你原来的数据结构，兼容旧 localStorage */
 function buildDefaultData(){
   const d = {};
-  for (const [k,v] of Object.entries(SUBJECTS)){
-    const subj = v[0];
+  for (const s of SUBJECTS){
+    const subj = s.code;
     const src = (subj === 'math') ? KW : (OTHER[subj] || OTHER.general);
     d[subj] = { categories: CATS.map(c=>({ name:c.name, keywords:[...(src[c.field]||[])] })) };
   }
@@ -1188,9 +1232,19 @@ document.addEventListener('click', e=>{
    7. 反馈文本生成引擎
    ========================================================================== */
 function getSubject(){ return $('#subjectSelect').value; }
+/* 取「分类列表」；数据缺失时按 CATS 现场兜底，绝不抛异常
+   （科目可能没有预置数据，例如新增的生物/地理） */
+function emptyCategories(){
+  return CATS.map(c=>({ name:c.name, keywords:[] }));
+}
 function getCategories(){
   const s = getSubject();
-  if(!allData[s]) allData[s] = JSON.parse(JSON.stringify(DEFAULT_DATA[s] || DEFAULT_DATA.general));
+  if(!allData[s] || !Array.isArray(allData[s].categories)){
+    const fallback = (DEFAULT_DATA && DEFAULT_DATA[s]) || (DEFAULT_DATA && DEFAULT_DATA.general);
+    allData[s] = fallback
+      ? JSON.parse(JSON.stringify(fallback))
+      : { categories: emptyCategories() };
+  }
   return allData[s].categories;
 }
 function getType(){ return ACTIVE_TYPES.find(t=>t.id===$('#templateSelect').value) || ACTIVE_TYPES[0]; }
@@ -1445,11 +1499,144 @@ function buildText(o){
    8. 界面渲染
    ========================================================================== */
 function fillSelects(){
-  $('#subjectSelect').innerHTML = SUBJECTS.map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  $('#stageSelect').innerHTML = STAGES.map(s=>`<option value="${s.code}">${s.name}</option>`).join('');
+  fillSubjectSelect();
   $('#templateSelect').innerHTML = ACTIVE_TYPES.map(t=>`<option value="${t.id}">${t.name}</option>`).join('');
   refreshGreetingOptions();
   $('#closingSelect').innerHTML = CLOSINGS.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
 }
+/* 按当前学段填充科目下拉 */
+function fillSubjectSelect(){
+  const stage = getStage();
+  const list = subjectsForStage(stage);
+  const cur = $('#subjectSelect').value;
+  $('#subjectSelect').innerHTML = list.map(s=>`<option value="${s.code}">${s.name}</option>`).join('');
+  if(list.some(s=>s.code===cur)) $('#subjectSelect').value = cur;
+}
+
+function rememberSubject(){
+  try{ localStorage.setItem(CLOUD_SUBJ_KEY, getSubject()); }catch(e){}
+}
+
+/* 清空关键词勾选（切学段/科目/教材时调用，避免把上一个科目的选择带过去） */
+function clearSelectedKeywords(){
+  $$('#generateCategories input[type="checkbox"]').forEach(cb=>{ cb.checked = false; });
+  updateCounts();
+}
+
+/* 渲染「教材版本 / 册次」两级下拉（仅云端模式 + 该科目有教材 + 服务器返回了教材时显示）
+   数据模型：feedback_textbooks.version = 版本（人教A版/人教版/统编版…），
+             feedback_textbooks.name    = 册次（必修第一册/必修一/…），'-' 表示无册次 */
+const TB_NO_VOLUME = '-';
+function tbVolumeName(t){ return (t && t.name && t.name !== TB_NO_VOLUME) ? t.name : ''; }
+function tbDisplayName(t){ const v = tbVolumeName(t); return v ? (t.version + ' · ' + v) : (t.version || ''); }
+
+function renderTextbookSelect(){
+  const wrap = document.getElementById('textbookField');
+  const sel = document.getElementById('textbookSelect');
+  const verSel = document.getElementById('textbookVersionSelect');
+  const label = document.getElementById('textbookLabel');
+  if(!wrap || !sel || !verSel) return;
+  const subj = getSubject();
+  const c = cloudData;
+  const tbs = (c && c.subject===subj && c.textbooks) ? c.textbooks : [];
+  if(!NEXT_MODE || !isCloudSubject(subj) || !tbs.length){
+    wrap.style.display = 'none';
+    // 同时清空下拉内容，避免切换科目后残留上一个科目的版本/册次
+    verSel.innerHTML = '';
+    sel.innerHTML = '';
+    sel.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+
+  const saved = localStorage.getItem(CLOUD_TB_KEY) || '';
+  const current = tbs.find(t=>String(t.id)===String(saved)) || null;
+  const curVer = current ? current.version : '';
+
+  // 版本下拉
+  const versions = [];
+  tbs.forEach(t=>{ if(versions.indexOf(t.version)<0) versions.push(t.version); });
+  verSel.innerHTML = '<option value="">选择教材版本…</option>'
+    + versions.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  verSel.value = curVer;
+
+  // 册次下拉：仅当该版本有多个「带册次名」的条目时才有意义
+  const inVer = curVer ? tbs.filter(t=>t.version===curVer) : [];
+  const named = inVer.filter(t=>tbVolumeName(t));
+  if(named.length > 1){
+    sel.style.display = '';
+    sel.innerHTML = inVer.map(t=>`<option value="${t.id}">${esc(tbVolumeName(t) || t.version)}</option>`).join('')
+      + '<option value="">（不指定册次 · 用通用内容词）</option>';
+    if(current && current.version===curVer && tbVolumeName(current)) sel.value = String(current.id);
+    else sel.value = '';
+  }else{
+    sel.style.display = 'none';
+  }
+
+  const chapters = (c && c.chapters) ? c.chapters : [];
+  const chId = localStorage.getItem(CLOUD_CH_KEY) || '';
+  const parts = [];
+  if(current) parts.push(tbDisplayName(current));
+  if(chId && chapters.length) parts.push('已选章节');
+  if(label) label.textContent = parts.length ? parts.join(' · ') : '教材版本';
+}
+
+/* 把服务端返回的分类关键词灌进 allData，供现有渲染逻辑使用 */
+function applyCloudKeywordStore(){
+  if(!cloudData || !cloudData.categoryKeywords) return;
+  const s = cloudData.subject;
+  if(!s) return;
+  // 以 CATS 的顺序为准，逐个分类填充服务端关键词；科目无预置数据也能工作
+  allData[s] = { categories: CATS.map(c=>({
+    name: c.name,
+    keywords: (cloudData.categoryKeywords[c.name] || []).slice()
+  })) };
+}
+
+/* 按当前学段/科目/教材/章节拉取云端关键词 */
+function loadCloudScoped(){
+  if(!NEXT_MODE) return Promise.resolve();
+  const stage = getStage();
+  const subject = getSubject();
+  const tb = localStorage.getItem(CLOUD_TB_KEY) || '';
+  const ch = localStorage.getItem(CLOUD_CH_KEY) || '';
+  const qs = new URLSearchParams({stage: stage, subject: subject});
+  if(tb) qs.set('textbook', tb);
+  if(ch) qs.set('chapter', ch);
+  const sh = document.getElementById('syncHint');
+  if(sh) sh.textContent = '⏳ 正在载入该学段/科目的关键词…';
+  return fetch('/api/feedback/data?' + qs.toString(), {credentials:'same-origin', cache:'no-store'})
+    .then(r=> r.ok ? r.json() : null)
+    .then(d=>{
+      if(!d || !d.ok){ if(sh) sh.textContent = '⚠️ 关键词载入失败，请刷新重试'; return; }
+      cloudData = d;
+      applyCloudKeywordStore();
+      renderTextbookSelect();
+      renderGenerate();
+      const total = Object.keys(d.categoryKeywords||{}).reduce((n,k)=>n+(d.categoryKeywords[k]||[]).length,0);
+      const stageName = (STAGES.find(x=>x.code===d.stage)||{}).name || '';
+      const extra = (ch && (d.chapters||[]).length) ? '（已限定章节）' : (tb ? '（已限定教材）' : '');
+      if(sh) sh.textContent = '✓ 已载入云端数据：' + (stageName ? stageName + ' · ' : '')
+        + (SUBJECT_NAME[subject] || subject) + extra + '，共 ' + total + ' 个关键词';
+    })
+    .catch(()=>{ if(sh) sh.textContent = '⚠️ 关键词载入失败（网络错误）'; });
+}
+
+/* 学段变化：重置下游选择并重新载入 */
+function onScopeChanged(){
+  fillSubjectSelect();
+  $('#subjectSelect').value = (subjectsForStage(getStage())[0]||{}).code || 'math';
+  try{ localStorage.setItem(CLOUD_STAGE_KEY, getStage()); }catch(e){}
+  try{ localStorage.removeItem(CLOUD_TB_KEY); localStorage.removeItem(CLOUD_CH_KEY); }catch(e){}
+  cloudData = null;
+  clearSelectedKeywords();
+  rememberSubject();
+  renderTextbookSelect();
+  renderGenerate();
+  if(NEXT_MODE) loadCloudScoped();
+}
+
 function refreshGreetingOptions(){
   const t = getType();
   const opts = t.greet.map(id=>GREETINGS.find(g=>g.id===id)).filter(Boolean);
@@ -1474,34 +1661,83 @@ function updateGreetPreview(){
 }
 
 /* --- 关键词勾选区 --- */
+/* 当前是否使用「课本知识点」面板。
+   数学的两个内容分类原本**无条件**渲染硬编码课本（MATHEMATICS_BOOKS，全是高中人教A版），
+   导致选「初中·数学」时也会显示高中知识点。现在要求：
+     · 云端模式：仅当该科目在**当前学段**确实有教材、且用户已选定一本教材时才用它；
+     · 离线模式：保留原来的课本下拉（离线无法访问云端词库）。
+   另外，云端模式下课本知识点**不再另开一个下拉**（教材下拉已经是同一个入口）。 */
+function mathBookIsUsable(){
+  return getSubject()==='math' && getStage()==='senior';
+}
+function selectedBookTopics(){
+  if(!NEXT_MODE) return null;                       // 离线：走原有下拉
+  if(!cloudData || !cloudData.selectedTextbookId) return null;
+  const tbs = (cloudData.textbooks||[]).filter(t=>String(t.id)===String(cloudData.selectedTextbookId));
+  if(!tbs.length) return null;
+  const grades = new Set(MATHEMATICS_BOOKS.map(b=>b.grade));
+  return grades.has(getStage()) ? (tbs[0].topics || null) : null;
+}
+/* 课本知识点的 HTML（空字符串 = 不渲染面板） */
+function bookTopicsBlock(ci, catName){
+  const cloudTopics = selectedBookTopics();
+  const wantPanel = (cloudTopics !== null) || (NEXT_MODE ? false : mathBookIsUsable());
+  if(!wantPanel) return '';
+  let html = `<div class="bookbar"><span>📖 课本</span>`;
+  if(NEXT_MODE){
+    // 云端：教材由上方「教材版本 / 册次」下拉统一选择，这里只显示当前册次
+    const t = (cloudData.textbooks||[]).find(x=>String(x.id)===String(cloudData.selectedTextbookId));
+    html += `<b>${esc(t ? tbDisplayName(t) : '')}</b>`;
+  }else{
+    html += `<select id="bookSelect_${ci}" data-cat-index="${ci}">
+      ${MATHEMATICS_BOOKS.map((b,i)=>`<option value="${i}">${esc(b.name)}</option>`).join('')}
+    </select>`;
+  }
+  html += `</div><div class="grid" id="bookGrid_${ci}"></div>`;
+  return html;
+}
+/* 初始化课本网格（云端直接填 topics；离线绑定下拉 change） */
+function wireBookGrids(cats){
+  const cloudTopics = selectedBookTopics();
+  cats.forEach((cat, ci)=>{
+    if(cat.name!=='课堂内容' && cat.name!=='下节课内容') return;
+    const grid = document.getElementById('bookGrid_'+ci);
+    if(!grid) return;
+    const paint = (topics)=>{
+      grid.innerHTML = (topics||[]).map(t=>
+        `<label class="chip"><input type="checkbox" data-cat-name="${esc(cat.name)}" data-keyword="${esc(t)}">${esc(t)}</label>`).join('');
+      bindCount();
+    };
+    const sel = document.getElementById('bookSelect_'+ci);
+    if(sel){
+      const upd = ()=>{ const b = MATHEMATICS_BOOKS[parseInt(sel.value,10)] || {topics:[]}; paint(b.topics); };
+      sel.addEventListener('change', upd); upd();
+    }else if(cloudTopics){
+      paint(cloudTopics);
+    }
+  });
+}
 function renderGenerate(){
   const cats = getCategories();
   const subj = getSubject();
+  const useBookGrid = NEXT_MODE ? mathBookIsUsable() : mathBookIsUsable();
   let html = '';
   cats.forEach((cat, ci)=>{
-    const isBook = (subj==='math' && (cat.name==='课堂内容' || cat.name==='下节课内容'));
+    const isBook = (useBookGrid && (cat.name==='课堂内容' || cat.name==='下节课内容'));
     let body = '';
     if(isBook){
-      body = `<div class="bookbar"><span>📖 课本</span>
-        <select id="bookSelect_${ci}" data-cat-index="${ci}">
-          ${MATHEMATICS_BOOKS.map((b,i)=>`<option value="${i}">${esc(b.name)}</option>`).join('')}
-        </select></div>
-        <div class="grid" id="bookGrid_${ci}"></div>`;
-      /* 管理员在关键词库里为该分类维护的词条也要显示出来
-         （数学的「课堂内容 / 下节课内容」原本只显示硬编码课本知识点，
-           导致云端关键词库里的词永远看不到） */
-      if(cat.keywords && cat.keywords.length){
-        body += `<div class="tip" style="margin-top:10px">关键词库（${cat.keywords.length} 条）</div>
-          <div class="grid">` + cat.keywords.map((kw,ki)=>`
-            <label class="chip"><input type="checkbox" data-cat-index="${ci}" data-kw-index="${ki}" data-keyword="${esc(kw)}">${esc(kw)}</label>`).join('') + `</div>`;
-      }
-    }else{
-      if(!cat.keywords || !cat.keywords.length){
-        body = `<p class="tip">这个分类还没有关键词，去「管理关键词库」里加，或者用下面的输入框直接加。</p>`;
-      }else{
-        body = `<div class="grid">` + cat.keywords.map((kw,ki)=>`
-          <label class="chip"><input type="checkbox" data-cat-index="${ci}" data-kw-index="${ki}">${esc(kw)}</label>`).join('') + `</div>`;
-      }
+      // 课本知识点面板 + 该分类在关键词库里的词（两者互补：选到具体教材时网格就是该册章节词）
+      body = bookTopicsBlock(ci, cat.name);
+    }
+    if(cat.keywords && cat.keywords.length){
+      body += (isBook ? `<div class="tip" style="margin-top:10px">关键词库（${cat.keywords.length} 条）</div>` : '')
+        + `<div class="grid">` + cat.keywords.map((kw,ki)=>`
+          <label class="chip"><input type="checkbox" data-cat-index="${ci}" data-kw-index="${ki}" data-keyword="${esc(kw)}">${esc(kw)}</label>`).join('') + `</div>`;
+    }else if(!isBook){
+      body = `<p class="tip">这个分类还没有关键词，去「管理关键词库」里加，或者用下面的输入框直接加。</p>`;
+    }
+    if(!body){
+      body = `<p class="tip">这个学段/科目下还没有内容词。切换上方「教材」可按章节选，或到「管理关键词库」补充。</p>`;
     }
     html += `<details class="cat" ${ci<2?'open':''} data-cat="${ci}">
       <summary><span class="arw">▶</span>${esc(cat.name)}<span class="cnt zero" data-cnt="${ci}">0</span></summary>
@@ -1514,22 +1750,8 @@ function renderGenerate(){
   });
   $('#generateCategories').innerHTML = html || '<p class="tip">暂无分类。</p>';
 
-  // 初始化课本网格
-  if(subj==='math'){
-    cats.forEach((cat,ci)=>{
-      if(cat.name!=='课堂内容' && cat.name!=='下节课内容') return;
-      const sel = document.getElementById('bookSelect_'+ci);
-      const grid = document.getElementById('bookGrid_'+ci);
-      if(!sel || !grid) return;
-      const upd = ()=>{
-        const b = MATHEMATICS_BOOKS[parseInt(sel.value,10)] || {topics:[]};
-        grid.innerHTML = b.topics.map((t,i)=>
-          `<label class="chip"><input type="checkbox" data-cat-name="${esc(cat.name)}" data-keyword="${esc(t)}">${esc(t)}</label>`).join('');
-        bindCount();
-      };
-      sel.addEventListener('change', upd); upd();
-    });
-  }
+  if(useBookGrid) wireBookGrids(cats);
+
   bindCount();
   // 快捷添加
   $$('#generateCategories [data-quickadd]').forEach(inp=>{
@@ -2027,7 +2249,37 @@ async function polish(){
    15. 事件绑定
    ========================================================================== */
 function bind(){
-  $('#subjectSelect').onchange = ()=>{ refreshGreetingOptions(); renderGenerate(); renderManage(); };
+  $('#stageSelect').onchange = ()=>{ onScopeChanged(); refreshGreetingOptions(); renderManage(); };
+  $('#subjectSelect').onchange = ()=>{
+    rememberSubject();
+    try{ localStorage.removeItem(CLOUD_TB_KEY); localStorage.removeItem(CLOUD_CH_KEY); }catch(e){}
+    cloudData = null;
+    clearSelectedKeywords();
+    if(NEXT_MODE) loadCloudScoped(); else renderGenerate();
+    refreshGreetingOptions(); renderManage();
+  };
+  $('#textbookVersionSelect').onchange = ()=>{
+    const v = $('#textbookVersionSelect').value;
+    const tbs = (cloudData && cloudData.textbooks) ? cloudData.textbooks : [];
+    const inVer = v ? tbs.filter(t=>t.version===v) : [];
+    try{
+      if(inVer.length) localStorage.setItem(CLOUD_TB_KEY, String(inVer[0].id));
+      else localStorage.removeItem(CLOUD_TB_KEY);
+      localStorage.removeItem(CLOUD_CH_KEY);
+    }catch(e){}
+    clearSelectedKeywords();
+    // 版本变化后需要重新拉取（章节清单与关键词都跟着变）
+    loadCloudScoped();
+  };
+  $('#textbookSelect').onchange = ()=>{
+    const v = $('#textbookSelect').value;
+    try{
+      if(v) localStorage.setItem(CLOUD_TB_KEY, v);
+      localStorage.removeItem(CLOUD_CH_KEY);
+    }catch(e){}
+    clearSelectedKeywords();
+    loadCloudScoped();
+  };
   $('#templateSelect').onchange = ()=>{
     refreshGreetingOptions();
     const t = getType();
@@ -2114,7 +2366,8 @@ function bind(){
     if(NEXT_MODE){ toast('关键词库由管理员统一维护，如需修改请联系管理员（管理后台 → 反馈关键词）', 3600); return; }
     const s = getSubject();
     if(!confirm('恢复「'+(SUBJECT_NAME[s]||s)+'」的默认关键词？当前自定义会被覆盖。')) return;
-    allData[s] = JSON.parse(JSON.stringify(DEFAULT_DATA[s] || DEFAULT_DATA.general));
+    const fallback = (DEFAULT_DATA && DEFAULT_DATA[s]) || (DEFAULT_DATA && DEFAULT_DATA.general);
+    allData[s] = fallback ? JSON.parse(JSON.stringify(fallback)) : { categories: emptyCategories() };
     saveData(); renderGenerate(); renderManage(); toast('已恢复默认');
   };
   $('#btnExportCfg').onclick = ()=>{
@@ -2269,6 +2522,7 @@ function init(){
   applyApiCfg();
   bind();
   renderStuList();
+  applyCloudKeywordStore();
   renderGenerate();
   renderManage();
   renderPhrases();
@@ -2292,11 +2546,18 @@ function init(){
       if(sh) sh.textContent = '✅ AI 润色由服务器代理（会员专属）';
       return bootFromApi().then(okp=>{
         if(okp){
-          renderGenerate(); renderManage(); renderPhrases(); renderStuList(); renderHist();
-          if(sh) sh.textContent = '✓ 已载入云端数据';
-        }else if(sh){
-          sh.textContent = '⚠️ 云端数据载入失败，请刷新重试';
+          renderStuList(); renderHist(); renderPhrases();
+          // 关键词按「学段 × 科目 × 教材/章节」维度单独拉取
+          try{
+            const st = localStorage.getItem(CLOUD_STAGE_KEY);
+            if(st) $('#stageSelect').value = st;
+            fillSubjectSelect();
+            const sb = localStorage.getItem(CLOUD_SUBJ_KEY);
+            if(sb && subjectsForStage(getStage()).some(x=>x.code===sb)) $('#subjectSelect').value = sb;
+          }catch(e){}
+          return loadCloudScoped().then(()=>{ renderManage(); });
         }
+        if(sh) sh.textContent = '⚠️ 云端数据载入失败，请刷新重试';
       });
     }
     if(isServer){
