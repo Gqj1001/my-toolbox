@@ -37,8 +37,19 @@ const GRADES = ['高一','高二','高三','新高一','新高二','新高三','
 const SUBJECTS = ['数学','英语','语文','物理','化学','生物','历史','地理','政治'];
 
 /* ==========================================================================
-   服务器适配层（与本机模式自动切换）
+   运行模式：本机版 / 云端版（接入 my-toolbox）
+   --------------------------------------------------------------------------
+   三种情形：
+     ① 挂在本站 /tools/paper-analysis 下  → 云端模式
+          接口走 /api/paper-analysis/*，AI Key 由服务器保管
+     ② 放在别的服务器上跑原来的 server.js → 联网模式（保留原逻辑，接口仍是 api/*）
+     ③ 直接双击 HTML（file://）            → 本机模式，数据存浏览器、AI 用自己填的 Key
+   ②③ 的行为与接入前完全一致，不受影响。
    ========================================================================== */
+const NEXT_HOST = (location.protocol === 'http:' || location.protocol === 'https:')
+  && /^\/tools\/paper-analysis(\/|$)/.test(location.pathname);
+const API_BASE = NEXT_HOST ? '/api/paper-analysis' : 'api';
+
 const API = { mode:'local', isAdmin:false, serverCfg:{}, writeToken:'' };
 
 async function apiFetch(path, opts){
@@ -50,7 +61,8 @@ async function apiFetch(path, opts){
   const p = getAccessPass();
   if(p) o.headers = Object.assign({'x-fb-pass': p}, o.headers || {});
   const r = await fetch(path, o);
-  if(r.status === 401){ try{ const d = await r.clone().json(); if(d.needPass !== false) askAccessPass(); }catch(e){} }
+  // 云端模式下没有"访问口令"这套机制（站点登录已是鉴权边界），不要弹口令框
+  if(r.status === 401 && !NEXT_HOST){ try{ const d = await r.clone().json(); if(d.needPass !== false) askAccessPass(); }catch(e){} }
   if(!r.ok){ let msg = '接口 ' + path + ' 返回 ' + r.status; try{ const d = await r.json(); if(d.error) msg = d.error; }catch(e){} throw new Error(msg); }
   return r.json();
 }
@@ -66,7 +78,7 @@ const setWriteToken = t => { API.writeToken = t || ''; try{ sessionStorage.setIt
 
 function detectServer(){
   if(location.protocol !== 'http:' && location.protocol !== 'https:') return Promise.resolve(false);
-  return apiFetch('api/mode').then(d=>{
+  return apiFetch(API_BASE + '/mode').then(d=>{
     if(d && d.ok){
       API.mode = 'server'; API.isAdmin = !!d.isAdmin; API.serverCfg = d.config || {};
       return true;
@@ -77,7 +89,10 @@ function detectServer(){
 function updateModeBadge(){
   const b = $('#modeBadge'); if(!b) return;
   if(API.mode === 'server'){
-    b.textContent = API.isAdmin ? '🌐 联网·管理员' : '🌐 联网版';
+    const cloud = NEXT_HOST;
+    b.textContent = cloud
+      ? (API.isAdmin ? '☁️ 云端·管理员' : '☁️ 云端版')
+      : (API.isAdmin ? '🌐 联网·管理员' : '🌐 联网版');
     b.title = API.serverCfg.hasKey ? '服务器已配置 AI' : '服务器未配置 AI';
   }else{
     b.textContent = '💾 本机版';
@@ -155,7 +170,10 @@ function adoptPaperText(txt, sourceLabel){
   $('#paperPanel').style.display = '';
   $('#qPanel').style.display = '';
   $('#paperHint').textContent = r.questions.length + ' 题 · ' + (r.title || '').slice(0, 14);
-  renderScoreTable();
+  // 注意：分值分配表在 computeScores() 里已经渲染过了（见本函数上方），
+  // 这里原来还调用了一次 renderScoreTable()——那个函数并不存在（实际叫
+  // renderScoreAssignTable），会抛 ReferenceError 并中断本函数，
+  // 导致紧随其后的 renderQuestionList() 从不执行、「解析结果」面板永远是空的。
   renderQuestionList();
   renderScoreList();
   saveJSON(K_PAPER, { text: txt, meta: collectPaperMeta() });
@@ -369,7 +387,7 @@ async function handleFile(file){
       return;
     }
     const data = await toDataUrl(file);
-    const d = await apiFetch('api/parse-file', { method:'POST', body:{ name:file.name, data } });
+    const d = await apiFetch(API_BASE + '/parse-file', { method:'POST', body:{ name:file.name, data } });
     if(!d || !d.ok) throw new Error(d && d.error ? d.error : '服务器解析失败');
     if(d.note) hint.innerHTML = 'ℹ️ ' + esc(d.note);
     if(d.text && d.text.trim()){
@@ -418,7 +436,11 @@ function renderScoreAssignTable(){
       info.spread = Array.from({length: info.count}, () => per);
       scoreAssign.fullScore = Object.values(scoreAssign.perType).reduce((a,x)=>a+x.total,0);
       const cell = $('#sumCell'); if(cell) cell.textContent = round2(scoreAssign.fullScore);
-      seedRecords(); renderScoreList(); renderScoreTable();
+      // 这里只更新总分的单元格即可。原来调用的是 renderScoreTable()（函数不存在，
+      // 会抛 ReferenceError）；即使改成 renderScoreAssignTable() 也不该在这里调——
+      // 它会重建整张表，而重建过程会重新绑定额外的 change 监听器，
+      // 等于在事件处理器内部给自己叠加监听器。
+      seedRecords(); renderScoreList();
     });
   });
   const hint = $('#scoreSumHint');
@@ -640,7 +662,7 @@ async function aiAdvice(){
   try{
     let text = '';
     if(API.mode === 'server' && API.serverCfg.hasKey){
-      const d = await apiFetch('api/ai-advice', { method:'POST', body: payload });
+      const d = await apiFetch(API_BASE + '/ai-advice', { method:'POST', body: payload });
       if(!d || !d.ok) throw new Error(d && d.error ? d.error : '服务器未返回内容');
       text = d.text || '';
     }else{
@@ -706,7 +728,7 @@ async function photoRun(file){
       题号: q.no, 题型: q.section, 满分: records[q.no] ? records[q.no].full : 0,
       知识点: q.knowledge
     }));
-    const d = await apiFetch('api/vision-scores', {
+    const d = await apiFetch(API_BASE + '/vision-scores', {
       method:'POST',
       body:{ image: dataUrl, questions: list, model: API.serverCfg.visionModel }
     });
@@ -982,6 +1004,21 @@ function saveApiCfg(){
 function openServerModal(){
   const info = $('#serverModeInfo');
   const isServer = API.mode === 'server';
+  // 云端模式下服务器配置来自环境变量，不由网页保存 —— 隐藏那段表单，
+  // 但**不能提前 return**：否则 openMask 不会被调用，弹窗根本打不开
+  if(NEXT_HOST){
+    const body = document.querySelector('#maskServer .mbody');
+    if(body) body.style.display = 'none';
+    if(info){
+      info.innerHTML = '<b>当前：云端版</b><br>'
+        + '试卷文件在你自己的浏览器里解析，<b>不会上传</b>；只有点「AI 改写建议段」时，'
+        + '会把<b>已经算好的分数与失分统计</b>发给服务器由 AI 处理。<br>'
+        + '服务器端 AI：' + (API.serverCfg.hasKey ? '✅ 已配置（会员可用）' : '❌ 未配置')
+        + '　答题卡识别：' + (API.serverCfg.visionModel ? '✅ ' + esc(API.serverCfg.visionModel) : '❌ 未启用');
+    }
+    openMask('#maskServer');
+    return;
+  }
   const cfg = isServer ? API.serverCfg : loadApiCfg();
   if(info){
     info.innerHTML = isServer
@@ -1009,7 +1046,7 @@ async function saveServerCfg(){
     saveApiCfg(); toast('已保存到本机浏览器'); return;
   }
   try{
-    const d = await apiFetch('api/config', { method:'POST', body:{
+    const d = await apiFetch(API_BASE + '/config', { method:'POST', body:{
       writeToken: getWriteToken(),
       apiKey: val('serverKeyInput'), apiBase: val('serverBaseInput'),
       model: val('serverModelInput'), visionModel: val('visionModelInput')
@@ -1035,7 +1072,7 @@ async function testServerCfg(){
   }
   toast('测试中…');
   try{
-    const d = await apiFetch('api/health');
+    const d = await apiFetch(API_BASE + '/health');
     toast(d && d.ok ? '服务器正常（AI ' + (d.hasKey ? '已配置' : '未配置') + '）' : '服务器异常');
   }catch(e){ toast('无法连接服务器：' + e.message); }
 }
@@ -1215,7 +1252,7 @@ async function submitPass(){
   if(!v){ toast('请输入口令'); return; }
   setAccessPass(v);
   try{
-    const d = await apiFetch('api/login', { method:'POST', body:{ pass:v } });
+    const d = await apiFetch(API_BASE + '/login', { method:'POST', body:{ pass:v } });
     if(d && d.ok){
       closeMask('#maskPass'); _passAsked = false;
       toast('口令正确'); updateModeBadge();

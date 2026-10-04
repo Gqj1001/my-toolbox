@@ -59,13 +59,28 @@ export function slugFromRoute(route: string): string {
 }
 
 /**
- * 判断某个工具是否有对应的单文件 HTML（public/tools/<slug>.html）。
- * 有则用 iframe 加载该文件，没有则回退到占位页面。
+ * 判断某个工具对应的入口 HTML 是否存在，返回可供 iframe 使用的 URL。
+ *
+ * 支持两种布局：
+ *   ① 单文件工具： public/tools/<slug>.html
+ *   ② 多文件工具： public/tools/<slug>/index.html（css/、js/、templates/ 等同级目录）
+ *
+ * 后者用于「试卷分析工作台」这类由多个文件组成的工具。两种都不存在时返回 null，
+ * 由调用方回退到占位页面。
  */
 export function resolveIframeSrc(slug: string): string | null {
-  if (!/^[a-z0-9][a-z0-9-]*$/i.test(slug)) return null;
-  const abs = path.join(process.cwd(), "public", "tools", `${slug}.html`);
-  return existsSync(abs) ? `/tools/${slug}.html` : null;
+  // 允许 slug 里带 /，以支持 public/tools/<a>/<b>/index.html 这种更深的多文件工具；
+  // 仍严格限制字符集，避免路径穿越（.. 里含点，会被排除）
+  if (!/^[a-z0-9][a-z0-9/-]*$/i.test(slug)) return null;
+
+  const base = path.join(process.cwd(), "public", "tools");
+  const single = path.join(base, `${slug}.html`);
+  if (existsSync(single)) return `/tools/${slug}.html`;
+
+  const multi = path.join(base, slug, "index.html");
+  if (existsSync(multi)) return `/tools/${slug}/index.html`;
+
+  return null;
 }
 
 /** 读取所有启用中的工具，按 sort_order 升序 */
