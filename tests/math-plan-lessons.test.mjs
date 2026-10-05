@@ -322,6 +322,32 @@ console.log("\n--- 极端场景：done = 全部 42 个 ---");
 }
 
 /* ==========================================================================
+   m. 必开模块最小课时：真题精讲 / 错题清零 / 综合模拟 各 ≥ 4 课时（2 次课）
+   ========================================================================== */
+{
+  const bad = [];
+  const detail = [];
+  for (const hours of [40, 60, 80, 100, 120]) {
+    for (const sc of DONE_SCENARIOS) {
+      const plan = generate(newOpt(hours, sc.done));
+      const per = {};
+      plan.rows.forEach((r) => { per[r.module.id] = (per[r.module.id] || 0) + r.hours; });
+      MUST3.forEach((id) => {
+        const h = per[id] || 0;
+        if (h < 4) bad.push(`${hours}h/${sc.label}: ${nameOf(id)} 只有 ${h} 课时`);
+      });
+    }
+    const p0 = generate(newOpt(hours, []));
+    const per0 = {};
+    p0.rows.forEach((r) => { per0[r.module.id] = (per0[r.module.id] || 0) + r.hours; });
+    detail.push(`${hours}h: ${MUST3.map((id) => nameOf(id) + "=" + (per0[id] || 0) + "h").join("  ")}`);
+  }
+  console.log("\n--- 必开模块实际课时（done=空）---");
+  detail.forEach((d) => console.log("  " + d));
+  ok("m. 三个必开模块各 ≥ 4 课时（2 次课）", bad.length === 0, bad.slice(0, 4).join(" ; ") || "全部达标");
+}
+
+/* ==========================================================================
    汇总
    ========================================================================== */
 const passed = results.filter((r) => r.pass).length;

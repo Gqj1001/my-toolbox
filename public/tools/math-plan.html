@@ -691,24 +691,86 @@ function buildLessons(alloc, o){
   return rows;
 }
 
-/* 把「目标总课时」严格摊到每一行（每行固定 2 课时）：
-   先按权重分，再按行粒度为 2 课时增减，循环校准直到合计精确等于目标 */
-function allocateRows(mods, totalHours){
+/* 必开模块的最小课时（行数）：真题精讲 / 错题清零 / 综合模拟 至少各 2 次课（4 课时）。
+   诉求是「每个必开模块都得真的上两次课」，而不是被按权重压到只剩 1 行。 */
+const MUST_MIN_ROWS = { m43: 2, m44: 2, m45: 2 };
+
+/**
+ * 把「目标总课时」严格摊到每一行（每行 2 课时）。
+ *
+ * @param mods     参与排课的模块（必开模块在前）
+ * @param totalHours 分配给模块的课时（已扣除收尾检测的 2 课时）
+ * @param opts.minRowsById  { 模块id: 最少行数 } 保底，例如必开模块各 2 行
+ * @param opts.forcedLastRow 必须保留一行的模块 id（必开模块被截断时兜底，见 generate）
+ * @param opts.maxRows  模块槽位上限（= 预算行数 − 1）。多出来的模块不参与排课，
+ *                      由 generate 的「模块覆盖」自检报给老师。**必须传**，
+ *                      否则模块数 > 槽位时会把每模块 1 行的超额分配直接返回出去，
+ *                      课时账目就废了（这是阶段① 修必开模块时暴露的既有隐患）。
+ *
+ * 分配顺序：先给必开模块留够保底行 → 剩余行按权重分给可取舍模块（每个至少 1 行）
+ *          → 最后用「行粒度为 1」的增减校准，保证合计精确等于目标行数。
+ */
+function allocateRows(mods, totalHours, opts){
+  opts = opts || {};
+  const minRowsById = opts.minRowsById || {};
+  const forcedLastRow = opts.forcedLastRow || null;
   const target = Math.max(1, Math.round(totalHours/2));   // 目标行数
-  const sum = mods.reduce((a,m)=>a+m.lv,0) || 1;
-  let counts = mods.map(m=>Math.max(1, Math.round(target*m.lv/sum)));
+
+  // ---- 模块槽位上限：超出的模块不排课，但保底模块必须留下 ----
+  let list = mods;
+  if(opts.maxRows != null && list.length > opts.maxRows){
+    const keep = list.slice(0, opts.maxRows);
+    if(forcedLastRow && !keep.some(m=>m.id === forcedLastRow)){
+      const forced = list.find(m=>m.id === forcedLastRow);
+      if(forced){
+        if(keep.length >= opts.maxRows) keep[keep.length-1] = forced;
+        else keep.push(forced);
+      }
+    }
+    list = keep;
+  }
+  if(!list.length) return [];
+
+  const minOf = (m)=> Math.max(1, minRowsById[m.id] || 1);
+  const counts = list.map(minOf);
+  let used = counts.reduce((a,b)=>a+b,0);
+
+  if(used < target){
+    // 剩余行按 lv 权重分给各模块（保底之外再加增量）
+    const base = list.map(minOf);
+    const rest = target - used;
+    const sumW = list.reduce((a,m)=>a+m.lv,0) || 1;
+    const extra = list.map(m=>Math.floor(rest * m.lv / sumW));
+    let leftover = rest - extra.reduce((a,b)=>a+b,0);
+    let k = 0;
+    while(leftover > 0 && k < list.length * 4){
+      const i = k % list.length;
+      extra[i] += 1; leftover -= 1; k++;
+    }
+    for(let i=0;i<counts.length;i++) counts[i] = base[i] + extra[i];
+  }
+
+  // ---- 校准：行粒度为 1，减的时候不能把模块压到保底值以下 ----
   const adjust = ()=>{
     let d = target - counts.reduce((a,b)=>a+b,0);
     let guard = 0;
-    while(d !== 0 && guard++ < 500){
-      const idx = d>0 ? counts.indexOf(Math.min(...counts)) : counts.indexOf(Math.max(...counts));
-      counts[idx] += d>0?1:-1;
+    while(d !== 0 && guard++ < 3000){
+      let idx = -1;
+      if(d > 0){
+        idx = counts.indexOf(Math.min(...counts));
+      }else{
+        for(let i=0;i<counts.length;i++){
+          if(counts[i] > minOf(list[i]) && (idx < 0 || counts[i] > counts[idx])) idx = i;
+        }
+        if(idx < 0) break;                 // 已全部到保底，无法再减
+      }
+      counts[idx] += d > 0 ? 1 : -1;
       if(counts[idx] < 1){ counts[idx] = 1; }
       d = target - counts.reduce((a,b)=>a+b,0);
     }
   };
   adjust();
-  return mods.map((m,i)=>({m, h:counts[i]*2}));
+  return list.map((m,i)=>({m, h:counts[i]*2}));
 }
 
 /* 行 → 轮次：集中定义一处，避免「文字说三轮、课表没有」再次脱节
@@ -854,13 +916,19 @@ function generate(o){
   const mustMods = MODULES.filter(m=>m.must);
   let flexMods = mods.filter(m=>!m.must);
   if(!flexMods.length && !mustMods.length) flexMods = [MODULES.find(m=>m.id==="m41")];
-  // 槽位预算 maxRows 只约束「可取舍模块」，必开模块不占槽位
+  // 槽位预算：总行数 − 1（收尾检测行）。必开模块本身也不占这个预算之外的额度，
+  // 因此这里只减 1，不再减必开个数（与阶段① 定的口径一致）。
   const maxRows = Math.max(2, Math.round(o.totalHours/2) - 2);
   if(flexMods.length > maxRows) flexMods.length = maxRows;
   mods = mustMods.concat(flexMods);
   // 供 selfCheck 汇报「本次未排入的模块」用（内部字段，不进界面）
   o._pool = mods.slice();
-  const alloc = allocateRows(mods, o.totalHours - 2);   // 预留 2 课时给综合检测
+  // 保底：三个必开模块各至少 2 次课（4 课时）；槽位不够时优先保住最后一个必开模块
+  const alloc = allocateRows(mods, o.totalHours - 2, {
+    minRowsById: MUST_MIN_ROWS,
+    forcedLastRow: "m45",
+    maxRows: Math.max(2, Math.round(o.totalHours/2) - 1),
+  });
 
   let rows = buildLessons(alloc, o);
   // 逐行校准：不足则补行，超出则删行，保证合计精确等于设定课时
@@ -979,14 +1047,17 @@ function render(plan){
   h.push(`</tbody></table>`);
   h.push(`<p class="hint">说明：按每次课可持续提分 <b>${plan.rate} 分</b> 估算，提 ${o.target-o.score} 分约需 <b>${Math.ceil((o.target-o.score)/plan.rate)} 课时</b>；本方案共 ${o.totalHours} 课时。具体进度将根据月考成绩与掌握情况动态调整。</p>`);
 
-  /* 教学方法 */
+  /* 教学方法（可整段 AI 润色：只改文风，数字与事实由服务端提示词强制保留） */
   h.push(`<h2>三、教学方法</h2>`);
+  h.push(`<div id="methodBody">`);
   h.push(`<p><b>（1）方案与总量。</b>本方案为${o.grade}${bt.level}方案，共 <b>${o.totalHours} 课时</b>（每次 ${o.len} 小时，按 2 课时/次计，共 ${o.totalHours/2} 次课），${weekTxt}。</p>`);
   h.push(`<p><b>（2）学情诊断。</b>${esc(plan.diagText)}</p>`);
   h.push(`<p><b>（3）取舍原则。</b>坚持“<b>${bt.principle}</b>”，${bt.give}；${bt.fight}。</p>`);
   h.push(`<p><b>（4）课堂流程。</b>采用「${flow.name}」：${flow.items.map(x=>`${x[0]}（${x[1]} 分钟）`).join(" → ")}，合计 ${flow.mins} 分钟。${flow.desc}。${o.band===1?"每节课另设 <b>“计算过关”</b> 环节 15–20 分钟，针对求导、通分、联立、数列求和等高频计算反复训练至准确。":""}</p>`);
   h.push(`<p><b>（5）课后闭环。</b>每次课后布置 ${bt.homework}，下次课前 5 分钟检查订正；${bt.errbook}；${bt.check}。每节课只安排 2–3 个核心知识点，配 5–8 道梯度练习，当堂批改或互评。</p>`);
   h.push(`<p><b>（6）目标。</b>由当前 <b>${o.score} 分</b>提升至 <b>${o.target} 分</b>；其中基础题正确率 ${bt.thresh}，运算正确率 ${bt.opthr}，压轴题稳定拿到前两问步骤分。</p>`);
+  h.push(`</div>`);
+  h.push(`<p class="hint" data-noprint="1"><button type="button" class="ai-btn" data-ai="method" style="font:inherit;cursor:pointer;padding:5px 12px;border-radius:7px;border:1px solid #cadcfb;background:#e8f0fe;color:#1466d6">✨ AI 改写</button> <span class="tip">AI 只改写措辞，分数、课时、题量等数字不会被改动</span></p>`);
 
   /* 阶段与课时分配 */
   if(plan.rounds){
@@ -999,12 +1070,15 @@ function render(plan){
   const secTitle = plan.rounds ? "五" : "四";
   h.push(`<h2>${secTitle}、逐次课表</h2>`);
   h.push(`<p>共 ${plan.rows.length} 次课 / ${plan.rows.reduce((a,r)=>a+r.hours,0)} 课时；每次课 2 课时。</p>`);
+  h.push(`<div id="goalsBody">`);
   h.push(`<table><thead><tr><th style="width:24%">阶段（章节／单元／模块）</th><th style="width:36%">内容（包括阶段检测）</th><th class="c" style="width:8%">课时数</th><th style="width:32%">教学目标</th></tr></thead><tbody>`);
   plan.rows.forEach((r,i)=>{
-    h.push(`<tr data-i="${i}"><td>${esc(r.stage)}</td><td>${esc(r.content)}</td><td class="c">${r.hours}</td><td>${esc(r.goal)}</td></tr>`);
+    h.push(`<tr data-i="${i}"><td>${esc(r.stage)}</td><td>${esc(r.content)}</td><td class="c">${r.hours}</td><td data-goal="${i}">${esc(r.goal)}</td></tr>`);
   });
   h.push(`<tr class="stage-row"><td>合计</td><td>${plan.rows.length} 次课</td><td class="c">${plan.rows.reduce((a,r)=>a+r.hours,0)}</td><td>每次课 2 课时</td></tr>`);
   h.push(`</tbody></table>`);
+  h.push(`</div>`);
+  h.push(`<p class="hint" data-noprint="1"><button type="button" class="ai-btn" data-ai="goals" style="font:inherit;cursor:pointer;padding:5px 12px;border-radius:7px;border:1px solid #cadcfb;background:#e8f0fe;color:#1466d6">✨ AI 改写教学目标</button> <span class="tip">只改写「教学目标」一列，正确率等验收指标会原样保留</span></p>`);
 
   /* 检测与作业机制 */
   h.push(`<h3>检测与作业机制</h3>`);
@@ -1032,7 +1106,10 @@ function render(plan){
    ========================================================================= */
 function exportWord(){
   if(!CURRENT){toast("请先生成方案");return;}
-  const docHtml = $("#doc").outerHTML;
+  // 导出前剔除 AI 按钮等「界面操作」元素（data-noprint），家长版文档里不该出现按钮
+  const clone = $("#doc").cloneNode(true);
+  clone.querySelectorAll("[data-noprint]").forEach(el=>el.remove());
+  const docHtml = clone.outerHTML;
   const css = `
     body{font-family:"宋体",SimSun,serif;font-size:10.5pt;line-height:1.5;margin:2cm}
     h1{font-family:"微软雅黑";font-size:16pt;text-align:center;color:#1f3864}
@@ -1075,6 +1152,117 @@ function toast(msg){
   clearTimeout(t._h);
   t._h = setTimeout(()=>t.classList.remove("on"), 2200);
 }
+
+/* =========================================================================
+   八之二、AI 分区润色（会员专属）
+   -------------------------------------------------------------------------
+   只做「润色」：把已经算好、已经渲染出来的文案交给服务端转发给模型，
+   要求保留全部数字与事实。返回后**只替换对应区域的文本**，其他一律不动。
+     · method —— 替换「三、教学方法」六段正文
+     · goals  —— 逐条替换「逐次课表」的「教学目标」列
+   服务端行数校验通过后前端还会再校验一次行数，避免错位贴错。
+   ========================================================================= */
+function aiCollect(mode){
+  const o = CURRENT.o;
+  if(mode==="method"){
+    const body = $("#methodBody"); if(!body) return null;
+    const paragraphs = Array.from(body.querySelectorAll("p"))
+      .map(p=>p.innerText.replace(/\s+/g," ").trim())
+      .filter(Boolean);
+    if(!paragraphs.length) return null;
+    return { section:"method", context:{
+      grade:o.grade, band:CURRENT.band, score:o.score, target:o.target,
+      totalHours:o.totalHours, exam:CURRENT.ex.name,
+      rounds:(CURRENT.rounds||[]).map(r=>({name:r.name, hours:r.hours, focus:r.focus})),
+      paragraphs
+    }};
+  }
+  if(mode==="goals"){
+    const lessons = CURRENT.rows.map((r,i)=>{
+      const cell = document.querySelector(`#goalsBody [data-goal="${i}"]`);
+      return { stage:r.stage, content:r.content, goal: cell ? cell.innerText.replace(/\s+/g," ").trim() : r.goal };
+    });
+    if(!lessons.length) return null;
+    return { section:"goals", context:{
+      grade:o.grade, band:CURRENT.band, score:o.score, target:o.target,
+      totalHours:o.totalHours, exam:CURRENT.ex.name,
+      rounds:(CURRENT.rounds||[]).map(r=>({name:r.name, hours:r.hours, focus:r.focus})),
+      lessons
+    }};
+  }
+  return null;
+}
+
+async function aiRewrite(mode){
+  const btn = document.querySelector(`.ai-btn[data-ai="${mode}"]`);
+  if(!btn) return;
+  if(btn.disabled) return;
+  const payload = aiCollect(mode);
+  if(!payload){ toast("没有可改写的正文，请先生成方案"); return; }
+
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "⏳ AI 改写中…";
+  try{
+    const res = await fetch("/api/math-plan/ai-sections", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      credentials:"same-origin",
+      body: JSON.stringify(payload),
+    });
+    let data = null;
+    try{ data = await res.json(); }catch(e){ /* 非 JSON 响应（例如被中间件重定向成 HTML） */ }
+
+    if(!res.ok || !data || !data.ok){
+      const msg = (data && data.error) ? data.error
+        : res.status===401 ? "请先在网页版登录后再使用 AI 改写"
+        : "AI 改写失败（HTTP "+res.status+"）";
+      toastLong(msg);
+      return;
+    }
+
+    const lines = Array.isArray(data.lines) ? data.lines : [];
+    if(mode==="method"){
+      const body = $("#methodBody"); if(!body) return;
+      const ps = Array.from(body.querySelectorAll("p"));
+      if(lines.length !== ps.length){
+        toast("AI 返回的段落数与原文不一致，已放弃替换"); return;
+      }
+      ps.forEach((p,i)=>{
+        // 保留原有分条标签「（1）方案与总量。」的加粗样式，只替换标签之后的正文字句，
+        // 否则整段会被加粗，与原方案外观不一致。
+        const strong = p.querySelector("b");
+        const label = strong ? String(strong.textContent).trim() : "";
+        p.innerHTML = label ? ("<b>" + esc(label) + "</b>" + esc(lines[i])) : esc(lines[i]);
+      });
+      toast("「教学方法」已改写（数字未变）");
+    }else{
+      const cells = Array.from(document.querySelectorAll("#goalsBody [data-goal]"));
+      if(lines.length !== cells.length){
+        toast("AI 返回的条数与课表行数不一致，已放弃替换"); return;
+      }
+      cells.forEach((td,i)=>{ td.textContent = lines[i]; });
+      toast("「教学目标」已改写（"+lines.length+" 条，数字未变）");
+    }
+  }catch(e){
+    toast("无法连接服务端 AI 接口：请通过 my-toolbox 网页版打开使用（本机双击打开时不可用）");
+  }finally{
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+/* AI 相关提示需要更长停留时间（错误信息更该看清楚），这里给一个统一的包装 */
+function toastLong(msg, ms){
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(t._h);
+  t._h = setTimeout(()=>t.classList.remove("on"), ms || 3600);
+}
+
+/* AI 按钮用事件委托绑定：方案每次重渲染都会重建按钮，避免重复绑定 */
+document.addEventListener("click", e=>{
+  const b = e.target && e.target.closest ? e.target.closest(".ai-btn[data-ai]") : null;
+  if(b) aiRewrite(b.dataset.ai);
+});
 
 /* =========================================================================
    九、界面绑定
