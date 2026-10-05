@@ -1,6 +1,7 @@
 # 高中数学辅导方案生成器 · 交接报告
 
-> 本报告只讲**现在在哪、下一步做什么、有什么坑**。完整演变见 `git log --oneline`。
+> 本报告只讲**现在在哪、下一步做什么、有什么坑**。完整演变见 `git log --oneline`
+> （⚠️ git **不在 PATH** 上，可执行文件路径见第九节）。
 > 工具本体：`public/tools/math-plan.html`（**单文件 HTML** + 外挂 js/资源）
 
 ---
@@ -9,10 +10,10 @@
 
 | 项目 | 状态 |
 |---|---|
-| 已推送的最新提交 | 见下方「本轮提交」 |
-| 本轮提交 | 「辅导方案 Word 模板化导出（新模板）+ 字体统一 + m41 位置 + 校区/教师拆分」 |
-| 线上 `tools` 表 | ⚠️ `/tools/math-plan` 的 `min_plan` **仍是 vip**，需执行 `0011_fix_math_plan_min_plan.sql`（我无 service_role key，改不了线上） |
-| 页面可访问性 | 非会员访问 `/tools/math-plan` 会被重定向到 `/upgrade`（因为线上还是 vip） |
+| 已推送的最新提交 | `0b4126f`「辅导方案 Word 模板化导出（新模板）+ 字体统一 + m41 位置 + 校区/教师拆分」 |
+| 本轮提交 | 「更新 math-plan 交接文档：P1 完成 + 补记踩坑」（**纯文档**，未动代码/模板） |
+| 线上 `tools` 表 | ✅ `/tools/math-plan` 的 `min_plan` **已是 `free`** —— 0011 已在 Supabase SQL Editor 执行成功（核对证据见第七节 P1） |
+| 页面可访问性 | ✅ 非会员可正常打开 `/tools/math-plan`（`min_plan=free` → `vipOnly=false` → 不再跳 `/upgrade`）；页内 AI 功能区仍 VIP 专属 |
 | 模板文件 | `模板-占位符.docx`（185,749 字节，**新版**，由 `make-new-template.py` 从桌面那份重建）；旧版备份 `模板-占位符.old.docx`（185,564 字节，**已废弃**） |
 | 用户桌面模板 | `C:\Users\郭庆杰\Desktop\模板-辅导方案.docx`（232,207 字节）—— **只读基准，全程未改动** |
 | DEMO 产物 | `D:\my-website\.tmp-planning-samples\demo-out\`（v1..v5，最新 **v5** 已通过 Word 验收） |
@@ -166,7 +167,7 @@ d.period = p.period || '';        // 正确
 | **m41 位置** | **优先于轮次排序**：band1 → 第 1 行（不在池也插）；band2&score<70 → 前 3 行；其他不动。**轮次排序后要在 `generate` 里再修正一次**（否则被 `topic:"计算"` 判成第三轮而沉底） | `pickModules` + `generate` |
 | 自检 | 「检测落地」判据放宽为 `/检测｜综合模拟/`；新增「模块覆盖/未排入模块」 | `selfCheck` |
 
-## 七、待办的下一步（按优先级）
+## 七、待办的下一步（按优先级；P0、P1 已完成 ✅）
 
 ### P0 · 已完成 ✅ m41（初高中衔接与计算过关）位置修正
 
@@ -188,10 +189,52 @@ d.period = p.period || '';        // 正确
 否则 `selfCheck` 的「检测落地」会变成 warn。所以 m41 只能插在它**前面** ——
 实现里先把尾行 `pop()` 出来，插完再 `concat` 回去。
 
-### P1 · 线上一致性
+### P1 · 线上一致性 ✅ 已完成
 
-执行 `supabase/migrations/0011_fix_math_plan_min_plan.sql`（把 `/tools/math-plan` 的 `min_plan` 改成 `free`）。
-跑之前非会员进不了工具页。
+**动作**：在 Supabase Dashboard → SQL Editor 整段执行 `supabase/migrations/0011_fix_math_plan_min_plan.sql`
+（把 `/tools/math-plan` 的 `min_plan` 从 `vip` 改成 `free`）。**已执行成功。**
+
+**核对证据（用 anon key 直查线上 `tools` 表 —— `min_plan` 是公开字段，不需要 service_role）**：
+
+```powershell
+$env_ = Get-Content D:\my-website\my-toolbox\.env.local -Raw
+$url  = ([regex]::Match($env_,'NEXT_PUBLIC_SUPABASE_URL=(\S+)')).Groups[1].Value.Trim()
+$key  = ([regex]::Match($env_,'NEXT_PUBLIC_SUPABASE_ANON_KEY=(\S+)')).Groups[1].Value.Trim()
+$h    = @{ apikey = $key; Authorization = "Bearer $key" }
+Invoke-RestMethod -Uri "$url/rest/v1/tools?select=sort_order,name,route,min_plan,active&order=sort_order.asc" -Headers $h |
+  Format-Table sort_order,name,route,min_plan,active -AutoSize
+```
+
+实测输出（本轮）：
+
+```
+sort_order name                     route                      min_plan active
+---------- ----                     -----                      -------- ------
+         1 高中数学辅导方案生成器    /tools/math-plan           free     True
+         6 试卷分析工作台            /tools/paper-analysis      free     True
+        10 JSON 格式化             /tools/json-formatter      free     True
+        15 课后反馈工作台            /tools/feedback            free     True
+        20 密码生成器              /tools/password-generator   free     True
+        40 会员专属：批量数据处理     /tools/vip-batch           vip      True
+        50 会员专属：高级报表导出     /tools/vip-report          vip      True
+```
+
+→ 正好命中 0011 第 3 节自检的断言：**math-plan 已 `free`，而 `vip-batch` / `vip-report` 仍是 `vip`
+（没有误改其它工具）**。并且仓库 `0003_seed_tools.sql` 里写的就是 `free` ——
+**仓库与线上现在已经一致，漂移消除。**
+
+**跳转链路核对**（只看到 `free` 不够，三段都要过）：
+
+1. `getToolByRoute()` 先过滤 `.eq("active", true)` → 线上 `active=True` ✅
+2. `tool-page-shell.tsx`：`vipOnly = min_plan === "vip"` → 现为 `false`，`locked = false` → **不再 `redirect('/upgrade')`** ✅
+3. `tools-db.ts` 的 `toToolView()`：`unlocked = !vipOnly || isVip` → `true`，`href` 就是 `/tools/math-plan` 本身 ✅
+
+**结论**：`rolea-`（免费版）现在能打开工具页，页内 iframe 加载 `public/tools/math-plan.html`（97,294 字节）。
+AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
+「**工具本身 free（所有登录用户可开），只有其中的 AI 功能是 VIP 专属**」，
+与 feedback / paper-analysis 口径一致。
+
+> 无需补任何代码改动：0011 早在 `339d6f4` 就已提交进版本库。
 
 ### P2 · 网站层面（用户说另开任务）
 
@@ -215,8 +258,20 @@ d.period = p.period || '';        // 正确
 | `tests/math-plan-lessons.test.mjs` | **37** | 必开模块、done 豁免、最小课时、三轮口径与排序、极端场景、**m41 位置（三条规则）** |
 | `tests/math-plan-export-ui.test.mjs` | **16** | 真浏览器：脚本加载、两个按钮、真实导出、DEMO 落盘 |
 | `tests/math-plan-ai-sections.test.mjs` | **26** | AI 分区润色接口鉴权/入参/前端往返 |
+| `tests/math-plan-ai-vip-path.test.mjs` | **17**（静态计数，见下） | **补记（原清单漏了这套）**：用**假 `AI_KEY`** 另起一次服务，验证「VIP + 有 Key」之后的路径 —— 无 Key → 503；假 Key → 502（**不是** 503）、上游错误原文不透传、Key 绝不回传前端；有 Key 后入参校验分支才真正可达，故另补 5 条 400 |
 
-**合计 155 项。**
+**合计：5 套。前 4 套 155 项；加上第 5 套共约 172 项。**
+
+> ⚠️ 原文只列了 4 套就写「合计 155 项」——**155 是 4 套的数**，第 5 套 `math-plan-ai-vip-path` 当时被漏在清单外
+> （只在第九节「免 Key 验证技巧」提了一句）。数套件时别按 4 套算。
+
+**⚠️ 第 5 套的两个坑（补记）**：
+
+- 它的 **17** 是**静态数出来的 happy-path 断言数**，**本轮没有实跑过**（跑它需要 `pnpm build` + 真服务）。
+  若中途某项登录失败，实际记录数会**少于** 17；失败时还会多记 1 条「测试执行未异常中断」。
+- **它会先把 3000 端口上的监听进程 `Stop-Process -Force` 杀掉**（脚本开头就干这事）。
+  所以跑它之前**先关掉你自己的 dev server 或另一个真服务套件**，否则两边互相踩。
+  它还会起两个独立 Edge profile：`.edge-profile-mp-vip`、`.edge-profile-mp-vip2`。
 
 跑法（用 bundled Node）：
 
@@ -224,8 +279,9 @@ d.period = p.period || '';        // 正确
 & "C:\Users\郭庆杰\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe" tests\math-plan-template.test.mjs
 ```
 
-**另有两个需要真服务的套件**（会自己起 next start，端口 3000）：
-`math-plan-export-ui` / `math-plan-ai-sections`。跑之前先 `pnpm build`。
+**另有三个需要真服务的套件**（会自己起 next start，端口 3000）：
+`math-plan-export-ui` / `math-plan-ai-sections` / `math-plan-ai-vip-path`。跑之前先 `pnpm build`。
+（`ai-vip-path` 会**杀 3000 端口**，别和其它真服务套件同时跑。）
 
 ⚠️ 跑法注意：**连续跑多个需要真服务的套件时偶发 1 项失败**（登录/会话时序抖动），
 重跑即过；判断是否真失败要看能否稳定复现。
@@ -238,10 +294,32 @@ d.period = p.period || '';        // 正确
 |---|---|
 | 测试账号分工 | **`roleb-` = VIP（会员版，剩 30 天）**；**`rolea-` = 免费版（admin 但非会员）** |
 | AI Key | 本地 `.env.local` **无 `AI_KEY`** → 接口返回 503；`rolea` 调则 403 |
-| 免 Key 验证技巧 | 用**假 `AI_KEY`** 另起一次服务，可验证「503 之后的链路」（上游用假 Key 拒绝 → 502） |
+| 免 Key 验证技巧 | 用**假 `AI_KEY`** 另起一次服务，可验证「503 之后的链路」（上游用假 Key 拒绝 → 502）。**已固化为第 5 套测试 `math-plan-ai-vip-path.test.mjs`（见第八节）** |
 | 构建 | `pnpm build`（Turbopack）；构建后 `/api/math-plan/ai-sections` 应出现在路由表 |
 | 浏览器测试注意 | 必须 `next build` + `next start`（dev 模式 hydration 有问题） |
 | GitHub 网络 | `github.com:443` 偶发连接重置（`api.github.com` 正常），push 需重试 |
+| **Git 可执行文件** | **`D:\my-website\.tools\git\cmd\git.exe`**（v2.56.0）。**不在 PATH 上** —— 直接敲 `git` 会报 `CommandNotFound`，必须写全路径调用 |
+
+### 工具链注意事项（本仓库特有，踩过）
+
+- **`glob` 工具在本仓库不可靠，不要凭它的空结果断定「文件不存在」。**
+  实测 `docs/**`、`public/tools/*.html` 都返回过**空结果**，但文件其实都在
+  （`public/tools/math-plan.html` 97,294 字节、`docs/math-plan-template/*` 三个 docx 都在）。
+  → **改用 `Get-ChildItem`（pwsh）+ `grep` 交叉核对。**
+
+- **`git` 不在 PATH 上**，一律用全路径调用：
+
+  ```powershell
+  & "D:\my-website\.tools\git\cmd\git.exe" -C D:\my-website\my-toolbox log --oneline -5
+  ```
+
+- 万一 git 用不了，**直接读 `.git` 里的文件也能拿到历史与推送状态**（本轮验证过）：
+  - 提交信息：`.git\logs\HEAD`（每行最后一列就是 commit message）
+  - 本地分支：`.git\refs\heads\main`；远端：`.git\refs\remotes\origin\main`
+  - **两者哈希相同 = 已推送**（本轮 `main` 与 `origin/main` 都是 `0b4126f`，所以确认已推送）
+
+- **线上 `tools` 表可以用 anon key 直查**（`min_plan` / `active` 等公开字段），**不需要 service_role**，
+  命令见第七节 P1。这是核对线上权限口径最快的手段，别再因为「没有 service_role」就放弃核对。
 
 ---
 
