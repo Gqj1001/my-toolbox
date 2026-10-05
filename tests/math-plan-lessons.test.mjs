@@ -458,6 +458,72 @@ console.log("\n--- 极端场景：done = 全部 42 个 ---");
 }
 
 /* ==========================================================================
+   o. 自检「目标量化」不得误报，且不合格时必须点名到行
+      —— 对全部预设跑一遍 generate + selfCheck（纯逻辑，不依赖浏览器）
+
+   踩过的坑：收尾行「全卷得分达到 95 分…」里的「达到」不在判定词表里，
+   于是 6 个预设**每一个**都报「有 1 行目标缺少量化指标」，且都指向最后一行 ——
+   老师只看到「有 1 行」，根本不知道改哪一行，等于自检没法用。
+   ========================================================================== */
+{
+  const raw = readFileSync(HTML, "utf8");
+  const pm = raw.match(/const PRESETS = \{([\s\S]*?)\n\};/);
+  const PRESETS = pm ? vm.runInNewContext("({" + pm[1] + "})") : {};
+
+  const fromPreset = (key, done) => {
+    const p = PRESETS[key];
+    const o = newOpt(p.hours, done || []);
+    Object.assign(o, {
+      grade: p.grade, phase: p.phase, score: p.score, target: p.target,
+      freq: p.freq, freqH: p.freqH, weeks: p.weeks, holidayWeeks: p.holidayWeeks,
+      focus: p.focus, note: p.note,
+    });
+    o.band = bandOf(o.score);
+    return o;
+  };
+
+  const keys = Object.keys(PRESETS);
+  ok("o. 能从 math-plan.html 解析出全部预设", keys.length >= 6, keys.join(","));
+
+  // ---- 1) 每个预设的「目标量化」都必须是 ok（收尾行不能再被误判）----
+  // ⚠️ 必须**精确匹配标题**：自检里还有一项「目标方向」（恒为 ok），
+  //    用 /目标/ 会先命中它，断言就变成永远成立、抓不到任何 bug（本组断言第一版就踩了这个坑）。
+  const isQuantCheck = (c) => c[1] === "目标量化" || c[1] === "目标全部量化";
+  const notOk = [];
+  keys.forEach((k) => {
+    const plan = generate(fromPreset(k));
+    const item = (plan.checks || []).find(isQuantCheck);
+    if (!item) notOk.push(`${k}: 自检里找不到「目标量化」项`);
+    else if (item[0] !== "ok") notOk.push(`${k}: ${item[1]} → ${item[2]}`);
+  });
+  ok(`o. 全部 ${keys.length} 个预设：自检「目标量化」均为 ok（不再误报收尾行）`,
+    notOk.length === 0, notOk.slice(0, 3).join(" ; ") || "全部通过");
+
+  // ---- 2) 收尾行「达到 N 分」必须被判为已量化（本次 bug 的正主）----
+  {
+    const plan = generate(fromPreset("gap"));
+    const last = plan.rows[plan.rows.length - 1];
+    ok("o. 收尾行目标含「达到 N 分」且能通过量化判定",
+      /达到/.test(last.goal) && !/目标量化/.test(JSON.stringify(plan.checks.filter((c) => c[0] !== "ok"))),
+      `[${last.stage}] ${last.goal.slice(0, 40)}`);
+  }
+
+  // ---- 3) 真的不合格时，必须点名「第几行 + 阶段名 + 总数」----
+  {
+    const o = fromPreset("gap");
+    const plan = generate(o);
+    const target = plan.rows[2];
+    const mutated = { ...plan, rows: plan.rows.map((r, i) => (i === 2 ? { ...r, goal: "能理解概念" } : r)) };
+    const item = (selfCheck(o, mutated) || []).find((c) => c[1] === "目标量化");
+    const detail = item ? String(item[2]) : "";
+    ok("o. 存在未量化行时给出 warn", !!item && item[0] === "warn", item ? item[0] : "未找到该项");
+    ok("o. 未量化提示点名了行号「第 3 行」", /第 3 行/.test(detail), detail.slice(0, 96));
+    ok("o. 未量化提示点名了阶段名", !!target && detail.includes(String(target.stage).slice(0, 8)), detail.slice(0, 96));
+    ok("o. 未量化提示给出了总行数", /共 1 行/.test(detail), detail.slice(0, 96));
+  }
+}
+
+/* ==========================================================================
    汇总
    ========================================================================== */
 const passed = results.filter((r) => r.pass).length;

@@ -871,6 +871,15 @@ function timeCheck(o){
 }
 
 /* 自检 */
+/* 「教学目标是否量化」的判定词表
+   ⚠️ 这张表必须能匹配**程序自己生成**的所有目标文案，否则自检会误报（老师会以为方案有问题）。
+   踩过的坑：收尾行「全卷得分达到 95 分…」里的「达到」不在表里 ——
+   于是 6 个预设**每一个**都报「有 1 行目标缺少量化指标」，而且都指向最后一行。
+   改这张表时，请一并跑 tests/math-plan-lessons.test.mjs 的「目标量化自检」一组
+   （它会对全部预设逐一校验，并检查不合格时是否点名到行）。
+   注意：OK 文案里承诺的「分数阈值」也靠这张表兜住，别只加百分比词。 */
+const GOAL_QUANT_RE = /[≥≤]|不低于|不超过|正确率|得分率|满分|零失误|达到|稳定在|控制在/;
+
 function selfCheck(o, plan){
   const list = [];
   const recHours = plan.rows.reduce((a,r)=>a+r.hours,0);
@@ -902,9 +911,14 @@ function selfCheck(o, plan){
     list.push(["ok","无重复排课","同一模块未被前后重复排入，阶段命名不重复"]);
   else list.push(["warn","无重复排课","检测到模块重复，请检查"]);
 
-  const unquant = plan.rows.filter(r=>!/[≥≤]|不超过|正确率|得分率|满分|零失误/.test(r.goal));
+  const unquant = plan.rows.map((r,i)=>({r, no:i+1})).filter(x=>!GOAL_QUANT_RE.test(x.r.goal));
   if(!unquant.length) list.push(["ok","目标全部量化",`${plan.rows.length} 行教学目标全部含可验收指标（正确率 / 得分率 / 用时 / 分数阈值）`]);
-  else list.push(["warn","目标量化",`有 ${unquant.length} 行目标缺少量化指标，建议补上正确率或用时要求`]);
+  else {
+    // 点名到「第几行 + 阶段名」：只说「有 N 行」老师不知道该改哪一行，等于没法动手
+    const shown = unquant.slice(0,6).map(x=>`第 ${x.no} 行「${x.r.stage}」`).join("；");
+    const more = unquant.length > 6 ? `；…等共 ${unquant.length} 行` : "";
+    list.push(["warn","目标量化",`共 ${unquant.length} 行目标缺少量化指标：${shown}${more}。建议补上正确率/得分率或用时要求`]);
+  }
 
   // 收尾行判定放宽：收尾行文案是「综合模拟与查漏（…）」，不含"检测"二字，
   // 所以用 /检测|综合模拟/ 二者任一即可，不改动交付给家长的文案。

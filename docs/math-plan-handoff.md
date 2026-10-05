@@ -256,13 +256,13 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 | 套件 | 项数 | 覆盖 |
 |---|---|---|
 | `tests/math-plan-template.test.mjs` | **76** | 模板完整性（278 占位符 / 逐格映射）、动态行（20/67/80）、格式不变、统一字体、手填区不动、method 拼接、**R4 辅导时间不重复**、可重复导出 |
-| `tests/math-plan-lessons.test.mjs` | **37** | 必开模块、done 豁免、最小课时、三轮口径与排序、极端场景、**m41 位置（三条规则）** |
+| `tests/math-plan-lessons.test.mjs` | **44** | 必开模块、done 豁免、最小课时、三轮口径与排序、极端场景、**m41 位置（三条规则）**、**自检「目标量化」（6 个预设全跑 + 不合格时点名到行）** |
 | `tests/math-plan-export-ui.test.mjs` | **18** | 真浏览器：脚本加载、**导出按钮只剩 1 个（旧版入口已删）**、**教材版本为「人教A版」**、真实导出、DEMO 落盘 |
 | `tests/math-plan-ai-sections.test.mjs` | **26** | AI 分区润色接口鉴权/入参/前端往返 |
 | `tests/math-plan-ai-vip-path.test.mjs` | **17**（静态计数，见下） | **补记（原清单漏了这套）**：用**假 `AI_KEY`** 另起一次服务，验证「VIP + 有 Key」之后的路径 —— 无 Key → 503；假 Key → 502（**不是** 503）、上游错误原文不透传、Key 绝不回传前端；有 Key 后入参校验分支才真正可达，故另补 5 条 400 |
 | `tests/math-plan-ai-apply.test.mjs` | **20** | **★补上的测试缺口**：自带**本地桩上游**（`AI_BASE_URL` 指向 `127.0.0.1:4567`），让「AI 返回写回 DOM」这一步**真的被执行**。断言：method 6 段的小标题各只出现 1 次、goals 40 格全部落地、请求体里 method 要求「只输出正文」、goals 带 `band` + 每行 `lv`、页面无 JS 异常 |
 
-**合计：6 套 194 项。**（76 + 37 + 18 + 26 + 17 + 20）
+**合计：6 套 201 项。**（76 + 44 + 18 + 26 + 17 + 20）
 
 > ⚠️ 为什么必须有 `ai-apply`：另外两套 AI 测试**都到不了落地那一步** ——
 > `ai-sections` 本地无 Key → 503，`ai-vip-path` 假 Key → 502，**替换逻辑根本不会执行**。
@@ -338,6 +338,18 @@ const DEFAULT_MODEL = "deepseek-flash";   // 原值 "deepseek-chat"（已于 202
   实测 `docs/**`、`public/tools/*.html` 都返回过**空结果**，但文件其实都在
   （`public/tools/math-plan.html` 97,294 字节、`docs/math-plan-template/*` 三个 docx 都在）。
   → **改用 `Get-ChildItem`（pwsh）+ `grep` 交叉核对。**
+
+- **`Get-Content` 在本机对 UTF-8 文件不可靠**（数行、比对文本都别用它）。
+  本机的 shell 实际是 **Windows PowerShell 5.1.19041（Desktop 版，不是 pwsh 7）**，
+  `Get-Content` 默认按 **ANSI/GBK 解码** UTF-8 文件，后果有两个：
+  **① 中文乱码；② 换行被吞、行数偏少。**
+  实测：`samples.ts` 被数成 **273 行**，真实是 **295 行** ——
+  用字节复核是 295 个 LF、0 个 CR、无 BOM，与 `git diff --stat` 的 295 条插入完全一致。
+  → 要数行 / 精确比对文本：用
+    `[System.IO.File]::ReadAllBytes()` + `[System.Text.Encoding]::UTF8.GetString()`；
+  → 或者更省事：直接用 **`read` / `grep` 工具**（它们按 UTF-8 处理，不会乱码）。
+  → **推论**：命令输出里看到中文乱码，**先怀疑是 shell 解码问题，不要断定文件坏了** ——
+    本轮就因此差点误判 `samples.ts` 被写坏。
 
 - **`git` 不在 PATH 上**，一律用全路径调用：
 
