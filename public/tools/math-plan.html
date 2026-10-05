@@ -199,7 +199,6 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
   <div class="spacer"></div>
   <button id="btnEdit">✎ 编辑模式</button>
   <button id="btnPrint">🖨 打印 / 存 PDF</button>
-  <button id="btnDocLegacy" style="font-size:12px;padding:5px 10px;opacity:.75">⬇ 导出 Word（旧版）</button>
   <button class="primary" id="btnDoc">⬇ 导出 Word（模板）</button>
 </header>
 
@@ -238,7 +237,7 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
           <select id="f-exam"></select></div>
         <div class="row"><label>教材版本</label>
           <select id="f-book">
-            <option value="人教A版（2019）" selected>人教A版（2019）</option>
+            <option value="人教A版" selected>人教A版</option>
             <option value="人教B版">人教B版</option>
             <option value="北师大版">北师大版</option>
             <option value="苏教版">苏教版</option>
@@ -1154,7 +1153,7 @@ function render(plan){
   h.push(`<tr class="stage-row"><td>合计</td><td>${plan.rows.length} 次课</td><td class="c">${plan.rows.reduce((a,r)=>a+r.hours,0)}</td><td>每次课 2 课时</td></tr>`);
   h.push(`</tbody></table>`);
   h.push(`</div>`);
-  h.push(`<p class="hint" data-noprint="1"><button type="button" class="ai-btn" data-ai="goals" style="font:inherit;cursor:pointer;padding:5px 12px;border-radius:7px;border:1px solid #cadcfb;background:#e8f0fe;color:#1466d6">✨ AI 改写教学目标</button> <span class="tip">只改写「教学目标」一列，正确率等验收指标会原样保留</span></p>`);
+  h.push(`<p class="hint" data-noprint="1"><button type="button" class="ai-btn" data-ai="goals" style="font:inherit;cursor:pointer;padding:5px 12px;border-radius:7px;border:1px solid #cadcfb;background:#e8f0fe;color:#1466d6">✨ AI 改写教学目标</button> <span class="tip">只改写「教学目标」一列；正确率／得分率会按学情与难度校准，课时、题量等其余数字不变</span></p>`);
 
   /* 检测与作业机制 */
   h.push(`<h3>检测与作业机制</h3>`);
@@ -1358,7 +1357,12 @@ function aiCollect(mode){
   if(mode==="goals"){
     const lessons = CURRENT.rows.map((r,i)=>{
       const cell = document.querySelector(`#goalsBody [data-goal="${i}"]`);
-      return { stage:r.stage, content:r.content, goal: cell ? cell.innerText.replace(/\s+/g," ").trim() : r.goal };
+      // lv = 该行模块的难度等级（1 基础 / 2 中档 / 3 难题），服务端按「band + lv」查表定验收阈值。
+      // 只有收尾的「综合模拟与查漏」行没有 lv —— 它是内联构造的 module:{id:"_final"}。
+      // 该行的目标是整卷得分（不适用难度表），这里给 2 只是占位，提示词里有对应例外说明。
+      const lv = (r.module && r.module.lv) || 2;
+      return { stage:r.stage, content:r.content, lv,
+               goal: cell ? cell.innerText.replace(/\s+/g," ").trim() : r.goal };
     });
     if(!lessons.length) return null;
     return { section:"goals", context:{
@@ -1369,6 +1373,27 @@ function aiCollect(mode){
     }};
   }
   return null;
+}
+
+/**
+ * 剥掉 AI 可能又吐回来的「（1）方案与总量。」前缀（幂等去重）
+ *
+ * 背景（踩过的坑）：服务端提示词曾要求 AI「保留分条编号」，而落地时这里又会把
+ * 原 <b> 标签拼回去 —— 两边都写前缀，导出就成了「（1）方案与总量。（1）方案与总量。正文」。
+ * 现在约定【前缀只由程序负责】，但为了防止模型偶尔不听话，落地前仍兜一道。
+ *
+ * 两道剥离，缺一不可：
+ *   ① 精确比对当前 label：最准，模型原样带回来时一定命中；
+ *   ② 结构匹配兜底：万一模型把小标题改写、或改了标点，① 会漏，② 仍能剥掉。
+ * 返回值就是「正文」，**可能为空字符串**（模型只回了标题、没回正文时）——
+ * 调用方遇到空正文要选择「不改这一段」，绝不能拿原样再拼一次（那又变成标题写两遍）。
+ */
+function stripMethodLabel(line, label){
+  const raw = String(line == null ? "" : line).trim();
+  let s = raw;
+  if(label && s.startsWith(label)) s = s.slice(label.length).trim();
+  s = s.replace(/^（\d{1,2}）[^。！？]{0,12}[。！？]\s*/, "").trim();
+  return s;
 }
 
 async function aiRewrite(mode){
@@ -1408,9 +1433,13 @@ async function aiRewrite(mode){
       ps.forEach((p,i)=>{
         // 保留原有分条标签「（1）方案与总量。」的加粗样式，只替换标签之后的正文字句，
         // 否则整段会被加粗，与原方案外观不一致。
+        // ⚠️ 前缀只由【程序】负责：先剥掉 AI 可能又带回来的前缀再拼，避免标题出现两遍。
         const strong = p.querySelector("b");
         const label = strong ? String(strong.textContent).trim() : "";
-        p.innerHTML = label ? ("<b>" + esc(label) + "</b>" + esc(lines[i])) : esc(lines[i]);
+        const body = label ? stripMethodLabel(lines[i], label) : String(lines[i] == null ? "" : lines[i]);
+        // 模型只回了标题、没回正文时，宁可不改这一段，也不要写出「标题 + 标题」
+        if(label && !body) return;
+        p.innerHTML = label ? ("<b>" + esc(label) + "</b>" + esc(body)) : esc(body);
       });
       toast("「教学方法」已改写（数字未变）");
     }else{
@@ -1419,7 +1448,7 @@ async function aiRewrite(mode){
         toast("AI 返回的条数与课表行数不一致，已放弃替换"); return;
       }
       cells.forEach((td,i)=>{ td.textContent = lines[i]; });
-      toast("「教学目标」已改写（"+lines.length+" 条，数字未变）");
+      toast("「教学目标」已改写（"+lines.length+" 条，正确率已按难度校准）");
     }
   }catch(e){
     toast("无法连接服务端 AI 接口：请通过 my-toolbox 网页版打开使用（本机双击打开时不可用）");
@@ -1603,8 +1632,10 @@ $("#btnDelRow").addEventListener("click", ()=>{
   if(rows.length > 1) { body.removeChild(rows[rows.length-2]); toast("已删除一行"); }
 });
 $("#btnPrint").addEventListener("click", ()=>window.print());
-$("#btnDoc").addEventListener("click", exportWordTemplate);          // 默认：模板化 docx
-$("#btnDocLegacy").addEventListener("click", exportWord);            // 旧版：HTML 转 .doc
+$("#btnDoc").addEventListener("click", exportWordTemplate);          // 唯一的导出入口：模板化 docx
+// 「导出 Word（旧版）」按钮已按需求删除（只删 UI 入口）。
+// exportWord() 函数本身保留着，万一以后要退回旧版，把按钮 HTML 加回来 + 恢复下面这行即可：
+// $("#btnDocLegacy").addEventListener("click", exportWord);
 
 /* 首次进入提示 */
 refreshHints();

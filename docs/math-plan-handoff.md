@@ -257,18 +257,24 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 |---|---|---|
 | `tests/math-plan-template.test.mjs` | **76** | 模板完整性（278 占位符 / 逐格映射）、动态行（20/67/80）、格式不变、统一字体、手填区不动、method 拼接、**R4 辅导时间不重复**、可重复导出 |
 | `tests/math-plan-lessons.test.mjs` | **37** | 必开模块、done 豁免、最小课时、三轮口径与排序、极端场景、**m41 位置（三条规则）** |
-| `tests/math-plan-export-ui.test.mjs` | **16** | 真浏览器：脚本加载、两个按钮、真实导出、DEMO 落盘 |
+| `tests/math-plan-export-ui.test.mjs` | **18** | 真浏览器：脚本加载、**导出按钮只剩 1 个（旧版入口已删）**、**教材版本为「人教A版」**、真实导出、DEMO 落盘 |
 | `tests/math-plan-ai-sections.test.mjs` | **26** | AI 分区润色接口鉴权/入参/前端往返 |
 | `tests/math-plan-ai-vip-path.test.mjs` | **17**（静态计数，见下） | **补记（原清单漏了这套）**：用**假 `AI_KEY`** 另起一次服务，验证「VIP + 有 Key」之后的路径 —— 无 Key → 503；假 Key → 502（**不是** 503）、上游错误原文不透传、Key 绝不回传前端；有 Key 后入参校验分支才真正可达，故另补 5 条 400 |
+| `tests/math-plan-ai-apply.test.mjs` | **20** | **★补上的测试缺口**：自带**本地桩上游**（`AI_BASE_URL` 指向 `127.0.0.1:4567`），让「AI 返回写回 DOM」这一步**真的被执行**。断言：method 6 段的小标题各只出现 1 次、goals 40 格全部落地、请求体里 method 要求「只输出正文」、goals 带 `band` + 每行 `lv`、页面无 JS 异常 |
 
-**合计：5 套。前 4 套 155 项；加上第 5 套共约 172 项。**
+**合计：6 套 194 项。**（76 + 37 + 18 + 26 + 17 + 20）
+
+> ⚠️ 为什么必须有 `ai-apply`：另外两套 AI 测试**都到不了落地那一步** ——
+> `ai-sections` 本地无 Key → 503，`ai-vip-path` 假 Key → 502，**替换逻辑根本不会执行**。
+> 所以「小标题写两遍」这种 bug 在 172 项全绿的情况下照样漏到了线上。
+> **凡是「只有成功返回才会走到」的代码，都必须用桩上游把它压到。**
 
 > ⚠️ 原文只列了 4 套就写「合计 155 项」——**155 是 4 套的数**，第 5 套 `math-plan-ai-vip-path` 当时被漏在清单外
 > （只在第九节「免 Key 验证技巧」提了一句）。数套件时别按 4 套算。
 
 **⚠️ 第 5 套的两个坑（补记）**：
 
-- 它的 **17** 是**静态数出来的 happy-path 断言数**，**本轮没有实跑过**（跑它需要 `pnpm build` + 真服务）。
+- 它的 **17** 是 happy-path 断言数；**2026-10 已实跑通过 17/17**（跑它需要 `pnpm build` + 真服务）。
   若中途某项登录失败，实际记录数会**少于** 17；失败时还会多记 1 条「测试执行未异常中断」。
 - **它会先把 3000 端口上的监听进程 `Stop-Process -Force` 杀掉**（脚本开头就干这事）。
   所以跑它之前**先关掉你自己的 dev server 或另一个真服务套件**，否则两边互相踩。
@@ -280,9 +286,10 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 & "C:\Users\郭庆杰\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe" tests\math-plan-template.test.mjs
 ```
 
-**另有三个需要真服务的套件**（会自己起 next start，端口 3000）：
-`math-plan-export-ui` / `math-plan-ai-sections` / `math-plan-ai-vip-path`。跑之前先 `pnpm build`。
-（`ai-vip-path` 会**杀 3000 端口**，别和其它真服务套件同时跑。）
+**另有四个需要真服务的套件**（会自己起 next start，端口 3000）：
+`math-plan-export-ui` / `math-plan-ai-sections` / `math-plan-ai-vip-path` / `math-plan-ai-apply`。
+跑之前先 `pnpm build`。
+（`ai-vip-path` 会**杀 3000 端口**，`ai-apply` 会同时占用 **4567（桩上游）**，别和其它真服务套件同时跑。）
 
 ⚠️ 跑法注意：**连续跑多个需要真服务的套件时偶发 1 项失败**（登录/会话时序抖动），
 重跑即过；判断是否真失败要看能否稳定复现。
@@ -352,6 +359,24 @@ const DEFAULT_MODEL = "deepseek-flash";   // 原值 "deepseek-chat"（已于 202
 
 - **模板格式 100% 一致**：只能做「文本替换 + 整行增删」，**绝不自己拼 `tcW`/`tblGrid`/`tblPr`/边框**
 - **AI 改写后立刻导出要用最新文本**：导出时**从 DOM 现取**（`#methodBody` 的 `innerText`、`#goalsBody` 的 `[data-goal]` 单元格），不要用生成方案时的快照
-- 旧版导出 `exportWord()`（HTML 转 .doc）**保留为次级按钮**，不要删
+- 旧版导出 `exportWord()`（HTML 转 .doc）**函数保留在代码里**，但 UI 入口（`#btnDocLegacy` 次级按钮）**已按需求删除**（2026-10）。要退回旧版：把按钮 HTML 加回来 + 恢复那行绑定（`math-plan.html` 里留了注释）
 - 改模板后必须重新跑 `python public/tools/math-plan/build-template.py` 重新生成 `template-data.js`
 - 不要碰 feedback / paper-analysis / membership 的文件
+
+### ⚠️ 铁律：标签只能有一个来源（已经踩过两次，别再踩第三次）
+
+凡是「**标签 + 值**」的内容（小标题、字段名、单位、前缀），**必须先明确由哪一端写标签，绝不允许两端各写一遍**。
+两次事故的病根完全相同：
+
+| | 第 1 次（模板导出） | 第 2 次（AI 改写落地） |
+|---|---|---|
+| 标签 | 「辅导时间：」 | 「（1）方案与总量。」 |
+| 谁写了 | 模板那格**自带** + `buildMap` 又拼了一遍 | 前端保留 `<b>` 标签 + AI 提示词又要求「保留分条编号」 |
+| 症状 | 导出成「辅导时间：辅导时间：春季」 | 正文成「（1）方案与总量。（1）方案与总量。…」 |
+| 修法 | `buildMap` 里只填值（见第四节） | 提示词改为「只输出正文」+ 落地侧 `stripMethodLabel()` 幂等剥离（见下） |
+| 为什么测试没抓到 | 只有真导出才暴露 | **两套 AI 测试都到不了「写回 DOM」那一步**（无 Key→503 / 假 Key→502），172 项全绿照样漏 |
+
+**落地侧必须幂等**：即使上游不听话又吐了一遍标签，也要能剥掉再拼 ——
+`math-plan.html` 的 `stripMethodLabel(line, label)` 就是这么做的（先按 label 精确比对，再用结构正则兜底）。
+
+**判据**：写任何「拼标签」的代码之前，先问一句「**这个标签还有谁在写？**」答不上来就先别写。

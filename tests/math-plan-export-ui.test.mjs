@@ -89,23 +89,39 @@ try {
   record("report-template.js 已加载", libs.rt === "object", libs.rt);
   record("测试钩子已就位", libs.hooks === "object", libs.hooks);
 
-  /* ---- 2. 两个按钮 ---- */
+  /* ---- 2. 导出按钮只剩 1 个（「旧版」入口已按需求删除） ---- */
   const btns = await inDoc(`
     const main = doc.getElementById('btnDoc'), legacy = doc.getElementById('btnDocLegacy');
-    const cs = legacy ? getComputedStyle(legacy) : null;
     return {
       mainText: main ? main.textContent.trim() : null,
-      legacyText: legacy ? legacy.textContent.trim() : null,
       mainPrimary: main ? main.classList.contains('primary') : null,
-      legacySmaller: legacy && main ? (parseFloat(cs.fontSize) < parseFloat(getComputedStyle(main).fontSize)) : null,
+      legacyExists: !!legacy,
+      headerButtons: Array.from(doc.querySelectorAll('header button')).map(b => b.textContent.trim()),
     };
   `);
-  record("主按钮文案「⬇ 导出 Word（模板）」且为主样式",
+  record("导出按钮为「⬇ 导出 Word（模板）」且为主样式",
     btns.mainPrimary === true && /导出 Word（模板）/.test(String(btns.mainText)),
     `${btns.mainText} primary=${btns.mainPrimary}`);
-  record("次级按钮文案「⬇ 导出 Word（旧版）」且字号更小",
-    /导出 Word（旧版）/.test(String(btns.legacyText)) && btns.legacySmaller === true,
-    `${btns.legacyText} smaller=${btns.legacySmaller}`);
+  record("「导出 Word（旧版）」按钮已删除（DOM 里不存在）",
+    btns.legacyExists === false && !btns.headerButtons.some(t => /旧版/.test(t)),
+    btns.headerButtons.join(" | "));
+
+  /* ---- 2b. 教材版本下拉：应为「人教A版」，不带 (2019) ---- */
+  const book = await inDoc(`
+    const sel = doc.getElementById('f-book');
+    if(!sel) return { err: '无 f-book' };
+    return {
+      value: sel.value,
+      values: Array.from(sel.options).map(o => o.value),
+      labels: Array.from(sel.options).map(o => o.textContent.trim()),
+    };
+  `);
+  record("教材版本默认值为「人教A版」（已去掉 (2019)）",
+    book.value === '人教A版', `${book.value ?? book.err}`);
+  record("教材版本所有 option 的 value 与文案都不含「2019」",
+    Array.isArray(book.values) && book.values.every(v => !/2019/.test(v))
+      && book.labels.every(v => !/2019/.test(v)),
+    (book.values || []).join(" | "));
 
   /* ---- 3. 生成方案 ---- */
   const preset = await inDoc(`const b=doc.querySelector('.preset button[data-preset="gap"]'); if(!b) return {err:'无 gap 预设'}; b.click(); return 'ok';`);
