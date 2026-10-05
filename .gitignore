@@ -57,3 +57,16 @@ next-env.d.ts
 #   教材 41 本 / 章节 272 / 关键词 658；导入后已是 219 / 4273 / 9016。
 #   断言本身已过期，不再作为通过标准。保留仅供参考。）
 /tests/*.legacy.mjs
+
+# 其他学科素材暂存区（老师提供的原始报告，含真实学校/学生信息，不得入库）
+# 规则先全忽略，再放行目录结构本身与说明文件，这样「空结构」能进仓库、
+# 「老师放进去的原始文件」永远不会被 git add -A 顺手带走。
+/other-subjects/**
+!/other-subjects/README.md
+!/other-subjects/*/
+!/other-subjects/*/README.md
+!/other-subjects/*/*/
+!/other-subjects/*/*/README.md
+
+# ģ������������ã����� build-template.py ��ʱ�������ɣ�
+/public/tools/math-plan/template-parts/

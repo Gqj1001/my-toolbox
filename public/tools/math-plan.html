@@ -199,7 +199,8 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
   <div class="spacer"></div>
   <button id="btnEdit">✎ 编辑模式</button>
   <button id="btnPrint">🖨 打印 / 存 PDF</button>
-  <button class="primary" id="btnDoc">⬇ 导出 Word 文档</button>
+  <button id="btnDocLegacy" style="font-size:12px;padding:5px 10px;opacity:.75">⬇ 导出 Word（旧版）</button>
+  <button class="primary" id="btnDoc">⬇ 导出 Word（模板）</button>
 </header>
 
 <div class="layout">
@@ -243,7 +244,8 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
             <option value="苏教版">苏教版</option>
             <option value="湘教版">湘教版</option>
           </select></div>
-        <div class="row"><label>校区 / 教师</label><input type="text" id="f-teacher" placeholder="如：燕郊中学校区 · 郭老师"></div>
+        <div class="row"><label>校区</label><input type="text" id="f-campus" placeholder="如 燕郊中学校区"></div>
+        <div class="row"><label>教师</label><input type="text" id="f-teach" placeholder="如 郭庆杰" value="郭庆杰"></div>
       </div>
     </div>
 
@@ -379,6 +381,14 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- 模板化 Word 导出所需的外部脚本（必须先于主脚本加载）
+     注意路径：本页是 /tools/math-plan.html（单文件），同级目录是 /tools/，
+     所以资源在 /tools/math-plan/ 下，必须写 ./math-plan/xxx 而不是 ./xxx。
+     template-data.js 由 build-template.py 从 Word 模板生成，请勿手改 -->
+<script src="./math-plan/template-data.js"></script>
+<script src="./math-plan/js/docx-builder.js"></script>
+<script src="./math-plan/js/report-template.js"></script>
 
 <script>
 "use strict";
@@ -647,6 +657,32 @@ function pickModules(o){
 
   pool = pool.map(m=>({m, s:score(m)}));
   pool.sort((a,b)=>b.s-a.s || b.m.lv-a.m.lv);
+
+  /* 初高中衔接与计算过关（m41）的位置修正
+     ------------------------------------------------------------------
+     低分段学生的计算与衔接漏洞必须先补，按分数段决定它排多前：
+       · band===1（<50 分）        → 强制第 1 位；**不在池里也要强制加进来**
+       · band===2 且 score<70      → 排进前 3；不在池里就不加
+       · 其他（band 3，或 band2 且 score>=70）→ 不强制，保持评分顺序
+     只调整 m41 一个元素的位置，其他模块的相对顺序不变。 */
+  const i41 = pool.findIndex(x=>x.m.id==="m41");
+  const m41 = i41 >= 0 ? pool[i41] : null;
+  if(o.band===1){
+    if(!m41){
+      const raw = MODULES.find(m=>m.id==="m41");
+      if(raw) pool.unshift({ m: raw, s: 0 });        // s 仅占位，排序已结束、不参与后续计算
+    }else if(i41 !== 0){
+      pool.splice(i41, 1);
+      pool.unshift(m41);
+    }
+  }else if(o.band===2 && o.score < 70 && m41){
+    const target = Math.min(2, pool.length-1);        // 前 3 位 → 下标 2
+    if(i41 !== target){
+      pool.splice(i41, 1);
+      pool.splice(target, 0, m41);
+    }
+  }
+
   return pool.map(x=>x.m);
 }
 
@@ -968,6 +1004,47 @@ function generate(o){
     .sort((a, b) => a.k - b.k || a.i - b.i)
     .map(x => x.r);
 
+  /* m41（初高中衔接与计算过关）的最终位置修正
+     ------------------------------------------------------------------
+     为什么放在轮次排序**之后**：m41 的 topic 是「计算」，会被 roundIndexOf 判为第三轮，
+     于是低分段方案里它反而被排到最后（实测 band=1 时落在第 45/45 行），
+     与「低分段必须先补衔接与计算」直接冲突。
+     这里在最终顺序上再把它提到最前，作为**优先级最高的规则**覆盖轮次排序。
+     规则（与 pickModules 里的一致，这里是最终保证）：
+       · band===1            → 第 1 行（不在课表里也强制插入）
+       · band===2 && score<70 → 前 3 行（不在课表里就不加）
+       · 其他                 → 不动 */
+  {
+    const m41Rows = [];
+    rows = rows.filter(r=>{
+      if(r.module && r.module.id === "m41"){ m41Rows.push(r); return false; }
+      return true;
+    });
+    // 收尾的「综合模拟与查漏」必须始终留在最后一行（selfCheck 的「检测落地」依赖它），
+    // 所以 m41 只能插在它前面。
+    const isFinal = (r)=> r && r.module && r.module.id === "_final";
+    const tailRows = (isFinal(rows[rows.length-1]) ? rows.pop() : null);
+
+    if(o.band === 1){
+      if(!m41Rows.length){
+        const raw = MODULES.find(m=>m.id === "m41");
+        if(raw && rows.length){
+          // 借用第一行的课时，避免破坏「行课时合计 = 总课时」的账目
+          m41Rows.push({ module: raw, stage: raw.name + "（概念与公式梳理）",
+                         content: raw.base || "", hours: rows[0].hours,
+                         goal: `计算与衔接基础过关，正确率${BAND_TEXT[o.band].thresh}` });
+        }
+      }
+      if(m41Rows.length) rows = m41Rows.concat(rows);
+    }else if(o.band === 2 && o.score < 70 && m41Rows.length){
+      const at = Math.min(2, rows.length);
+      rows = rows.slice(0, at).concat(m41Rows, rows.slice(at));
+    }else if(m41Rows.length){
+      rows = rows.concat(m41Rows);          // 不强制：放回末尾（保持原有相对顺序）
+    }
+    if(tailRows) rows = rows.concat(tailRows);
+  }
+
   const rounds = threeRounds(o, rows, o.totalHours);   // 收尾行已入 rows，计入第三轮
   const plan = {o, ex, st, band, bt, rate, flow, rows, rounds,
                 targets: targetBreakdown(ex, o.score, o.target),
@@ -1009,12 +1086,11 @@ function render(plan){
   h.push(`<div class="doc" id="doc">`);
   h.push(`<h1>锐满分辅导方案</h1>`);
   h.push(`<div class="meta">${esc(o.campus||"")}${o.campus?" · ":""}学生监护人：＿＿＿＿＿＿　　日期：${new Date().toLocaleDateString("zh-CN")}　　版本：第 1 版</div>`);
-
   /* 基本信息 */
   const weekTxt = `${o.weeks} 周 × ${o.freq} 次/周` + (o.holidayWeeks?` ＋ 假期 ${o.holidayWeeks} 周 × ${o.freqH} 次/周`:"") + (o.national+o.holiday?` ＋ 节日加课 ${o.national+o.holiday} 次`:"");
   h.push(`<table class="kv">
     <tr><th>学员</th><td>${esc(name||"＿＿")}</td><th>年级</th><td>${o.grade}</td><th>学科</th><td>数学</td><th>教材版本</th><td>${esc(o.book)}</td></tr>
-    <tr><th>学管师</th><td>＿＿</td><th>咨询师</th><td>＿＿</td><th>校区/教师</th><td colspan="3">${esc(o.campus||"＿＿")}</td></tr>
+    <tr><th>学管师</th><td>＿＿</td><th>咨询师</th><td>＿＿</td><th>校区</th><td>${esc(o.campus||"＿＿")}</td><th>教师</th><td>${esc(o.teacher||"＿＿")}</td></tr>
     <tr><th>考区卷种</th><td>${ex.name}</td><th>当前分数</th><td>${o.score} / ${st.total}</td><th>目标分数</th><td>${o.target} 分</td><th>辅导时间</th><td>${PHASE_TEXT[o.phase]}（${weekTxt}）</td></tr>
   </table>`);
 
@@ -1102,7 +1178,109 @@ function render(plan){
 }
 
 /* =========================================================================
-   八、导出 Word（HTML 格式 .doc，Word 可直接打开并另存为 .docx）
+   八之一、导出 Word（模板化：读 Word 模板替换占位符）—— 默认导出方式
+   -------------------------------------------------------------------------
+   值一律**从当前屏幕上的内容现取**，而不是取生成方案时的快照，
+   这样「AI 改写教学方法 / 教学目标后立刻导出」，导出的就是改后的文本。
+   ========================================================================= */
+
+/** 屏幕上最新的教学方法全文（AI 改写后这里就是新文本） */
+function currentMethodText(){
+  const body = $("#methodBody");
+  if(!body) return "";
+  return Array.from(body.querySelectorAll("p"))
+    .map(p=>String(p.innerText||"").replace(/\s+/g," ").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * 屏幕上最新的逐次课表（4 列都现取）
+ * 结构：每行 4 个 td；第 4 列带 data-goal 属性
+ */
+function currentLessonRows(){
+  const rows = [];
+  const tb = $("#goalsBody table tbody");
+  if(tb){
+    Array.from(tb.querySelectorAll("tr")).forEach(tr=>{
+      const tds = Array.from(tr.querySelectorAll("td"));
+      if(tds.length < 4) return;                       // 跳过「合计」行
+      if(!tds[3] || tds[3].getAttribute("data-goal") == null) return;  // 只认数据行
+      const txt = (el)=>String(el ? el.innerText : "").replace(/\s+/g," ").trim();
+      rows.push({
+        stage:   txt(tds[0]),
+        content: txt(tds[1]),
+        hours:   txt(tds[2]),
+        goal:    txt(tds[3]),                          // AI 改写就落在这个格
+      });
+    });
+  }
+  // 兜底：DOM 里拿不到就退回生成时的数据
+  if(!rows.length && CURRENT && CURRENT.rows){
+    return CURRENT.rows.map(r=>({stage:r.stage, content:r.content, hours:r.hours, goal:r.goal}));
+  }
+  return rows;
+}
+
+/** 模板化导出主函数 */
+function exportWordTemplate(){
+  if(!CURRENT){ toast("请先生成方案"); return; }
+  const T = window.MathPlanTemplateData;
+  const RT = window.MathPlanReportTemplate;
+  if(!T || !RT){
+    toast("模板文件未加载，请刷新页面后重试");
+    return;
+  }
+  const o = CURRENT.o;
+
+  // 教学方法 = 屏幕现取的正文 + 三轮节奏的连续叙述（拼在同一段末尾）
+  let method = currentMethodText();
+  const roundsText = RT.roundsSentence(CURRENT.rounds);
+  if(roundsText){
+    method = method ? (method.replace(/\s+$/,"") + " " + roundsText) : roundsText;
+  }
+
+  const rows = currentLessonRows();
+  const payload = {
+    name:   o.name || "",
+    grade:  o.grade || "",
+    subject: "数学",
+    book:   o.book || "",
+    mgr:    "",          // 学管师 / 咨询师：老师手填，程序留白
+    cons:   "",
+    camp:   o.campus || "",
+    tchr:   o.teacher || "",   // 「校区／教师」格
+    period: PHASE_TEXT[o.phase] || "",   // 「辅导时间：」原文由模板保留
+    method: method,
+    rows:   rows,
+  };
+
+  let res;
+  try{
+    res = RT.build(payload, { template: T });
+  }catch(e){
+    toast("模板导出失败：" + (e && e.message ? e.message : e));
+    return;
+  }
+  if(res.warnings && res.warnings.length){
+    console.warn("[math-plan] 模板导出提示：", res.warnings);
+  }
+
+  const nm = (o.name || "学生") + "-" + String(PHASE_TEXT[o.phase] || "").replace(/[（(].*/,"") + "辅导方案.docx";
+  const blob = new Blob([res.blob], { type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url; a.download = nm;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
+
+  const warn = (res.warnings && res.warnings.length) ? "（有 " + res.warnings.length + " 条提示，见控制台）" : "";
+  toast("已按模板导出：" + nm + "，共 " + res.rows + " 次课" + warn);
+}
+
+/* =========================================================================
+   八之二、导出 Word（旧版：HTML 格式 .doc，Word 可直接打开并另存为 .docx）
+   保留作为兜底，不再是默认导出方式
    ========================================================================= */
 function exportWord(){
   if(!CURRENT){toast("请先生成方案");return;}
@@ -1310,7 +1488,8 @@ function readForm(){
     phase: $("#f-phase").value,
     exam: $("#f-exam").value,
     book: $("#f-book").value,
-    campus: $("#f-teacher").value.trim(),
+    campus: $("#f-campus").value.trim(),
+    teacher: $("#f-teach").value.trim(),
     score: +$("#f-score").value,
     target: +$("#f-target").value,
     totalHours: +$("#f-hours").value,
@@ -1424,10 +1603,45 @@ $("#btnDelRow").addEventListener("click", ()=>{
   if(rows.length > 1) { body.removeChild(rows[rows.length-2]); toast("已删除一行"); }
 });
 $("#btnPrint").addEventListener("click", ()=>window.print());
-$("#btnDoc").addEventListener("click", exportWord);
+$("#btnDoc").addEventListener("click", exportWordTemplate);          // 默认：模板化 docx
+$("#btnDocLegacy").addEventListener("click", exportWord);            // 旧版：HTML 转 .doc
 
 /* 首次进入提示 */
 refreshHints();
+
+/* 测试钩子（无副作用，仅暴露只读能力供自动化测试使用） */
+window.MathPlanHooks = {
+  buildPayload: function(){
+    if(!CURRENT) return null;
+    let method = currentMethodText();
+    const rt = window.MathPlanReportTemplate
+      ? window.MathPlanReportTemplate.roundsSentence(CURRENT.rounds) : "";
+    if(rt) method = method ? (method.replace(/\s+$/,"") + " " + rt) : rt;
+    const o = CURRENT.o;
+    return {
+      name: o.name || "", grade: o.grade || "", subject: "数学", book: o.book || "",
+      mgr: "", cons: "", camp: o.campus || "", tchr: o.teacher || "",
+      period: PHASE_TEXT[o.phase] || "", method: method,
+      rows: currentLessonRows(),
+    };
+  },
+  buildBytes: function(){
+    const p = window.MathPlanHooks.buildPayload();
+    if(!p) return null;
+    const T = window.MathPlanTemplateData, RT = window.MathPlanReportTemplate;
+    if(!T || !RT) return null;
+    const res = RT.build(p, { template: T });
+    return { bytes: Array.from(res.blob), rows: res.rows, warnings: res.warnings };
+  },
+  counts: function(){
+    return {
+      methodParas: document.querySelectorAll("#methodBody p").length,
+      goalCells: document.querySelectorAll("#goalsBody [data-goal]").length,
+      docRows: document.querySelectorAll("#doc tbody tr").length,
+      aiButtons: document.querySelectorAll(".ai-btn[data-ai]").length,
+    };
+  },
+};
 </script>
 </body>
 </html>

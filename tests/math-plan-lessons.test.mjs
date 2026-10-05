@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -39,7 +40,7 @@ const scriptSource = m[1];
 // 不是 globalThis 属性），所以追加一行显式导出，把需要的符号取出来。
 const EXPORT_LINE =
   "\n;globalThis.__MP__ = { MODULES, EXAMS, generate, pickModules, threeRounds, selfCheck, " +
-  "bandOf, rateOf, fitFlow, FLOWS, BAND_TEXT, allocateRows, buildLessons, readForm };\n";
+  "bandOf, rateOf, fitFlow, FLOWS, BAND_TEXT, allocateRows, buildLessons, readForm, PRESETS };\n";
 
 /** 最小 DOM stub：只满足脚本「加载期」真正碰到的调用 */
 function makeDomStub() {
@@ -67,7 +68,7 @@ const ctx = {
 require("node:vm").createContext(ctx);
 require("node:vm").runInContext(scriptSource + EXPORT_LINE, ctx);
 
-const { MODULES, generate, pickModules, threeRounds, selfCheck, EXAMS } = ctx.__MP__ || {};
+const { MODULES, generate, pickModules, threeRounds, selfCheck, EXAMS, bandOf } = ctx.__MP__ || {};
 ok("沙箱里能拿到 math-plan.html 的顶层函数与 MODULES", !!MODULES && !!generate && !!threeRounds && !!selfCheck,
   `MODULES=${MODULES ? MODULES.length : "无"} 个`);
 if (!MODULES) { console.log("\n=== SUMMARY: 0/1 passed ===\n（脚本抽取失败，后续断言跳过）"); process.exit(1); }
@@ -345,6 +346,115 @@ console.log("\n--- 极端场景：done = 全部 42 个 ---");
   console.log("\n--- 必开模块实际课时（done=空）---");
   detail.forEach((d) => console.log("  " + d));
   ok("m. 三个必开模块各 ≥ 4 课时（2 次课）", bad.length === 0, bad.slice(0, 4).join(" ; ") || "全部达标");
+}
+
+/* ==========================================================================
+   n. m41（初高中衔接与计算过关）位置修正
+      —— 用真实 PRESETS 构造参数，保证与界面「套用预设」一致
+      · gs1（band=1, score=38）    → m41 必须在第 1 行（不在池里也要强制加）
+      · gap（band=2, score=65<70） → m41 必须在前 3 行
+      · gs3（band=3, score=105）   → 不强制（只要求不崩、且 m41 仍在课表里）
+   ========================================================================== */
+{
+  const raw = readFileSync(HTML, "utf8");
+  const pm = raw.match(/const PRESETS = \{([\s\S]*?)\n\};/);
+  ok("能从 math-plan.html 解析出 PRESETS", !!pm);
+  const PRESETS = pm ? vm.runInNewContext("({" + pm[1] + "})") : {};
+  ok("PRESETS 含 gs1 / gap / gs3", !!(PRESETS.gs1 && PRESETS.gap && PRESETS.gs3),
+    Object.keys(PRESETS).join(","));
+
+  const fromPreset = (key, done) => {
+    const p = PRESETS[key];
+    const o = newOpt(p.hours, done || []);
+    Object.assign(o, {
+      grade: p.grade, phase: p.phase, score: p.score, target: p.target,
+      freq: p.freq, freqH: p.freqH, weeks: p.weeks, holidayWeeks: p.holidayWeeks,
+      focus: p.focus, note: p.note,
+    });
+    // generate() 会先算 band 再调 pickModules；直接调 pickModules 时要自己补上，
+    // 否则 o.band 为 undefined，m41 的位置修正分支不会被触发。
+    o.band = bandOf(o.score);
+    return o;
+  };
+  const rowIds = (plan) => {
+    const out = [];
+    plan.rows.forEach((r) => { if (out[out.length - 1] !== r.module.id) out.push(r.module.id); });
+    return out;
+  };
+  const firstOccurrence = (ids, id) => ids.indexOf(id) + 1;   // 1-based，「第几行」
+
+  // ---- gs1: band=1 → 第 1 行必须是 m41 ----
+  {
+    const o = fromPreset("gs1");
+    const plan = generate(o);
+    const ids = rowIds(plan);
+    ok("gs1 的 band 确认为 1", plan.band === 1, `band=${plan.band}`);
+    ok("gs1（band=1）：m41 出现在课表里", ids.includes("m41"), `首行=${nameOf(ids[0] || "")}`);
+    ok("gs1（band=1）：m41 排在第 1 行", firstOccurrence(ids, "m41") === 1,
+      `实际第 ${firstOccurrence(ids, "m41")} 行；前 3 行=${ids.slice(0, 3).map(nameOf).join(" / ")}`);
+    ok("gs1（band=1）：第 1 行就是 m41 且整行 2 课时",
+      plan.rows[0].module.id === "m41" && plan.rows[0].hours === 2,
+      `${nameOf(plan.rows[0].module.id)} / ${plan.rows[0].hours}h`);
+  }
+
+  // ---- gs1 且 m41 被勾「已完成」→ 仍必须强制出现在第 1 行 ----
+  {
+    const o = fromPreset("gs1", ["m41"]);
+    const plan = generate(o);
+    const ids = rowIds(plan);
+    ok("gs1 + m41 勾选已完成：m41 仍被强制排在第 1 行（豁免 done）",
+      firstOccurrence(ids, "m41") === 1,
+      `实际第 ${firstOccurrence(ids, "m41")} 行；首行=${nameOf(ids[0] || "")}`);
+  }
+
+  // ---- gap: band=2 且 score=65 < 70 → 前 3 行含 m41 ----
+  {
+    const o = fromPreset("gap");
+    const plan = generate(o);
+    const ids = rowIds(plan);
+    const pos = firstOccurrence(ids, "m41");
+    ok("gap 的 band 确认为 2", plan.band === 2, `band=${plan.band}`);
+    ok("gap 的 score < 70（规则触发条件）", o.score < 70, `score=${o.score}`);
+    ok("gap（band=2, score=65）：m41 出现在前 3 行",
+      pos >= 1 && pos <= 3, `实际第 ${pos} 行；前 3 行=${ids.slice(0, 3).map(nameOf).join(" / ")}`);
+  }
+
+  // ---- gap 且 m41 不在池里（勾已完成）→ 不加、不崩 ----
+  {
+    const o = fromPreset("gap", ["m41"]);
+    let plan = null, err = null;
+    try { plan = generate(o); } catch (e) { err = e.message; }
+    ok("gap + m41 勾选已完成：不报错（按规则「不在池里就不加」）", !err, err || "");
+    if (plan) {
+      ok("gap + m41 已完成：m41 未出现在前 3 行（未被强制插入）",
+        !rowIds(plan).slice(0, 3).includes("m41"),
+        `前 3 行=${rowIds(plan).slice(0, 3).map(nameOf).join(" / ")}`);
+    }
+  }
+
+  // ---- gs3: band=3 → 不强制 ----
+  {
+    const o = fromPreset("gs3");
+    const plan = generate(o);
+    const ids = rowIds(plan);
+    ok("gs3 的 band 确认为 3", plan.band === 3, `band=${plan.band}`);
+    ok("gs3（band=3）：课表生成不崩且有内容", plan.rows.length > 0, `${plan.rows.length} 行`);
+    ok("gs3（band=3）：m41 仍在课表里（只是位置不强制）", ids.includes("m41"), "");
+    console.log(`      gs3 里 m41 在第 ${firstOccurrence(ids, "m41")} 行（不强制，仅供观察）`);
+  }
+
+  // ---- 其他模块相对顺序不能被打乱（只挪 m41 一个）----
+  {
+    const o = fromPreset("gs1");
+    const picked = pickModules(o);                 // 已含位置修正
+    const without41 = picked.filter((m) => m.id !== "m41").map((m) => m.id);
+    ok("pickModules 返回的是模块数组（修正后仍是 module 而非包装对象）",
+      picked.length > 0 && picked.every((m) => m && typeof m.id === "string"), `首项=${picked[0] && picked[0].id}`);
+    ok("修正后 m41 在数组首位", picked[0].id === "m41", `首位=${picked[0].id}`);
+    ok("除 m41 外其余模块都在且不重复",
+      without41.length === picked.length - 1 && new Set(picked.map((m) => m.id)).size === picked.length,
+      `${without41.length} 个`);
+  }
 }
 
 /* ==========================================================================
