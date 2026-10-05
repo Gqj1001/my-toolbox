@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireVip } from "@/lib/membership";
+import { GOAL_EXAMPLES, METHOD_STYLE_BLOCK } from "./samples";
 
 /**
  * 辅导方案生成器：AI 分区润色（会员专属）
@@ -10,7 +11,12 @@ import { requireVip } from "@/lib/membership";
  *  3. 不把上游错误原文透传（可能包含 key 或账户信息）
  *
  * 只做「润色」：入参是前端已经算好的文案与结构化信息（三轮安排、逐次课表），
- * 提示词明确要求保留全部事实与数字、不得编造。模型不接触原始素材，也不负责计算。
+ * 提示词明确要求保留全部事实与数字、不得编造。模型不负责计算，也不接触学生原始素材。
+ *
+ * few-shot（样本见 ./samples.ts）：
+ *   · method —— 把 4 份真实老师写的「教学方法」放进 system prompt 作**风格参考**
+ *   · goals  —— 用 messages 数组做 few-shot（程序口径课表 → 老师写的目标）
+ *   两者都只为让措辞「更像老师自己写的」；事实、数字、条数一律仍以本次入参为准。
  *
  * 入参：
  *   { section: "method", context: { grade, band, score, target, totalHours, rounds, paragraphs: string[] } }
@@ -42,8 +48,40 @@ const PROMPTS: Record<string, string> = {
     "用户会给你每一次课的三项信息：阶段（模块名）、内容、原教学目标。请只润色「教学目标」这一列的文字。\n" +
     COMMON_RULE +
     "\n5. 教学目标必须保持可验收性：原文里的正确率、得分率、用时、分数阈值等量化指标必须原样保留。\n" +
-    "6. 输出格式：每行一条，行数必须与输入的课次数完全一致，顺序不变；只输出教学目标本身，不要带上模块名或内容。",
+    "6. 输出格式：每行一条，行数必须与输入的课次数完全一致，顺序不变；只输出教学目标本身，不要带上模块名或内容。\n" +
+    "7. 前面会给出若干组「示例」，**仅用于示范措辞风格**（怎么把干巴巴的目标写得具体、可验收）。" +
+    "输出条数必须严格等于**本次最后一条 user 消息里 lessons 的条数**，" +
+    "绝不要照抄示例的条数，也不要照抄示例里的模块名、分数、正确率等具体信息。\n" +
+    "8. 示例中的 user/assistant 往返只是格式示范，不要把它当成本次要处理的内容。",
 };
+
+type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+
+/** method 的 system prompt：润色规则 + 真实老师范例。预先拼成常量，保证前缀逐字节稳定、能命中上游缓存。 */
+const METHOD_SYSTEM = PROMPTS.method + METHOD_STYLE_BLOCK;
+
+/**
+ * 组装发给上游的 messages。
+ *   · method —— 单轮：system（规则 + 风格范例） + user（待润色段落）
+ *   · goals  —— few-shot：system + 若干组「程序口径课表 → 老师写的目标」示例 + 本次 user
+ * 单独导出是为了让测试能直接断言结构，不必真的连上游。
+ */
+export function buildMessages(section: "method" | "goals", payload: string): ChatMessage[] {
+  if (section === "method") {
+    return [
+      { role: "system", content: METHOD_SYSTEM },
+      { role: "user", content: payload },
+    ];
+  }
+  return [
+    { role: "system", content: PROMPTS.goals },
+    ...GOAL_EXAMPLES.flatMap((ex): ChatMessage[] => [
+      { role: "user", content: JSON.stringify(ex.context) },
+      { role: "assistant", content: ex.goals.join("\n") },
+    ]),
+    { role: "user", content: payload },
+  ];
+}
 
 const MAX_PAYLOAD = 60_000;
 const MAX_TOKENS = 3000;
@@ -160,10 +198,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: "system", content: PROMPTS[section] },
-          { role: "user", content: payload },
-        ],
+        messages: buildMessages(section, payload),
         temperature: 0.6,
         max_tokens: MAX_TOKENS,
       }),

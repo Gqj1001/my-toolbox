@@ -247,6 +247,7 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 
 - 模板是否补「咨询师」标签（见第三节末）
 - `{{method}}` 三轮叙述的措辞可再润色（当前见 `roundsSentence`）
+- **AI 模型名隐患**：`DEFAULT_MODEL = "deepseek-chat"` 官方已停用但实测仍兼容 —— 详见第九节「已知隐患」。**AI 突然报 502 时先查这一行。**
 
 ---
 
@@ -299,6 +300,30 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 | 浏览器测试注意 | 必须 `next build` + `next start`（dev 模式 hydration 有问题） |
 | GitHub 网络 | `github.com:443` 偶发连接重置（`api.github.com` 正常），push 需重试 |
 | **Git 可执行文件** | **`D:\my-website\.tools\git\cmd\git.exe`**（v2.56.0）。**不在 PATH 上** —— 直接敲 `git` 会报 `CommandNotFound`，必须写全路径调用 |
+
+### 已知隐患：`AI_MODEL` 默认值 `deepseek-chat` 已被官方停用（但实测仍能用）
+
+| 项 | 内容 |
+|---|---|
+| 位置 | `src/app/api/math-plan/ai-sections/route.ts` → `const DEFAULT_MODEL = "deepseek-chat"` |
+| 官方口径 | DeepSeek 更新日志：`deepseek-chat` / `deepseek-reasoner` 已于 **2026-07-24 停止使用**（2026-04-24 公告、三个月后生效）。当前模型名是 **`deepseek-flash`**（V4.1 Flash）与 `deepseek-v4-pro`；官方只承诺兼容路由 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`，**没有承诺兼容 `deepseek-chat`** |
+| 线上实况 | Vercel 上**只设了 `AI_KEY`**，没有 `AI_MODEL`、也没有 `AI_BASE_URL` → 实际走的就是这个默认值 |
+| 实测 | **目前 AI 功能仍能正常使用** → `deepseek-chat` 事实上仍被上游兼容路由（属未公告的兼容） |
+| 结论 | **暂不改**（能用就先不动）。但这条兼容随时可能被撤，故记为已知隐患 |
+
+**⚠️ 排查口诀：如果哪天 AI 润色突然开始报 502「AI 服务暂时不可用」，第一件事就是检查这一行，改成 `deepseek-flash`。**
+
+改法（只改一个字符串）：
+
+```ts
+const DEFAULT_MODEL = "deepseek-flash";   // 原值 "deepseek-chat"（已于 2026-07-24 官方停用）
+```
+
+或者更稳：**在 Vercel 上加环境变量 `AI_MODEL=deepseek-flash`** ——
+代码里是 `process.env.AI_MODEL ?? DEFAULT_MODEL`，会优先用环境变量，以后换模型连代码都不用动。
+
+> 注意：502 不只这一个原因，也可能是 `AI_KEY` 失效/欠费，或上游故障。
+> 服务端日志 `[math-plan/ai-sections] 上游返回 <状态码>` 会记录真实原因（前端看不到，是故意的）。
 
 ### 工具链注意事项（本仓库特有，踩过）
 
