@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth-role";
-import { invalidateKeywords } from "@/lib/feedback-db";
+import { invalidateKeywords, invalidateStaticTables } from "@/lib/feedback-db";
 import { createClient } from "@/lib/supabase/server";
 
 export type KeywordActionResult = {
@@ -42,6 +42,10 @@ function revalidate() {
   //    （实测过：调完 revalidatePath 再请求，仍然不查库、仍是旧值）。
   //    所以这里必须显式清一次，否则改完关键词最多 30 秒后工具页才更新。
   invalidateKeywords();
+  // 同理：本文件里还有「教材 / 章节 / 短语」的增删改，以及分类的关键词维护，
+  // 它们各自的静态表缓存（30 秒）也必须一起清 —— 否则后台改完教材/章节/短语，
+  // 工具页最长 30 秒才更新。两个清缓存函数放在一起，避免以后新增写操作时漏掉一个。
+  invalidateStaticTables();
 }
 
 // ============================================================

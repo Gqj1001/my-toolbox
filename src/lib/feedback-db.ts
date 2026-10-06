@@ -112,7 +112,153 @@ export function invalidateKeywords() {
   keywordInflight.clear();
 }
 
-/** 把 scope 规范化成缓存键（只含真正参与过滤的维度） */
+// ============================================================
+// 通用进程内 TTL 缓存（静态表 + 按用户表共用同一套写法）
+// ============================================================
+
+/**
+ * 缓存有效期（毫秒）。
+ *   · 静态表：全用户共享、极少变（分类 8 行 / 短语 10 行 / 教材 219 行 / 章节按需），30 秒足够；
+ *   · 按用户表：用户自己刚存完就调 invalidate*，所以 TTL 只兜「别的标签页/别的设备改的」，
+ *     取 25 秒（perf-notes.md 的口径是 20–30 秒）。
+ */
+const STATIC_TTL_MS = 30_000;
+const USER_TTL_MS = 25_000;
+
+/** 按用户缓存最多留几个用户，防止长期运行内存无限涨 */
+const USER_CACHE_MAX_USERS = 200;
+
+/**
+ * ⚠️ 不要用 `unstable_cache`（2026-10 实测踩过，tools 表那次）：
+ *    在 Next 16.3.8 下它会**每次都返回空数组、也从不查库**，
+ *    页面不报错、只是**静默地什么都没有**，肉眼根本看不出来。
+ *    所以这里一律用显式的进程内 Map 缓存 —— 写法与上面的 keywordCache 一致。
+ *
+ * 语义：命中且未过期 → 直接返回不查库；过期 → 重查并刷新；
+ *      invalidate* → 立即清掉（本实例立即生效）。
+ *
+ * 局限：每个服务端实例各一份；生产是多实例时，其它实例最多滞后一个 TTL。
+ *      对本项目（共享静态表 + 用户自己的几十行数据）可接受。
+ */
+type TtlCache = {
+  /** 已缓存的行 */
+  entries: Map<string, { rows: unknown; at: number }>;
+  /** 并发去重：同一瞬间多个请求共用同一个 in-flight promise，只查一次库 */
+  inflight: Map<string, Promise<unknown>>;
+  ttlMs: number;
+  /** 缓存 key 数量上限（0 = 不限）。只有按用户的缓存需要限量。 */
+  maxKeys: number;
+};
+
+function makeCache(ttlMs: number, maxKeys = 0): TtlCache {
+  return { entries: new Map(), inflight: new Map(), ttlMs, maxKeys };
+}
+
+/** 超出上限时按「最久没被写入」淘汰一条；在飞的条目不动，避免丢掉正在等的 promise */
+function evictIfNeeded(cache: TtlCache) {
+  if (!cache.maxKeys || cache.entries.size < cache.maxKeys) return;
+  let oldestKey: string | null = null;
+  let oldestAt = Infinity;
+  for (const [key, entry] of cache.entries) {
+    if (cache.inflight.has(key)) continue;
+    if (entry.at < oldestAt) {
+      oldestAt = entry.at;
+      oldestKey = key;
+    }
+  }
+  if (oldestKey !== null) cache.entries.delete(oldestKey);
+}
+
+/**
+ * 带 TTL 与并发去重的读取。
+ *
+ * `key` 必须只包含**真正影响结果的过滤条件**（否则不同维度会互相污染）；
+ * 按用户的表必须把 `user_id` 拼进 key（RLS 只返回本人的行，共用 key 会串号）。
+ *
+ * `load` 抛异常或失败时不会把结果写进缓存，并且会清掉自己设的那条 in-flight promise
+ * （只清「还是自己这条」的，避免把别人新发起的加载顶掉）—— 否则这个 key 会永久卡在
+ * 「每次请求都共用一条已经失败的 promise」的状态。
+ */
+async function cached<T>(cache: TtlCache, key: string, load: () => Promise<T>): Promise<T> {
+  const hit = cache.entries.get(key);
+  if (hit && Date.now() - hit.at < cache.ttlMs) return hit.rows as T;
+
+  const flying = cache.inflight.get(key);
+  if (flying) return flying as Promise<T>;
+
+  evictIfNeeded(cache);
+  const run: Promise<T> = load().then((rows) => {
+    cache.entries.set(key, { rows, at: Date.now() });
+    return rows;
+  });
+  cache.inflight.set(key, run as Promise<unknown>);
+  const clearInflight = () => {
+    if (cache.inflight.get(key) === (run as Promise<unknown>)) cache.inflight.delete(key);
+  };
+  void run.then(clearInflight, clearInflight);
+  return run;
+}
+
+/** 静态表缓存：categories / phrases 各一份（结果与维度无关） */
+const categoriesCache = makeCache(STATIC_TTL_MS);
+const phrasesCache = makeCache(STATIC_TTL_MS);
+/** 静态表缓存：textbooks 按「学段|科目」分开存 */
+const textbooksCache = makeCache(STATIC_TTL_MS);
+/** 静态表缓存：chapters 按「教材 id 列表」的 key 分开存 */
+const chaptersCache = makeCache(STATIC_TTL_MS);
+/** 按用户缓存：students / history（key 里带 user_id，限量） */
+const studentsCache = makeCache(USER_TTL_MS, USER_CACHE_MAX_USERS);
+const historyCache = makeCache(USER_TTL_MS, USER_CACHE_MAX_USERS);
+
+/** 清掉「静态表」缓存：分类 / 教材 / 章节 / 短语（后台改了这些表之后调用） */
+export function invalidateStaticTables() {
+  categoriesCache.entries.clear();
+  categoriesCache.inflight.clear();
+  textbooksCache.entries.clear();
+  textbooksCache.inflight.clear();
+  chaptersCache.entries.clear();
+  chaptersCache.inflight.clear();
+  phrasesCache.entries.clear();
+  phrasesCache.inflight.clear();
+}
+
+/** 清掉**整个**「学生档案」缓存（写完/删完档案后调用；本进程立即生效）
+ *
+ *  ⚠️ 粒度是整个 Map，不是「只清某个用户」：进程级缓存分不清是谁写的，
+ *     所以别人会跟着多查一次库。方向是安全的（宁可多查、不会变旧），只是略有浪费。
+ *     按用户的数据量很小（每人几十行），不值得为此引入 per-request 上下文。 */
+export function invalidateStudents() {
+  studentsCache.entries.clear();
+  studentsCache.inflight.clear();
+}
+
+/** 清掉**整个**「反馈历史」缓存（写完/删完历史后调用；本进程立即生效）；粒度说明同上 */
+export function invalidateHistory() {
+  historyCache.entries.clear();
+  historyCache.inflight.clear();
+}
+
+/**
+ * 取缓存用的用户标识。route 里已经有 guard.user.id，优先用调用方传进来的，
+ * 免得为了拼一个缓存 key 再白付一次 `auth/v1/user` 往返（用户环境约 500ms）。
+ * 没传时退回查一次会话（保持这个函数能被单独调用而不出错）。
+ */
+async function cacheUserId(explicit?: string): Promise<string | null> {
+  if (explicit) return explicit;
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.getUser();
+  if (error) {
+    console.error("[feedback] 读取会话失败:", error.message);
+    return null;
+  }
+  return data.user?.id ?? null;
+}
+
+/** 把 scope 规范化成缓存键（只含真正参与过滤的维度）
+ *
+ *  ⚠️ `"any"` 与 `"null"` 必须区分开：`has()` 为假 = 该维度**不参与过滤**（不过滤），
+ *     为真且值为 null = 明确「只要无归属的」。两者结果不同，键不能混。
+ */
 function keywordCacheKey(scope: KeywordScope): string {
   const has = (k: keyof KeywordScope) => Object.prototype.hasOwnProperty.call(scope, k);
   return JSON.stringify([
@@ -190,8 +336,23 @@ async function loadKeywords(scope: KeywordScope = {}): Promise<KeywordRow[]> {
   return (data ?? []) as KeywordRow[];
 }
 
-/** 读取通用分类（数据库为权威来源，含 stage/subject 为空的全局分类） */
+/**
+ * 读取通用分类（数据库为权威来源，含 stage/subject 为空的全局分类）。
+ *
+ * ⚠️ 缓存口径：**缓存的是查库结果，不是按 stage 过滤后的结果**。
+ *    从前的查询本身**并没有按 stage/subject 过滤**（`q` 上只加了 `.eq("active", true)`），
+ *    只是把全部行取回来、再在内存里按 stage 过滤。所以这里缓存「全部行」是等价的，
+ *    而且所有学段共用一份，比按 stage 分开存更省。
+ */
 export async function getCategories(stage?: string | null): Promise<CategoryRow[]> {
+  const all = await cached(categoriesCache, "all", loadCategories);
+
+  // 只保留「全学段通用」或「匹配当前学段」的分类
+  return all.filter((c) => c.stage === null || !stage || c.stage === stage);
+}
+
+/** 实际查库（不含缓存，也不含 stage 过滤）；读不到时用静态定义兜底，避免页面空白 */
+async function loadCategories(): Promise<CategoryRow[]> {
   const supabase = await createClient();
   const q = supabase
     .from("feedback_categories")
@@ -215,16 +376,22 @@ export async function getCategories(stage?: string | null): Promise<CategoryRow[
     }));
   }
 
-  // 只保留「全学段通用」或「匹配当前学段」的分类
-  return ((data ?? []) as CategoryRow[]).filter(
-    (c) => c.stage === null || !stage || c.stage === stage,
-  );
+  return (data ?? []) as CategoryRow[];
 }
 
-/** 读取教材（可按学段/科目过滤） */
+/** 读取教材（可按学段/科目过滤）。静态表，按「学段|科目」分开缓存 30 秒。 */
 export async function getTextbooks(
   opts: { stage?: string | null; subject?: string | null } = {},
 ): Promise<TextbookRow[]> {
+  const key = `${opts.stage ?? "*"}|${opts.subject ?? "*"}`;
+  return cached(textbooksCache, key, () => loadTextbooks(opts));
+}
+
+/** 实际查库（不含缓存） */
+async function loadTextbooks(opts: {
+  stage?: string | null;
+  subject?: string | null;
+}): Promise<TextbookRow[]> {
   const supabase = await createClient();
   let q = supabase.from("feedback_textbooks").select("id, stage, subject, version, name, sort_order");
   if (opts.stage) q = q.eq("stage", opts.stage);
@@ -241,9 +408,14 @@ export async function getTextbooks(
   return (data ?? []) as TextbookRow[];
 }
 
-/** 读取某个教材下的章节 */
+/** 读取某个教材下的章节。静态表，按教材 id 缓存 30 秒。 */
 export async function getChapters(textbookId: number): Promise<ChapterRow[]> {
   if (!Number.isFinite(textbookId)) return [];
+  return cached(chaptersCache, `one:${textbookId}`, () => loadChapters(textbookId));
+}
+
+/** 实际查库（不含缓存） */
+async function loadChapters(textbookId: number): Promise<ChapterRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_chapters")
@@ -265,10 +437,19 @@ export async function getChapters(textbookId: number): Promise<ChapterRow[]> {
  * 为什么需要它：从前接口对每本教材各查一次章节（N+1）——
  * senior+math 会发 29 次、senior 全科目会发 129 次，每次约 124ms。
  * 调用方拿回结果后按 textbook_id 自行分组即可。
+ *
+ * 静态表：按「教材 id 列表」缓存 30 秒。不指定册次时这个列表就是该科目**全部**教材，
+ * 所以「物理高一没选册次」和「化学高一没选册次」各占一条缓存，互不干扰。
  */
 export async function getChaptersByTextbookIds(textbookIds: number[]): Promise<ChapterRow[]> {
   const ids = textbookIds.filter((n) => Number.isFinite(n));
   if (!ids.length) return [];
+  const key = `many:${ids.join(",")}`;
+  return cached(chaptersCache, key, () => loadChaptersByTextbookIds(ids));
+}
+
+/** 实际查库（不含缓存） */
+async function loadChaptersByTextbookIds(ids: number[]): Promise<ChapterRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_chapters")
@@ -285,7 +466,13 @@ export async function getChaptersByTextbookIds(textbookIds: number[]): Promise<C
   return (data ?? []) as ChapterRow[];
 }
 
+/** 读取短语。静态表（10 行），全站共享缓存 30 秒。 */
 export async function getPhrases(): Promise<PhraseRow[]> {
+  return cached(phrasesCache, "all", loadPhrases);
+}
+
+/** 实际查库（不含缓存） */
+async function loadPhrases(): Promise<PhraseRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_phrases")
@@ -300,8 +487,22 @@ export async function getPhrases(): Promise<PhraseRow[]> {
   return (data ?? []) as PhraseRow[];
 }
 
-/** 学生档案：结果受 RLS 限制，只会返回属于当前用户的行 */
-export async function getStudents(): Promise<StudentRow[]> {
+/**
+ * 学生档案：结果受 RLS 限制，只会返回属于当前用户的行。
+ *
+ * ⚠️ 这是**按用户**的数据，所以缓存 key 必须带 user_id —— 用共享 key 会把甲的档案发给乙。
+ *    TTL 25 秒；工具页写完档案会调 `invalidateStudents()`，所以「刚存的马上能看到」。
+ *    查询本身**不额外加 user_id 过滤**（照旧由 RLS 隔离），user_id 只用来做缓存 key。
+ */
+export async function getStudents(userId?: string): Promise<StudentRow[]> {
+  const uid = await cacheUserId(userId);
+  // 拿不到 uid 时不缓存：宁可多查一次库，也不能让「不知道是谁」的数据落进共享桶里
+  if (!uid) return loadStudents();
+  return cached(studentsCache, uid, loadStudents);
+}
+
+/** 实际查库（不含缓存） */
+async function loadStudents(): Promise<StudentRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_students")
@@ -315,8 +516,20 @@ export async function getStudents(): Promise<StudentRow[]> {
   return (data ?? []) as StudentRow[];
 }
 
-/** 反馈历史：同样受 RLS 限制 */
-export async function getHistory(): Promise<HistoryRow[]> {
+/**
+ * 反馈历史：同样受 RLS 限制。
+ *
+ * ⚠️ 同 `getStudents()`：按用户缓存（key 带 user_id，TTL 25 秒），
+ *    工具页写完历史会调 `invalidateHistory()`。
+ */
+export async function getHistory(userId?: string): Promise<HistoryRow[]> {
+  const uid = await cacheUserId(userId);
+  if (!uid) return loadHistory();
+  return cached(historyCache, uid, loadHistory);
+}
+
+/** 实际查库（不含缓存） */
+async function loadHistory(): Promise<HistoryRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_history")

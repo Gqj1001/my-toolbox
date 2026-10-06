@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth-role";
-import { invalidateKeywords } from "@/lib/feedback-db";
+import { invalidateKeywords, invalidateStaticTables } from "@/lib/feedback-db";
 import { createClient } from "@/lib/supabase/server";
 
 export type CandidateActionResult = {
@@ -37,6 +37,9 @@ function revalidate() {
   revalidatePath("/tools/feedback");
   // 同上：revalidatePath 清不掉 getKeywords() 的进程内缓存，必须显式清
   invalidateKeywords();
+  // 本文件还会写入 feedback_textbooks / feedback_chapters（导入时会建教材和章节），
+  // 这两张表的静态缓存（30 秒）也要一起清，否则导入完工具页下拉最长 30 秒才出现新教材。
+  invalidateStaticTables();
 }
 
 // ============================================================

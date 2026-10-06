@@ -175,14 +175,57 @@ proxy：            1 次 auth.getUser + 1 次 user_roles     ← 省不掉（�
 - **UI**：选了教材后隐藏重复的「关键词库」区块（取消后自动恢复）
 - 净效果：**36 次 → 10 次**调用
 
-### ⚠️ 未完成（P1，留给新会话）
+### ✅ P1 已完成（本会话收尾）
 
-| 项 | 做法 | 预期 |
+| 项 | 做法 | 实测 |
 |---|---|---|
-| **静态表缓存** | `categories`(8 行) / `textbooks`(219 行) / `chapters`(按需) / `phrases`(10 行) —— 全用户共享、极少变。照 `src/lib/tools-db.ts` 里 `getActiveTools` 的**进程内 TTL 缓存**写法（**不要用 `unstable_cache`**，见第四节踩坑） | 每次请求 **−4 次** ≈ **−2 秒** |
-| **students/history 按 user 短缓存** | key 用 `user_id`，TTL 20–30 秒 | **−2 次** ≈ **−0.8 秒** |
+| **静态表缓存** | `categories`(8 行) / `textbooks`(219 行) / `chapters`(按需) / `phrases`(10 行) —— 全用户共享、极少变。照 `src/lib/tools-db.ts` 的**进程内 TTL 缓存**写法（**没用 `unstable_cache`**，见第四节踩坑），TTL 30 秒 | 这 4 张表命中时**一次都不查** |
+| **students/history 按用户短缓存** | key 用 `user_id`，TTL 25 秒；写入/删除后**立刻**调 `invalidateStudents()` / `invalidateHistory()` | 命中时**一次都不查** |
 
-**预期合计：10 次 → 4–5 次，5–6 秒 → 约 2 秒。**
+**实测（`tests/feedback-data-cache.test.mjs`，14/14 通过）**：`GET /api/feedback/data?stage=senior&subject=math`
+
+```
+冷请求（缓存全空）：11 次出网
+  auth:user×2, user_roles×2,
+  feedback_categories×1, feedback_chapters×1, feedback_history×1,
+  feedback_keywords×1, feedback_phrases×1, feedback_students×1, feedback_textbooks×1
+热请求（30 秒内再来一次）：4 次出网
+  auth:user×2, user_roles×2        ← 正好等于第 1–4 项的理论下限
+```
+
+**11 次 → 4 次，省 7 次**（比原预估「−4 次」还多省了 3 次：因为指定维度时
+`getChapters`+`getChaptersByTextbookIds`+ 关键词那几条也一并命中了）。
+响应体必须逐字节一致：实测冷/热都是 **9,479 字节**，内容**完全相同**。
+
+⚠️ **按用户的两张表必须把 `user_id` 拼进缓存 key**：RLS 只保证「查出来的是本人的行」，
+**保证不了「缓存 key 不串号」**。共用 key 会把甲的档案发给乙。
+route 里已经把 `guard.user.id` 直接传进 `getStudents(uid)` / `getHistory(uid)` ——
+**别为了「顺便查一次会话」把那两个参数删掉**（删了会退回再付一次 `auth/v1/user` 往返）。
+
+### ⚠️ 这个缓存最危险的失效方式不是「慢」，而是「静默变空」
+
+`unstable_cache` 那次就是这样：页面不报错、只是**什么都没有**，肉眼看不出来。
+所以本步**必须**有一条「缓存命中时数据不为空」的断言 —— 见
+`tests/feedback-data-cache.test.mjs`（冷/热两次响应体逐字节比对 + 各字段非空）。
+**只测「快了」是不够的：快和空可以同时成立。**
+
+### 失效语义（实测过）
+
+| 场景 | 结果 |
+|---|---|
+| 30 秒内连续两次请求 | 第 1 次查库，第 2 次 **0 次** |
+| 后台改关键词/教材/章节/短语 | **立即**（两个 admin actions 的 `revalidate()` 里已调 `invalidateKeywords()` + `invalidateStaticTables()`） |
+| 工具页存/删档案、存/删历史 | **立即**（route 里写完就 `invalidateStudents()` / `invalidateHistory()`） |
+| 改库但**不经过**这些代码路径（如在 Supabase SQL Editor 直接改） | 最多 **30 秒**后自动可见（TTL 到期） |
+
+> 缓存是**每个服务端实例各一份**。多实例时其它实例最多滞后一个 TTL。
+
+### ⚠️ 一处「看着像 bug、其实是原来就这样」的地方（别改错）
+
+`getCategories(stage)` **本来就没有按 stage 过滤查询** —— 它把全部行取回来，
+再在内存里按 stage 过滤（SQL 里只有 `.eq("active", true)`）。
+所以缓存层缓存的是「**全部行**」（一份，所有学段共用），**不是**「过滤后的行」。
+改成按 stage 分开存不但没必要，还会把「过滤」这个语义偷偷挪进缓存层。
 
 ### ⚠️ 明确不做的（用户已决定）
 
@@ -197,9 +240,18 @@ proxy：            1 次 auth.getUser + 1 次 user_roles     ← 省不掉（�
 ### 复测方法
 
 ```powershell
-# 期望（改完 P1 前）：feedback/data scoped 每次约 10 次出网、user_roles 2 次
-# 改完 P1 后应降到 4-5 次
+# 先 pnpm build，然后：
+& "C:\Users\郭庆杰\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe" `
+  tests\feedback-data-cache.test.mjs
 ```
+
+这个套件会自己起 `next start`（端口 3000）并**杀掉 3000 上的旧监听进程**，
+所以别和其它真服务套件同时跑。它靠 `tests/_instrument.cjs` 插桩数出网次数
+（`NODE_OPTIONS=--require=…` + 一个 4599 端口的小查询口），**不改生产代码**。
+
+期望输出：冷请求约 11 次、热请求约 4 次、`14/14 passed`。
+若热请求仍然 ~11 次 → 缓存没生效（多半是 key 拼错或有人把 `cached()` 去掉了）；
+若热请求次数正常但**数据为空** → 命中缓存的失败路径（正是 `unstable_cache` 那种坑）。
 
 **排查原则**：**看调用次数，不要看毫秒**。本机到 Supabase 延迟低（约 120ms），
 绝对耗时没有代表性；**次数 × 用户环境的单次成本才是真实体感**。

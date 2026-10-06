@@ -10,6 +10,8 @@ import {
   getStudents,
   getTextbooks,
   historyByStudent,
+  invalidateHistory,
+  invalidateStudents,
   studentsByName,
 } from "@/lib/feedback-db";
 import { parseScope, subjectHasTextbook } from "@/lib/feedback-taxonomy";
@@ -76,10 +78,13 @@ export async function GET(request: NextRequest) {
     // 基础数据（短语 / 档案 / 历史）与关键词无关，但前端每次打开都要。
     // 从前它们在函数最开头无条件查，导致**每次请求都白付约 780ms**（实测 308+148+324）；
     // 现在收进本分支并与下面的查询并发，取消选课时不再触发。
+    // ⚠️ students / history 是**按用户**的数据，必须把 user.id 传进去当缓存 key ——
+    //    不然会把别人的档案/历史缓存到共享桶里发出去（RLS 只保证「查出来的是本人的」，
+    //    保证不了「缓存 key 不串号」）。
     const [phrases, students, history] = await Promise.all([
       getPhrases(),
-      getStudents(),
-      getHistory(),
+      getStudents(guard.user.id),
+      getHistory(guard.user.id),
     ]);
 
     const categories = stage || subject ? await getCategories(stage) : await getCategories();
@@ -288,6 +293,11 @@ export async function POST(request: NextRequest) {
       console.error("[feedback/data] 保存档案失败:", error.code, error.message);
       return NextResponse.json({ ok: false, error: "保存档案失败。" }, { status: 500 });
     }
+    // ⚠️ 写完必须立刻清缓存，否则「刚存的档案」在 25 秒内看不到。
+    //    （缓存只是少查库，不能改变「存完就能看到」这个用户能感知的行为。）
+    //    注意这里清的是**整个按用户缓存**（进程级，分不清是哪个请求写的），
+    //    所以别的用户会跟着多查一次库 —— 方向是安全的，只是略微浪费。
+    invalidateStudents();
     return NextResponse.json({ ok: true, student: data });
   }
 
@@ -324,6 +334,8 @@ export async function POST(request: NextRequest) {
       );
       return NextResponse.json({ ok: false, error: "保存历史失败。" }, { status: 500 });
     }
+    // 同上：清掉历史缓存，保证「刚存的记录马上能看到」
+    invalidateHistory();
     return NextResponse.json({ ok: true, history: data });
   }
 
@@ -348,6 +360,8 @@ export async function DELETE(request: NextRequest) {
       console.error("[feedback/data] 删除历史失败:", error.code, error.message);
       return NextResponse.json({ ok: false, error: "删除失败。" }, { status: 500 });
     }
+    // 清掉历史缓存，保证「删掉的记录马上消失」（不然它会从缓存里再回来 25 秒）
+    invalidateHistory();
     return NextResponse.json({ ok: true });
   }
 
@@ -363,6 +377,9 @@ export async function DELETE(request: NextRequest) {
       console.error("[feedback/data] 删除档案失败:", histError?.code, error?.code);
       return NextResponse.json({ ok: false, error: "删除失败。" }, { status: 500 });
     }
+    // 档案和它的历史都动了，两份缓存一起清
+    invalidateStudents();
+    invalidateHistory();
     return NextResponse.json({ ok: true });
   }
 
