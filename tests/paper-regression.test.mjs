@@ -15,6 +15,18 @@ const PASSWORD = info.password;
 const results = [];
 const rec = (n, p, d) => { results.push({ n, p }); console.log(`${p ? "PASS" : "FAIL"} | ${n}${d ? ` | ${d}` : ""}`); };
 
+/** 查线上 tools 表某一行的 active —— 用来让断言跟随真实状态，而不是写死快照 */
+async function toolIsActive(route) {
+  const envText = readFileSync(`${PROJECT}/.env.local`, "utf8").split(/\r?\n/);
+  const url = envText.find((l) => l.startsWith("NEXT_PUBLIC_SUPABASE_URL=")).split("=")[1].trim();
+  const key = envText.find((l) => l.startsWith("NEXT_PUBLIC_SUPABASE_ANON_KEY=")).split("=").slice(1).join("=").trim();
+  const r = await fetch(`${url}/rest/v1/tools?select=active&route=eq.${encodeURIComponent(route)}`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  });
+  const rows = await r.json();
+  return Array.isArray(rows) && rows.length ? rows[0].active === true : null;
+}
+
 class CDP {
   constructor(ws) { this.ws = ws; this.id = 0; this.pending = new Map(); this.events = [];
     ws.addEventListener("message", (e) => { const m = JSON.parse(e.data);
@@ -110,16 +122,35 @@ await goto("/tools/feedback", 10000);
 
 // ---------- 其他工具页 ----------
 console.log("\n=== 其他工具页回归 ===");
-// math-plan 的 min_plan='vip'，非会员被导向 /upgrade 是正确行为；
-// json-formatter 没有对应的 public/tools/json-formatter.html，会渲染占位页，
-// 两者都不该按"必须有 iframe"来断言。
-for (const [label, path, allow] of [
-  ["math-plan（VIP 工具）", "/tools/math-plan", ["/tools/math-plan", "/upgrade"]],
-  ["json-formatter（占位页）", "/tools/json-formatter", ["/tools/json-formatter"]],
+// math-plan 现在是 free（所有登录用户可开），所以路径应该留在 /tools/math-plan。
+//
+// json-formatter 的期望**从线上 tools 表实时读**，不写死快照：
+//   · active=false（0012 执行后）→ getToolByRoute 返回 null → notFound()
+//   · active=true （0012 执行前）→ 正常渲染占位页
+// 为什么要这样：迁移 SQL 由用户手动执行，如果这里写死「应为 404」，那在用户执行 SQL
+// **之前**套件就是红的（反过来写死「应为占位页」，执行之后就红）。两种都会让回归失去意义。
+// 实测（Next 16.3.8）notFound() 的表现：**URL 不变**，页面换成内置 404，
+// document.title 形如 "404: This page could not be found." —— 所以判据用 title，不能用 pathname。
+const jsonFormatterActive = await toolIsActive("/tools/json-formatter");
+if (jsonFormatterActive === null) {
+  rec("读到了 /tools/json-formatter 的 active 状态", false, "线上查不到这条 route，无法判定期望");
+}
+for (const [label, path, expect404] of [
+  ["math-plan（免费工具）", "/tools/math-plan", false],
+  [
+    `json-formatter（线上 active=${jsonFormatterActive}）`,
+    "/tools/json-formatter",
+    jsonFormatterActive === false,
+  ],
 ]) {
   await goto(path, 6000);
-  const r = await ev(`(() => ({ path: location.pathname, src: (document.querySelector('iframe')||{}).src || null }))()`);
-  rec(`${label} 访问行为正确`, allow.includes(String(r.path)), String(r.path));
+  const r = await ev(`(() => ({ path: location.pathname, title: document.title }))()`);
+  const looks404 = /^\s*404/.test(String(r.title));
+  rec(
+    `${label} 访问行为正确${expect404 ? "（应为 404 页）" : ""}`,
+    expect404 ? looks404 : !looks404 && String(r.path) === path,
+    `pathname=${JSON.stringify(r.path)} title=${JSON.stringify(r.title)}`,
+  );
 }
 
 console.log("\n=== 静态资源检查（resolveIframeSrc 两种布局）===");

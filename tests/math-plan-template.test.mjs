@@ -347,16 +347,38 @@ const TPL_DOC = T.getText("word/document.xml");
     sent.length > 0 && !sent.includes("→") && !/（\d）/.test(sent), sent);
   ok("roundsSentence 含三个轮次的课时数",
     sent.includes("56") && sent.includes("14") && sent.includes("10"), sent);
+  // 2026-10 润色：句首由「复习节奏分三轮推进」改为「复习节奏上分 N 步走：」
+  //（口径理由见 report-template.js 里 roundsSentence 的注释：轮次名里没有「一轮/二轮」时说「三轮」会打架）
+  ok("roundsSentence 句首是「分 N 步走」且步数=轮次数",
+    sent.includes("复习节奏上分 3 步走"), sent);
+  // 防「一个意思写两遍」：ACT 动作短语已自带动作，句首不得再补一句开场话术
+  //（曾经写成「先用 56 课时把基础逐模块过一遍，逐模块补齐基础…」，重复了「逐模块」）
+  ok("★句首不重复动作短语里的词（不写「把基础逐模块过一遍」）",
+    !sent.includes("把基础逐模块过一遍") && !/先用 \d+ 课时[^，。；]*，[^，。；]*逐模块补齐基础/.test(sent),
+    sent);
+  ok("连接词承担推进感（先用…；再用…；最后…）",
+    sent.includes("：先用 ") && sent.includes("；再用 ") && sent.includes("；最后 "), sent);
 
   const withRounds = RT.build(mkPayload(20, { method: "正文。" + sent }), { template: T });
   const doc1 = readText(Buffer.from(withRounds.blob), "word/document.xml");
   ok("三轮叙述写入了文档（数字可回读）",
-    doc1.includes("56") && doc1.includes("复习节奏分三轮推进"), "");
+    doc1.includes("56") && doc1.includes("复习节奏上分 3 步走"), "");
+  ok("三轮叙述里动作短语口径未变（与 samples.ts 同源）",
+    doc1.includes("把公式与题型模板固化下来") && doc1.includes("模拟考场节奏与取舍"), "");
 
   const noRounds = RT.build(mkPayload(20, { method: "正文。" }), { template: T });
   const doc2 = readText(Buffer.from(noRounds.blob), "word/document.xml");
-  ok("无 rounds 时文档里不出现三轮叙述", !doc2.includes("复习节奏分三轮推进"), "");
+  ok("无 rounds 时文档里不出现三轮叙述", !doc2.includes("复习节奏上分"), "");
   ok("空 rounds → roundsSentence 返回空串", RT.roundsSentence(null) === "" && RT.roundsSentence([]) === "", "");
+
+  // 轮次数是动态的：只有两轮时也要成句，且不能出现「第一轮…第三轮」这种越界措辞
+  const two = RT.roundsSentence([
+    { name: "基础过关", hours: 40, focus: "逐模块补齐基础" },
+    { name: "真题模拟", hours: 20, focus: "限时套卷" },
+  ]);
+  ok("两轮时也成句（分 2 步走、含两个课时数）",
+    two.includes("复习节奏上分 2 步走") && two.includes("40") && two.includes("20"), two);
+  ok("两轮时不说「三轮」", !two.includes("三轮"), two);
 }
 
 /* ---- 空值：不留占位符、不留「＿＿」 ---- */

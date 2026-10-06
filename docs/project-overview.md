@@ -114,6 +114,20 @@
 2. **会员那三列（`plan` / `status` / `expires_at`）的加列语句也不在仓库里** → 同上；
    而且新人容易误以为"跑一遍 migrations 就有会员功能"——**不会**。
 3. **换工具权限没有后台界面** → 管理员后台**改不了** `tools` 表，只能去 Supabase 后台手工跑 SQL（容易忘、容易改错）。
+   **连「下线某个工具」也一样**（`active=false`）—— 现有迁移 `0012_deactivate_placeholder_tools.sql` 就是干这个的，
+   以后要下线/恢复工具，照它的写法再写一条。
+
+> 🔧 **网络被挡时的推送手段**：本机对 `github.com:443` 会**反复被重置**，但 `api.github.com` 一直通。
+> 这时 `git push` 重试无用，改用仓库里固化的脚本：
+>
+> ```powershell
+> node scripts\push-via-api.mjs --dry    # 先演练
+> node scripts\push-via-api.mjs          # 走 GitHub API 真推
+> ```
+>
+> 它会先校验「构造出的 tree sha == 本地 tree sha」才肯写，推完自动逐文件核对。
+> 唯一副作用：**commit sha 会与本地不同**（API 重新生成 commit 对象），内容不受影响。
+> 详见 `scripts/README.md`。
 
 
 ## 四、交接文档索引

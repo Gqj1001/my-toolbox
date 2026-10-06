@@ -3,6 +3,31 @@
 这些脚本用于从 `public/tools/feedback.html` **程序化生成/校验**数据库迁移文件，
 避免手工转录 470 个关键词时出错，并在改造 HTML 后校验其内联脚本语法。
 
+## push-via-api.mjs ⚠️（网络被挡时的推送手段）
+
+**什么时候用**：本机对 `github.com:443` 会**反复被重置**（实测：`Connection was reset`，
+或连续多次 `Failed to connect to github.com:443 after 21063 ms`），但 **`api.github.com` 一直通**。
+这种情况下 `git push` 重试多少次都没用，用这个脚本走 GitHub REST API 把当前分支推上去。
+
+```powershell
+node scripts\push-via-api.mjs --dry                  # 先演练（只打印，不写 GitHub）
+node scripts\push-via-api.mjs                        # 真推当前分支 → origin 同名分支
+node scripts\push-via-api.mjs --branch <名字>        # 指定分支
+```
+
+**安全设计**（四道）：
+1. token 从本机 git 凭据管理器现取现用，**不硬编码、不打印**；
+2. 只做**快进推送**（远端必须是本地祖先），否则中止 —— 不会覆盖别人的提交；
+3. **硬闸：构造出的 tree sha 必须与本地 tree sha 一致**，不一致立即中止
+   （tree sha 覆盖全部文件内容与权限位，等于「推上去的与本地逐字节一致」）；
+4. 推完**自动逐文件核对**远端与本地，报「多/少/不同」。
+
+**已知副作用**：这样推上去的 **commit sha 与本地不同** —— GitHub 的 API 会重新生成
+commit 对象，且会把 commit message 结尾的换行去掉、把提交时间写成 UTC。
+文件内容不受影响（tree sha 不变）。详见脚本头部注释。
+
+> ⚠️ 本机 **git 不在 PATH 上**，脚本会自己去找 git（`GIT_BIN` 环境变量可覆盖）。
+
 ## gen-step7-sql.mjs
 
 生成 `supabase/migrations/0005_stage_subject_textbook.sql`（第 7 步：学段 × 科目 × 教材 × 章节）。
@@ -82,6 +107,7 @@ node scripts/validate-feedback-js.mjs
 | 修改了 `feedback.html` 里的默认关键词库 | `extract-keywords.mjs` → `validate-sql.mjs` → 重新执行 0004 |
 | 改教材/章节清单（第 7 步） | 改 `gen-step7-sql.mjs` 的 `TB` → 重跑它 → `validate-sql.mjs 0005_*.sql` → 执行 0005 |
 | 日常增删关键词 / 教材 / 章节 | 都不需要，直接用 `/admin/feedback-keywords` 管理页 |
+| `git push` 连不上 github.com | `push-via-api.mjs`（见本页开头） |
 
 `0004_feedback_tables.sql` 与 `0005_stage_subject_textbook.sql` 都是幂等的，可安全重复执行。
 
