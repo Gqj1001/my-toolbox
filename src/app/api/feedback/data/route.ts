@@ -5,6 +5,7 @@ import {
   getChapters,
   getChaptersByScope,
   getChaptersByTextbookIds,
+  getDataVersion,
   getHistory,
   getKeywords,
   getPhrases,
@@ -32,7 +33,9 @@ import { getViewer } from "@/lib/viewer";
  *           从前这里返回「全量关键词树」，但 PostgREST 默认只给 1000 行，
  *           而未归档关键词已达 8992 行 —— 那个分支一直在静默丢 89% 的数据，故移除。
  *           关键词一律按维度拉取；响应里同时带回 categories / textbooks / chapters
- *           / categoryKeywords / phrases / students / history / isAdmin。
+ *           / categoryKeywords / phrases / students / history / isAdmin / dataVersion。
+ *           `dataVersion` 只服务**浏览器端**缓存（IndexedDB，见 docs/perf-notes.md
+ *           「客户端缓存」一节）：版本号没变就说明静态数据没被后台改过，缓存可以继续用。
  *           ⚠️ 2026-10：工具页启动**不再**先打 /api/feedback/mode 取身份 ——
  *              `isAdmin` 就在本接口的响应里，云端模式的首屏只打这一次请求。
  *              （多那一跳会多跑一次中间件：auth 校验 + user_roles 查询。）
@@ -196,6 +199,11 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       ...base,
+      // 数据版本号：浏览器端缓存（IndexedDB）拿它判断本地那份是否还有效。
+      // 只有「会改静态表的代码路径」（两个 admin actions 的 revalidate()）会让它 +1，
+      // 所以正常情况下同一维度反复访问版本号不变 ⇒ 客户端缓存可以一直用、不重渲染。
+      // ⚠️ 它是**提示**，不是鉴权依据；也不参与服务端缓存判定。
+      dataVersion: getDataVersion(),
       stage: stage ?? null,
       subject: subject ?? null,
       hasTextbook: subject ? subjectHasTextbook(subject) : false,

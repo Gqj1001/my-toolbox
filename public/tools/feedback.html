@@ -731,6 +731,224 @@ if(NEXT_MODE) API.mode = 'connecting';
  *  超时后**不回退 localStorage**（回退会让用户拿旧数据生成反馈，比空着更糟）。 */
 const CLOUD_BOOT_TIMEOUT_MS = 8000;
 
+/* ==========================================================================
+   0.6 客户端缓存（IndexedDB）—— 只服务云端模式（NEXT_MODE）
+   --------------------------------------------------------------------------
+   要解决的问题：用户在国内访问 Vercel，**每条请求的往返都要跨洋**。
+   服务端已经做了进程内缓存（10 分钟），但老师「上一节课用完、下一节课再打开」
+   往往早就过了 10 分钟，于是又要白等一次 3 秒。把**全局静态数据**放到用户设备上，
+   第二次进同一个工具就能**立刻出内容**，同时后台照常拉新。
+
+   ⚠️ 三条不可动摇的红线（踩过就知道代价）：
+     1. **学生档案 / 反馈历史绝不缓存**（`students` / `history`）——
+        老师看完可能直接生成反馈发给家长，拿旧的等于发错内容。
+     2. **绝不只读缓存不拉新** —— 缓存只用来「先画出来」，每次打开都必须打一次
+        数据接口；拉回来的版本号/内容与缓存不同就替换。
+     3. **缓存读失败 = 没有缓存**（`try/catch` 全吞）——
+        IndexedDB 在隐私模式/配额满时会抛，那时必须静默退回原来的骨架屏流程，
+        不能因为缓存把工具弄坏。
+
+   ⚠️ 为什么不用 localStorage：静态数据一份就能到几百 KB，localStorage 只有约 5MB
+      且是同步 API（读写会卡 UI）。IndexedDB 容量大、异步，适合这份数据。
+   ========================================================================== */
+const CACHE_DB_NAME = 'feedback_cache_v1';
+const CACHE_STORE = 'kv';
+/** 本地缓存多久算「过期、需要后台重新拉」——与服务端静态表 TTL 一致（10 分钟） */
+const CLIENT_TTL_MS = 10 * 60 * 1000;
+/** 本地最多留几条维度缓存（超出按「最久没用」裁剪）。
+ *  一个老师常用维度就几个，留几条刚好；这里只是防止长年累月无限增长。 */
+const CLIENT_CACHE_MAX_KEYS = 6;
+/** 超过这个时长就明确提示「数据可能不是最新」（不是拒绝使用，只是让用户知道） */
+const CLIENT_STALE_HINT_MS = 24 * 60 * 60 * 1000;
+
+let _cacheDb = null;          // IDBDatabase | null
+let _cacheBroken = false;     // 一旦初始化失败就不再重试（例如隐私模式）
+/** 紧急开关：置 true（或给工具页加 `?noclientcache=1`）就整层不生效，
+ *  行为立刻回到 P4 那套「骨架屏 → 一次请求 → 一次渲染」。
+ *  留它是为了「线上发现缓存惹了麻烦时改一个字就能摘掉，不用回滚提交」。 */
+let _cacheDisabled = (function(){
+  try{
+    if(new URLSearchParams(location.search).get('noclientcache') === '1') return true;
+    return localStorage.getItem('fb_noclientcache') === '1';
+  }catch(e){ return false; }
+})();
+
+/** 打开（必要时建库）。失败返回 null，绝不抛。 */
+function openCacheDb(create){
+  if(_cacheBroken) return Promise.resolve(null);
+  if(_cacheDb) return Promise.resolve(_cacheDb);
+  return new Promise(resolve=>{
+    let req;
+    try{
+      if(!self.indexedDB){ _cacheBroken = true; return resolve(null); }
+      req = indexedDB.open(CACHE_DB_NAME, 1);
+    }catch(e){ _cacheBroken = true; return resolve(null); }
+    req.onupgradeneeded = ()=>{
+      const db = req.result;
+      if(!db.objectStoreNames.contains(CACHE_STORE)) db.createObjectStore(CACHE_STORE);
+    };
+    req.onsuccess = ()=>{ _cacheDb = req.result; resolve(_cacheDb); };
+    req.onerror = ()=>{ if(create) _cacheBroken = true; resolve(null); };
+    req.onblocked = ()=>{ resolve(null); };
+  });
+}
+
+function cacheGet(key){
+  return openCacheDb(false).then(db=>{
+    if(!db) return null;
+    return new Promise(resolve=>{
+      try{
+        const r = db.transaction(CACHE_STORE,'readonly').objectStore(CACHE_STORE).get(key);
+        r.onsuccess = ()=>resolve(r.result || null);
+        r.onerror = ()=>resolve(null);
+      }catch(e){ resolve(null); }
+    });
+  }).catch(()=>null);
+}
+
+/** 写一条缓存。三个时间语义**必须**分清，否则「>24 小时」那条提示永远不会触发：
+ *    · `fetchedAt` = 这份内容**最后一次被确认是最新的**时间
+ *    · `savedAt`   = 最后一次写入（含仅刷新新鲜度）
+ *    · `version`   = 服务端 dataVersion（用于判断「后台改过没有」）
+ *
+ *  另外顺手做**裁剪**：每条维度一份缓存，一个老师来回切的维度就那么几个，
+ *  但长期下来（换教材/换学段/章节）会越积越多。所以写完就按「最久没用的」
+ *  砍掉多余的，只留 `CLIENT_CACHE_MAX_KEYS` 条。
+ *  ⚠️ 必须**先写完、再另开一个事务裁剪**：同一个事务里「刚 put 进去的那条」
+ *     也参与排序时很容易把新的自己删掉。 */
+function cachePut(key, value, version, fetchedAt){
+  return openCacheDb(true).then(db=>{
+    if(!db) return false;
+    const now = Date.now();
+    return new Promise(resolve=>{
+      try{
+        const tx = db.transaction(CACHE_STORE,'readwrite');
+        tx.objectStore(CACHE_STORE).put(
+          { value:value, savedAt:now, fetchedAt:fetchedAt || now, version:version }, key);
+        tx.oncomplete = ()=>{
+          pruneCache(db, key).catch(()=>false);
+          resolve(true);
+        };
+        tx.onerror = ()=>resolve(false);
+        tx.onabort = ()=>resolve(false);
+      }catch(e){ resolve(false); }
+    });
+  }).catch(()=>false);
+}
+
+/** 裁剪：按 `savedAt` 从旧到新删，直到只剩 CLIENT_CACHE_MAX_KEYS 条。
+ *  绝不删 `keepKey`（就是刚刚写进去的那条）。失败静默 —— 裁剪只是省空间。 */
+function pruneCache(db, keepKey){
+  return new Promise(resolve=>{
+    try{
+      const tx = db.transaction(CACHE_STORE,'readwrite');
+      const store = tx.objectStore(CACHE_STORE);
+      const r = store.openCursor();
+      const all = [];
+      r.onsuccess = ()=>{
+        const c = r.result;
+        if(!c){
+          const doomed = all
+            .filter(x => x.key !== keepKey)
+            .sort((a,b)=>(a.savedAt||0)-(b.savedAt||0))
+            .slice(0, Math.max(0, all.length - CLIENT_CACHE_MAX_KEYS));
+          doomed.forEach(x=>store.delete(x.key));
+          return;   // 事务提交时 resolve
+        }
+        all.push({ key:c.key, savedAt:(c.value && c.value.savedAt) || 0 });
+        c.continue();
+      };
+      r.onerror = ()=>resolve(false);
+      tx.oncomplete = ()=>resolve(true);
+      tx.onerror = ()=>resolve(false);
+      tx.onabort = ()=>resolve(false);
+    }catch(e){ resolve(false); }
+  });
+}
+
+/** **只**刷新「新鲜度」（命中缓存后告诉浏览器「这份还在用」），
+ *  ⚠️ **绝不改 `fetchedAt`** —— 那是「最后一次真实拉取」的时间戳，
+ *     改掉它就等于把「这份缓存可能已经放了三天」这件事抹掉，
+ *     「>24 小时要提示」那条护栏会静默失效。 */
+function cacheTouch(key){
+  return cacheGet(key).then(e=>{
+    if(!e) return false;
+    return cachePut(key, e.value, e.version, e.fetchedAt);
+  }).catch(()=>false);
+}
+
+function cacheClear(key){
+  return openCacheDb(false).then(db=>{
+    if(!db) return false;
+    return new Promise(resolve=>{
+      try{
+        const tx = db.transaction(CACHE_STORE,'readwrite');
+        tx.objectStore(CACHE_STORE).delete(key);
+        tx.oncomplete = ()=>resolve(true);
+        tx.onerror = ()=>resolve(false);
+      }catch(e){ resolve(false); }
+    });
+  }).catch(()=>false);
+}
+
+/* 诊断/测试用的小口子（只暴露缓存元信息与**提示语换算**，不含任何业务内容）。
+   ⚠️ 存在的唯一理由是「>24 小时要提示」这条护栏必须能**确定性**地验证：
+      靠真浏览器抢在后台核对回来之前去读那条提示是不可靠的（实测会读空），
+      于是这里把「给定新鲜度 → 该显示什么提示」这个纯函数也暴露出来，
+      让测试可以脱离时序去断言。 */
+window.__fbClientCache = function(){
+  return openCacheDb(false).then(db=>{
+    if(!db) return { ok:false, reason: _cacheBroken ? 'unavailable' : 'no-db', keys:[] };
+    return new Promise(resolve=>{
+      try{
+        const out = {};
+        const st = db.transaction(CACHE_STORE,'readonly').objectStore(CACHE_STORE);
+        const r = st.openCursor();
+        r.onsuccess = ()=>{
+          const c = r.result;
+          if(!c){ resolve({ ok:true, keys:Object.keys(out).sort(), entries:out }); return; }
+          out[c.key] = {
+            savedAt: c.value && c.value.savedAt,
+            fetchedAt: c.value && c.value.fetchedAt,
+            version: c.value && c.value.version,
+            bytes: JSON.stringify((c.value && c.value.value) || null).length,
+            valueKeys: (c.value && c.value.value && typeof c.value.value === 'object')
+              ? Object.keys(c.value.value).sort() : [],
+            // 完整内容也放出来：测试要断言「缓存里**没有**学生/历史」，
+            // 只看键名不够（键名可以蒙对），要看真正的落盘内容。
+            value: (c.value && c.value.value) || null
+          };
+          c.continue();
+        };
+        r.onerror = ()=>resolve({ ok:false, reason:'cursor-error', keys:[] });
+      }catch(e){ resolve({ ok:false, reason:String(e && e.message || e), keys:[] }); }
+    });
+  }).catch(e=>({ ok:false, reason:String(e && e.message || e), keys:[] }));
+};
+
+/** 测试用：脱离时序验证「新鲜度判定 + 提示语」这条纯逻辑。
+ *  `probe({fetchedAt, lastFreshOk})` → `{ fresh, hint }`
+ *  ⚠️ 它**只读**，不改缓存、不改页面状态。 */
+window.__fbClientCacheProbe = function(probe){
+  const saved = _lastFreshOk;
+  try{
+    _lastFreshOk = !!(probe && probe.lastFreshOk);
+    const entry = { fetchedAt: (probe && probe.fetchedAt) || 0 };
+    return { fresh: cacheIsFresh(entry), hint: cacheHintText(entry) };
+  }finally{
+    _lastFreshOk = saved;
+  }
+};
+/** 测试用：把某条缓存改造成「指定版本 / 指定新鲜度」 */
+window.__fbClientCacheTamper = function(key, patch){
+  return cacheGet(key).then(e=>{
+    if(!e) return false;
+    const version = (patch && 'version' in patch) ? patch.version : e.version;
+    const fetchedAt = (patch && 'fetchedAt' in patch) ? patch.fetchedAt : e.fetchedAt;
+    return cachePut(key, e.value, version, fetchedAt);
+  }).catch(()=>false);
+};
+
 async function apiFetch(path, opts){
   const o = Object.assign({credentials:'same-origin'}, opts||{});
   if(o.body && typeof o.body === 'object' && !(o.body instanceof FormData)){
@@ -828,6 +1046,18 @@ function cloudBootFailed(reason){
   updateModeBadge();
 }
 
+/** 当前维度的缓存 / 请求 key（query string 形式，例如 `stage=senior&subject=math`）。
+ *  ⚠️ 缓存 key 与请求参数的拼法**必须是同一处代码**，否则会出现
+ *     「缓存 key 说是 A、请求其实是 B」这种最难查的错位。 */
+function _scopeKeyOf(){
+  const qs = new URLSearchParams({stage: getStage(), subject: getSubject()});
+  const tb = localStorage.getItem(CLOUD_TB_KEY) || '';
+  const ch = localStorage.getItem(CLOUD_CH_KEY) || '';
+  if(tb) qs.set('textbook', tb);
+  if(ch) qs.set('chapter', ch);
+  return qs.toString();
+}
+
 /* 云端模式的启动流程（唯一的入口，只在这里打数据接口） */
 async function initCloud(){
   showAppSkeleton();
@@ -857,8 +1087,38 @@ async function initCloud(){
     if(sh0) sh0.textContent = '✅ AI 润色由服务器代理（会员专属）';
   }
 
-  // 总预算：从此刻开始 8 秒
+  /* ---------- 第一跳：本机缓存（IndexedDB），命中就**立即出内容** ----------
+     ⚠️ 这一段**不是**「提前渲染 localStorage」那套的老毛病（P4 刚消灭的就是它）：
+        · 它只渲染**全局静态数据**（关键词/教材/分类/短语）——管理员维护的、与用户无关；
+        · **学生档案与反馈历史仍然完全空白**，等真实响应回来才画；
+        · 命中也照样打真实请求（见下面的后台核对），只是不再让用户对着骨架屏等。
+     版本号对不上（后台改过静态表）时不在这里判断 —— 版本号只有真实响应里才有，
+     真正的结论在 loadCloudScoped 拿到 `dataVersion` 之后才下（见那里的 cacheClear）。 */
+  const scopeKey = _scopeKeyOf();
+
+  // 总预算：从此刻开始 8 秒。
+  // ⚠️ 计时**必须**包含「读缓存」这一段：IndexedDB 在异常环境下可能既不 resolve
+  //    也不 reject（比如被浏览器策略挂起），那时 `await` 会永远等下去。
+  //    有了这个定时器，最坏情况下 8 秒后照样走 cloudBootFailed，页面不会永久卡住。
   const timedOut = new Promise(resolve=>{ _cloudBootTimer = setTimeout(()=>resolve('timeout'), CLOUD_BOOT_TIMEOUT_MS); });
+
+  const entry = _cacheDisabled ? null : await cacheGet(scopeKey);
+  if(entry && entry.value){
+    _cacheEntry = { key:scopeKey, value:entry.value, version:entry.version,
+                    fetchedAt:entry.fetchedAt, savedAt:entry.savedAt };
+    const cacheUsed = applyCachedSnapshot(_cacheEntry);
+    if(cacheUsed === 'rendered' || cacheUsed === 'stale'){
+      // 缓存已经画出一屏可用的内容：撤掉骨架屏，让用户马上能用。
+      hideAppSkeleton();
+      updateModeBadge();                 // 仍是 'connecting'（还没拿到真实响应）
+      showCacheHint(_cacheEntry, cacheUsed === 'stale');
+      console.log('[feedback] 首屏来自本机缓存（IndexedDB），后台正在核对最新数据');
+      // 后台核对：**必须**打真实请求（「先显示缓存」绝不等于「不拉新」）
+      refreshInBackground();
+      return;
+    }
+    // 缓存内容不完整（'miss'）：当作没有，继续走骨架屏流程
+  }
 
   const loaded = loadCloudScoped().then(()=> (cloudData && cloudData.ok) ? 'ok' : 'fail');
 
@@ -871,8 +1131,11 @@ async function initCloud(){
     API.isAdmin = !!cloudData.isAdmin;
     _cloudBooted = true;
     // 一次性渲染全部（第二次渲染的闪烁就是这一步要消灭的）
-    renderStuList(); renderHist(); renderPhrases(); renderManage();
-    renderTextbookSelect(); renderGenerate();
+    rerenderCloudViews();
+    // 记下这一屏对应的数据指纹：**这一条是「后台核对不闪烁」的前提**，
+    // 少了它，缓存命中路径就没有可比对的基准（会白重渲染一次）。
+    _lastRenderedPayload = JSON.stringify({
+      scope:scopeKey, data:cacheableSnapshot(cloudData), u:userDataFingerprint() });
     hideAppSkeleton();
     updateModeBadge();
     // ⚠️ 这里**不要**再写 syncHint —— loadCloudScoped 已经写好了「✓ 已载入云端数据…」
@@ -1751,6 +2014,257 @@ function applyCloudKeywordStore(){
 /** 正在飞行的「按维度拉取」请求，key = query string（并发去重用） */
 const _scopedInflight = new Map();
 
+/* --------------------------------------------------------------------------
+   客户端缓存的读写（配合顶部 0.6 节的 IndexedDB 封装）
+   -------------------------------------------------------------------------- */
+
+/** 可以落盘的字段（顶层）。
+ *  ⚠️ 这份白名单是**红线本身**：`students` / `history` 不在里面，
+ *     所以「用户自己的数据永不缓存」这件事是**结构上**保证的，不靠调用者自觉。
+ *     加字段前先问一句：这是「管理员维护的全局静态数据」，还是「用户自己的数据」？ */
+const CACHEABLE_KEYS = ['categories','categoryKeywords','textbooks','chapters',
+  'stage','subject','hasTextbook','selectedTextbookId','selectedChapterId','chapterKeywordCount'];
+
+/** 本次进入工具时读到的缓存条目（命中才有值）。版本号是它的核心字段。 */
+let _cacheEntry = null;
+/** 最近一次「真实请求」是否成功（用于区分「拉新成功」与「只有缓存可用」） */
+let _lastFreshOk = false;
+/** 最近一次**已经画到 DOM 上**的那份数据（`{scope, data}` 的 JSON 串）。
+ *  用途只有一个：后台核对回来的新数据与它逐字节比对，
+ *  **相同就一行 DOM 都不动**（这是「不闪烁」的全部实现）。 */
+let _lastRenderedPayload = '';
+/** 本次**首屏**是否由缓存穿透而来（决定提示语口径：
+ *  穿透的必须明说「本机缓存」，否则就成了「看起来成功」）。 */
+let _firstPaintFromCache = false;
+/** 诊断计数（只增不减，测试用）：
+ *    `checks`  = 真实请求成功了几次（缓存命中也算 —— 那是「确实拉新了」的证据）
+ *    `rerenders` = 因「新数据与已渲染内容不一致」而重渲染了几次
+ *  两条放在一起就能回答最关键的那个问题：
+ *  **「数据没变的时候，到核对为止到底有没有再动过 DOM」** —— `checks` 涨而 `rerenders` 不涨，
+ *  就是我们要的「不闪烁」。（不这么量的话，只能靠肉眼盯着截图猜。） */
+let _bgChecks = 0, _bgRerenders = 0;
+
+/** 从响应里裁出可落盘的部分 */
+function cacheableSnapshot(d){
+  const out = {};
+  CACHEABLE_KEYS.forEach(k=>{ if(d[k] !== undefined) out[k] = d[k]; });
+  return out;
+}
+
+/**
+ * 读缓存并**立即**灌进现有渲染逻辑。
+ *
+ * 返回 'rendered' = 命中且已渲染（调用方不要再显示骨架屏）；
+ *      'stale'    = 命中但超过 24 小时（已渲染，但调用方要提示「可能不是最新」）；
+ *      'miss' / 'unavailable' = 没得用，走原来的骨架屏流程。
+ *
+ * ⚠️ 这里**只能**恢复静态数据：`students` / `history` 保持为空，
+ *    由随后那次真实请求填。所以「档案与历史永远实时」也是结构上的保证。
+ */
+function applyCachedSnapshot(entry){
+  if(!entry || !entry.value) return 'miss';
+  try{
+    const v = entry.value;
+    if(!Array.isArray(v.categories) || !v.categoryKeywords) return 'miss';
+    // 一个「看起来完整」的快照才敢拿去渲染；否则宁可空着走骨架屏
+    // （空的分类列表渲染出来就是「这个学段/科目下还没有内容词」，那是**错**的信息）
+    if(!Object.keys(v.categoryKeywords).length) return 'miss';
+
+    cloudData = {
+      ok:true,
+      // 先按最保守的假设渲染：不是管理员（真实响应到了再按服务端的答案覆盖）
+      isAdmin:false,
+      phrases: [],
+      students: {},      // 红线：绝不来自缓存
+      history: {},       // 红线：绝不来自缓存
+      stage: v.stage ?? null,
+      subject: v.subject ?? null,
+      hasTextbook: !!v.hasTextbook,
+      categories: v.categories,
+      categoryKeywords: v.categoryKeywords,
+      textbooks: v.textbooks || [],
+      chapters: v.chapters || [],
+      selectedTextbookId: v.selectedTextbookId ?? null,
+      selectedChapterId: v.selectedChapterId ?? null,
+      chapterKeywordCount: v.chapterKeywordCount ?? 0,
+      fromCache: true
+    };
+    _cloudBooted = true;
+    applyCloudKeywordStore();
+    renderTextbookSelect(); renderGenerate(); renderManage(); renderPhrases();
+    // 档案 / 历史**不渲染** —— 缓存里根本没有它们（renderStuList / renderHist
+    // 会画出「没有学生」，那是错的信息）。它们等随后那次真实请求回来再画。
+    // ⚠️ 这里也**故意不**设置 _lastRenderedPayload：随后那次真实请求必须走一次
+    //    「逐字节比对」的流程，不同就静默替换。若这里把 payload 记成「已渲染」，
+    //    比对就会把真实数据当成「没变化」而漏掉替换。
+    _lastRenderedPayload = '';
+    _firstPaintFromCache = true;
+    window.__fbClientCacheState = {
+      usedCache:true, cacheEntryVersion:entry.version ?? null,
+      cacheFetchedAt:entry.fetchedAt ?? null, lastFreshOk:false, firstPaintFromCache:true,
+      checks:_bgChecks, rerenders:_bgRerenders
+    };
+    return cacheIsFresh(_cacheEntry) ? 'rendered' : 'stale';
+  }catch(e){
+    return 'miss';   // 缓存内容坏了就当作没有，绝不因为缓存把工具弄坏
+  }
+}
+
+/** 缓存命中、但还没等到后台核对时先写一条提示（真实请求回来后会被覆盖） */
+function showCacheHint(entry, stale){
+  const sh = document.getElementById('syncHint');
+  if(!sh) return;
+  sh.textContent = stale
+    ? cacheHintText(entry)
+    : '⚡ 已用本机缓存立即显示，正在后台核对最新数据…';
+}
+
+/** 缓存命中时的提示语（**不能**盖掉真实请求成功后的那条提示） */
+function cacheHintText(entry){
+  if(entry && entry.fetchedAt && (Date.now() - entry.fetchedAt) > CLIENT_STALE_HINT_MS){
+    const days = Math.floor((Date.now() - entry.fetchedAt) / 86400000);
+    return '⚠️ 显示的是本机缓存（' + (days >= 1 ? days + ' 天前' : '超过 24 小时前')
+      + '下载），数据可能不是最新 —— 你的档案与历史仍是实时的';
+  }
+  return '⚡ 已用本机缓存立即显示，正在后台核对最新数据…';
+}
+
+/** 让缓存条目「新鲜度」刷新（确认这份缓存与服务器一致之后调用）。
+ *  ⚠️ 这里**要**改 `fetchedAt`：它现在的含义是
+ *     「最后一次被确认是最新的时刻」——刚刚核对成功了，就是此刻。
+ *     核对失败时不调用它，时间戳原封不动，于是「>24 小时没能核对上」那条提示
+ *     会在下次打开时照常出现。 */
+function rememberCacheFreshness(){
+  if(!_cacheEntry || !_cacheEntry.key) return;
+  _cacheEntry.fetchedAt = Date.now();
+  _cacheEntry.savedAt = Date.now();
+  cacheTouch(_cacheEntry.key);
+}
+
+/* --------------------------------------------------------------------------
+   渲染与提示的小工具（真实请求与缓存渲染共用，避免两处逻辑走偏）
+   -------------------------------------------------------------------------- */
+
+/** 真实数据到达后的整块重渲染（顺序沿用 P4 定下的那一套） */
+function rerenderCloudViews(){
+  renderStuList(); renderHist(); renderPhrases(); renderManage();
+  renderTextbookSelect(); renderGenerate();
+}
+
+/** 只重渲染「用户自己的数据」相关的那两块（档案 / 历史）。
+ *  它们**永远**不走缓存，所以每次真实响应都必须刷新；
+ *  但刷新它们不会引起「关键词网格」那种整块重画的感觉，代价也小。 */
+function rerenderUserViews(){
+  renderStuList(); renderHist();
+}
+
+/** 用户数据指纹：只用「渲染出来的东西」参与比对，不用完整对象
+ *  （`students[name].updated_at` 之类不影响显示的字段变了不该引起重渲染）。 */
+function userDataFingerprint(){
+  return JSON.stringify({
+    s: Object.keys(students || {}),
+    h: Object.keys(history || {}).map(n=>(history[n]||[]).length)
+  });
+}
+
+/** 把「✓ 已载入云端数据：高中 · 数学，共 N 个关键词」这类提示写出去 */
+function writeScopedHint(stage, subject, tb, ch, d, kind){
+  const sh = document.getElementById('syncHint');
+  if(!sh) return;
+  const total = Object.keys(d.categoryKeywords||{}).reduce((n,k)=>n+(d.categoryKeywords[k]||[]).length,0);
+  const stageName = (STAGES.find(x=>x.code===stage)||{}).name || '';
+  const extra = (ch && (d.chapters||[]).length) ? '（已限定章节）' : (tb ? '（已限定教材）' : '');
+  const base = '✓ 已载入云端数据：' + (stageName ? stageName + ' · ' : '')
+    + (SUBJECT_NAME[subject] || subject) + extra + '，共 ' + total + ' 个关键词';
+  if(kind === 'cacheReplaced'){
+    // ★ 这次打开命中了缓存，但**服务端版本号变了**（管理员改过静态表）：
+    //   刚才那一屏是旧缓存，现在已经被新版静默替换掉了。
+    //   ⚠️ 必须明说这件事。诚实是这里的硬要求：显示过一瞬旧内容就要认，
+    //      不能只写「已载入云端数据」让用户以为这一路都是新的。
+    sh.textContent = base + '（此前显示的是本机缓存，服务端已更新，画面已刷新）';
+    return;
+  }
+  if(kind === 'cached'){
+    // 命中缓存，且后台核对**确认版本没变**（内容确实是最新的）。
+    sh.textContent = base + '（本机缓存，已核对最新数据）';
+    return;
+  }
+  sh.textContent = base;
+}
+
+/** 渲染完把「这份内容对应哪份数据」记下来 —— 之后逐字节比对用它判断要不要重渲染。
+ *  ⚠️ **用户自己的数据（档案/历史）必须一起进这个指纹**，否则「静态部分没变」
+ *     会被误当成「什么都不用刷新」，那就会出现「刚存的档案在这个页面看不到」。
+ *     把它们纳入指纹后，判断就退回成一句最简单的话：
+ *     **画的东西和刚拿到的数据一模一样 → 不动 DOM。** */
+function rememberRenderedPayload(scopeKey, d){
+  _lastRenderedPayload = JSON.stringify({ scope:scopeKey, data:cacheableSnapshot(d), u:userDataFingerprint() });
+}
+
+/** 提示与新鲜度的判据：**只有「真实拉取成功」或者「后台核对成功」才算新鲜**。
+ *  ⚠️ 不能只看时间戳：命中缓存后那次后台核对如果**失败**，缓存内容没变、
+ *     但也不能算新鲜 —— 必须继续提示「可能不是最新」。
+ *     （本轮踩过：只用 `fetchedAt` 判断时，一条「只写了、从没核对成功过」的
+ *       缓存永远显得新鲜，提示语永远不会出现。） */
+function cacheIsFresh(entry){
+  if(!entry) return false;
+  if(_lastFreshOk) return true;
+  // ⚠️ 判据是「**超过 24 小时没能核对上**」，所以这里必须是 `>` 而不是 `<`：
+  //    写成「在 TTL 内就算新鲜」是错的 —— 核对失败时时间戳不会推进，
+  //    于是时间越久反而越「新鲜」，提示永远不会出现（本轮就是先写错了一版）。
+  return !!(entry.fetchedAt && (Date.now() - entry.fetchedAt) <= CLIENT_STALE_HINT_MS);
+}
+
+/** 这条缓存的「有效新鲜时间」：核对成功过就用此刻，否则用原始拉取时间 */
+function effectiveFetchedAt(entry){
+  return _lastFreshOk ? Date.now() : ((entry && entry.fetchedAt) || Date.now());
+}
+
+/** 落盘：只存静态字段，并记下服务端版本号。
+ *
+ *  `fetchedAt` 的含义是「这份缓存**最后一次被确认是最新的**是什么时候」：
+ *    · 这一次真实拉取成功，或者刚刚命中缓存后后台核对成功 → 记此刻；
+ *    · 命中缓存但核对还没回来 / 核对失败 → **保留原来那个时间戳**，
+ *      否则「超过 24 小时没能核对上」这条提示会被一次次命中悄悄抹掉。 */
+function saveScopeToCache(scopeKey, d, stage, subject){
+  if(_cacheDisabled) return;
+  const value = cacheableSnapshot(d);
+  const version = d.dataVersion ?? null;
+  const fetchedAt = (_lastFreshOk || !_cacheEntry || _cacheEntry.key !== scopeKey)
+    ? Date.now()
+    : (_cacheEntry.fetchedAt || Date.now());
+  cachePut(scopeKey, value, version, fetchedAt).then(ok=>{
+    if(ok) _cacheEntry = { key:scopeKey, value:value, version:version,
+                           fetchedAt:fetchedAt, savedAt:Date.now() };
+  });
+}
+
+/** 后台重拉（缓存命中路径用）：
+ *  ⚠️ 它**必须**仍然走一次真实的 `loadCloudScoped()` —— 也就是「先显示缓存」
+ *     绝不等于「不再拉新」。拉回来之后要不要动 DOM，由 loadCloudScoped 里的
+ *     逐字节比对决定（相同 → 一行都不动）。这里只负责收尾提示。 */
+function refreshInBackground(){
+  const done = ()=>{
+    const st = window.__fbClientCacheState || {};
+    st.lastFreshOk = !!_lastFreshOk;
+    st.firstPaintFromCache = _firstPaintFromCache;
+    st.checks = _bgChecks;
+    st.rerenders = _bgRerenders;
+    window.__fbClientCacheState = st;
+    if(_lastFreshOk){
+      rememberCacheFreshness();       // 核对成功 = 这份缓存确实是最新的，重置新鲜度
+    }else{
+      showCacheStaleHint('后台核对失败');
+    }
+  };
+  return loadCloudScoped().then(done, done);
+}
+
+function showCacheStaleHint(reason){
+  const sh = document.getElementById('syncHint');
+  if(sh) sh.textContent = '⚠️ 当前显示本机缓存（' + reason + '），数据可能不是最新；你的档案与历史仍是实时的';
+}
+
 /* 按当前学段/科目/教材/章节拉取云端关键词 */
 function loadCloudScoped(){
   if(!NEXT_MODE) return Promise.resolve();
@@ -1762,17 +2276,56 @@ function loadCloudScoped(){
   if(tb) qs.set('textbook', tb);
   if(ch) qs.set('chapter', ch);
   const sh = document.getElementById('syncHint');
-  if(sh) sh.textContent = '⏳ 正在载入该学段/科目的关键词…';
-
+  // ⚠️ 缓存 key 与请求参数共用 `_scopeKeyOf()` 的结果（见那里注释：
+  //    「拼法和请求必须是同一处代码」，否则会错位到查不出来）
+  const dedupeKey = _scopeKeyOf();
+  if(qs.toString() !== dedupeKey){
+    // 理论上不可能发生；真发生说明两处拼法已经漂移，宁可多查一次也不能用错 key
+    console.warn('[feedback] scope key 漂移，已按请求参数为准：', qs.toString(), '!=', dedupeKey);
+  }
   // 并发去重：同一组参数若已有请求在飞，就直接复用那一个。
   // 初始化时 fillSubjectSelect / onScopeChanged 可能连续触发，没有这层就会重复请求。
-  const dedupeKey = qs.toString();
   if(_scopedInflight.has(dedupeKey)) return _scopedInflight.get(dedupeKey);
 
-  const p = fetch('/api/feedback/data?' + qs.toString(), {credentials:'same-origin', cache:'no-store'})
+  const p = fetch('/api/feedback/data?' + dedupeKey, {credentials:'same-origin', cache:'no-store'})
     .then(r=> r.ok ? r.json() : null)
     .then(d=>{
-      if(!d || !d.ok){ if(sh) sh.textContent = '⚠️ 关键词载入失败，请刷新重试'; return; }
+      if(!d || !d.ok){
+        _lastFreshOk = false;
+        if(_cacheEntry && _cloudBooted) showCacheStaleHint('后台核对失败');
+        else if(sh) sh.textContent = '⚠️ 关键词载入失败，请刷新重试';
+        return;
+      }
+      _lastFreshOk = true;
+      _bgChecks++;
+      // ---------- 身份与徽章：真实响应一到就定下来 ----------
+      // ⚠️ 这一条**必须**在这里（而不是只在骨架屏那条路径的末尾）：
+      //    缓存命中路径会在拿到数据前就 `return`，徽章会永远停在
+      //    「⏳ 正在载入…」—— 那是个会写进截图的假象（本轮实测踩到：
+      //    徽章一直是载入中，而内容其实早就好了）。
+      API.mode = 'next';
+      API.isAdmin = !!d.isAdmin;
+      updateModeBadge();
+      // 「☁️ 云端版 / 云端版（管理员）」那一行同理：首屏按最保守假设写的
+      // （isAdmin=false），这里按服务端的答案纠正。
+      {
+        const ln = document.getElementById('serverLine');
+        if(ln) ln.textContent = API.isAdmin
+          ? '☁️ 云端版（管理员）— 关键词库全员共享，可在此维护'
+          : '☁️ 云端版 — 关键词库来自服务器；档案与历史保存在你的账号下';
+      }
+      // ---------- 版本号核对（客户端缓存唯一需要的失效信号） ----------
+      // 版本号与本地缓存不一致 ⇒ 静态数据被后台改过（管理员编辑了关键词/教材/分类），
+      // 本地那份整批作废：**先清掉**，避免下次又拿它穿透。
+      // ⚠️ 诚实性说明：首屏可能已经用这份旧缓存画过一瞬（版本号只有真实响应里才有，
+      //    无法提前判断）。所以这里除清缓存外，还要**静默替换**成新内容，
+      //    并把「此前显示的是本机缓存」写进提示语 —— 绝不能让用户以为一路都是新的。
+      let versionChanged = false;
+      if(_cacheEntry && _cacheEntry.version !== d.dataVersion){
+        versionChanged = true;
+        cacheClear(_cacheEntry.key);
+        _cacheEntry = null;
+      }
       cloudData = d;
       applyScopedBase(d);        // phrases / students / history 与关键词同一个响应，顺手写入
       applyCloudKeywordStore();
@@ -1780,16 +2333,51 @@ function loadCloudScoped(){
       //    （关键词 + 教材下拉 + 档案 + 历史一起），避免「同一屏被渲染两遍」的闪烁。
       //    这里的渲染只服务于**后续**的维度切换（换学段/科目/教材）。
       if(_cloudBooted){
-        renderTextbookSelect();
-        renderGenerate();
+        // ★ 关键一步（「缓存显示 vs 最新数据」的闪烁就在这里解决）：
+        //   把「刚拿到的数据」与「已经画在屏幕上的那份」逐字节比对，
+        //   **一模一样就一行 DOM 都不动**。管理员没改过数据时这是绝大多数情况。
+        //
+        //   指纹里同时包含静态数据与用户数据（见 rememberRenderedPayload），
+        //   所以这一条判断可以放心地当「要不要重渲染」的唯一依据：
+        //     · 静态变了（管理员改了关键词/教材）→ changed=true → 整块静默替换
+        //     · 用户数据变了（刚存了档案/历史）  → changed=true → 整块刷新
+        //     · 只有「不影响显示的字段」变了     → changed=false → 不动（这正是我们要的）
+        const before = _lastRenderedPayload;
+        // ⚠️ 这里的 scope 必须与「记下指纹」时**同一个值**（都用 `_scopeKeyOf()`）。
+        //    这一轮就踩过：比对用 `dedupeKey`、登记用 `scopeKey`，
+        //    于是同一份数据也被判成「变了」，白重渲染一次（正是要消灭的闪烁）。
+        const after = JSON.stringify({ scope:_scopeKeyOf(), data:cacheableSnapshot(d), u:userDataFingerprint() });
+        if(after !== before){
+          rerenderCloudViews();
+          _bgRerenders++;
+          rememberRenderedPayload(_scopeKeyOf(), d);
+          // 若首屏用的是缓存，这一次就是「静默替换」：不弹 toast、不提示，只是内容悄悄对齐。
+          // 提示语在下面对 writeScopedHint 的调用里统一收口。
+        }
       }
-      const total = Object.keys(d.categoryKeywords||{}).reduce((n,k)=>n+(d.categoryKeywords[k]||[]).length,0);
-      const stageName = (STAGES.find(x=>x.code===d.stage)||{}).name || '';
-      const extra = (ch && (d.chapters||[]).length) ? '（已限定章节）' : (tb ? '（已限定教材）' : '');
-      if(sh) sh.textContent = '✓ 已载入云端数据：' + (stageName ? stageName + ' · ' : '')
-        + (SUBJECT_NAME[subject] || subject) + extra + '，共 ' + total + ' 个关键词';
+      // 落盘一份「只有静态数据」的快照，供下次打开秒开。
+      // ⚠️ 只存 CACHEABLE_KEYS 里的字段 —— students / history / isAdmin / userId / email
+      //    绝不落盘（红线，见顶部 0.6 节）。
+      saveScopeToCache(dedupeKey, d, stage, subject);
+      // 提示语的口径（这段最容易写成「看起来成功」，务必按下面的规则改）：
+      //   · 首屏是缓存穿透的 ⇒ 明说「本机缓存，已核对最新数据」
+      //   · 首屏是缓存穿透的、但版本变了 ⇒ 明说「此前显示的是本机缓存，画面已刷新」
+      //   · 首屏是骨架屏来的 ⇒ 沿用原来的「✓ 已载入云端数据：…」措辞
+      //   （**别改** '✓ 已载入云端数据' 这串字：verify-checklist / paper-regression /
+      //     step7-ui 三个套件按它断言。）
+      //   ⚠️ 判定必须用 `_firstPaintFromCache` 这个**首屏快照**，不能用 `_cacheEntry`——
+      //      后者刚被 saveScopeToCache 换成新条目，比的是「有没有缓存」而不是「首屏用了缓存」。
+      //   版本变了就落到 `_firstPaintFromCache` 分支（提示里那句「此前显示的是本机缓存」）。
+      writeScopedHint(stage, subject, tb, ch, d,
+        _firstPaintFromCache ? (versionChanged ? 'cacheReplaced' : 'cached') : 'fresh');
     })
-    .catch(()=>{ if(sh) sh.textContent = '⚠️ 关键词载入失败（网络错误）'; })
+    .catch(()=>{
+      _lastFreshOk = false;
+      // 缓存命中过 ⇒ 屏幕上那份内容还在，只是没能核对上：保持显示 + 明确说清。
+      // 没缓存 ⇒ 沿用原来的「载入失败」措辞（三个老套件按它断言）。
+      if(_cacheEntry && _cloudBooted) showCacheStaleHint('后台核对失败');
+      else if(sh) sh.textContent = '⚠️ 关键词载入失败（网络错误）';
+    })
     .finally(()=>{ _scopedInflight.delete(dedupeKey); });
 
   _scopedInflight.set(dedupeKey, p);

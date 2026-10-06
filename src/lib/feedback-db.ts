@@ -118,6 +118,46 @@ const historyCache = createTtlCache(USER_TTL_MS, USER_CACHE_MAX_USERS);
 /** 关键词缓存 —— 沿用最早那套（只缓存「不带 category 的按维度查询」，后台查的那类不缓存） */
 const keywordCache = createTtlCache(STATIC_TTL_MS);
 
+// ============================================================
+// 数据版本号：随响应下发给浏览器，供**客户端缓存**判断「该不该丢」
+// ============================================================
+
+/** 版本号的时间粒度：与服务端静态表 TTL（`STATIC_TTL_MS` = 10 分钟）对齐 */
+const DATA_VERSION_BUCKET_MS = 600_000;
+
+/**
+ * 当前数据版本号。**种子按 10 分钟分桶**，每次主动失效再 +1。
+ *
+ * 为什么不用「查一次 `MAX(updated_at)` 拿真实版本」：
+ *   那要给每个请求多付一次 Supabase 往返 —— 而这个项目所有性能工作的核心结论就是
+ *   **要减的是调用次数**（香港→新加坡每次 400–500ms）。版本号只是**提示**，
+ *   不值得为它买一次外网往返。
+ *
+ * 为什么种子是「时间桶」而不是固定 0：
+ *   · 同一个 10 分钟桶内启动的多个实例，版本号**天然相同** ⇒ 客户端在实例间漂移时
+ *     不会因为版本号不同而白白清缓存；
+ *   · 重启/重新部署后种子稳定（桶内不变），不会像「从 1 开始」那样每次部署都让
+ *     所有客户端清一遍缓存；
+ *   · 10 分钟正好等于静态表 TTL —— 也就是说「版本号没变」蕴含
+ *     「数据要么没变、要么和 TTL 兜底口径一致」。
+ *
+ * ⚠️ **已知局限（安全方向，不是坑）**：跨 10 分钟桶启动的两个实例版本号可能不同，
+ *    客户端遇到不同的版本号会**清掉本地缓存重拉一次**（web 端每个维度一次，
+ *    push 端每个维度一次）。宁可多拉，不可用旧。真要做到全局一致只能查库，
+ *    代价见上 —— 不做。
+ */
+let dataVersion = Math.floor(Date.now() / DATA_VERSION_BUCKET_MS);
+
+/** 当前数据版本号（route 把它放进响应；客户端拿它对比本地缓存） */
+export function getDataVersion(): number {
+  return dataVersion;
+}
+
+/** 数据一变就 +1，使浏览器端的缓存版本对不上（本进程立即生效） */
+function bumpDataVersion() {
+  dataVersion++;
+}
+
 /** 清掉关键词缓存（改过关键词表之后调用；本进程立即生效）
  *
  *  名字用 invalidate* 而不是 revalidate*，是为了跟 Next 的 revalidatePath /
@@ -126,6 +166,7 @@ const keywordCache = createTtlCache(STATIC_TTL_MS);
  *  各自的 revalidate()（所有写操作都会经过它）。 */
 export function invalidateKeywords() {
   clearCache(keywordCache);
+  bumpDataVersion();
 }
 
 /** 清掉「静态表」缓存：分类 / 教材 / 章节 / 短语（后台改了这些表之后调用） */
@@ -134,6 +175,7 @@ export function invalidateStaticTables() {
   clearCache(textbooksCache);
   clearCache(chaptersCache);
   clearCache(phrasesCache);
+  bumpDataVersion();
 }
 
 /** 清掉**整个**「学生档案」缓存（写完/删完档案后调用；本进程立即生效）
