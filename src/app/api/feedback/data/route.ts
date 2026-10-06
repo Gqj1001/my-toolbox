@@ -3,6 +3,7 @@ import {
   assembleCategoryKeywords,
   getCategories,
   getChapters,
+  getChaptersByScope,
   getChaptersByTextbookIds,
   getHistory,
   getKeywords,
@@ -101,6 +102,8 @@ export async function GET(request: NextRequest) {
     // 而前端只有「已选中那本」会用到 topics（selectedBookTopics()），
     // 教材下拉只用 version / name / id —— 所以其余教材的章节名是白拿的。
     // 例外：没指定册次时，册次下拉仍需要各册的章节数，见下面 fallback。
+    // ⚠️ 现在按「学段|科目」取整片章节再挑出这一本（见 feedback-db 的注释）：
+    //    这样同一科目内换教材不再各自 miss 一次。
     const selectedBookChapters = textbookId ? await getChapters(textbookId) : [];
 
     const base = {
@@ -120,7 +123,12 @@ export async function GET(request: NextRequest) {
     if (!textbookId && textbooks.length) {
       // 只走一次查询：把该科目全部教材的章节一次取回，在内存里按教材分组。
       // 这样「不指定册次」时下拉仍有册次信息，且总请求数固定为 1（不是 N）。
-      const all = await getChaptersByTextbookIds(textbooks.map((t) => t.id));
+      // ⚠️ 直接传「学段+科目」给 getChaptersByScope：它跟上面 getChapters(选中那本)
+      //    共用同一份缓存，所以这里通常**一次查询都不用发**。
+      const all =
+        stage && subject
+          ? await getChaptersByScope(stage, subject)
+          : await getChaptersByTextbookIds(textbooks.map((t) => t.id));
       fallbackTopics = new Map();
       for (const ch of all) {
         const list = fallbackTopics.get(ch.textbook_id) ?? [];

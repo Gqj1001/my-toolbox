@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth-role";
 import { revalidateTools } from "@/lib/tools-db";
+import { invalidateUserRoles } from "@/lib/viewer";
 import { createClient } from "@/lib/supabase/server";
 import type { AccountStatus, PlanId } from "@/lib/membership-types";
 
@@ -189,6 +190,12 @@ function revalidateAll() {
   //    unstable_cache **数据缓存**（两套缓存）。会员等级会影响「谁能看到哪些工具」，
   //    所以这里必须连数据缓存一起清，否则改完会员最多 30 秒后才生效。
   revalidateTools();
+  // ⚠️ 同理：getViewer() 现在把 user_roles 那一行也做了 30 秒进程内缓存
+  //    （省掉每次请求一次外网往返）。这里是**唯一**会改会员/角色/封禁状态的代码路径，
+  //    所以必须在这里清掉 —— 否则「刚开通的会员」要等 30 秒才能用 AI，
+  //    被封禁的人也要等 30 秒才被拦住（用户体验和安全都不接受）。
+  //    只有绕过本文件直接改库（Supabase SQL Editor）才需要等 TTL。
+  invalidateUserRoles();
 }
 
 function denyFor(reason: "unauthenticated" | "forbidden"): ActionResult {

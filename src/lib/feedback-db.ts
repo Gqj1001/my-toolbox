@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { cached, clearCache, createTtlCache, warmInBackground } from "@/lib/ttl-cache";
 import {
   CATEGORY_FALLBACK,
   isChapterCategory,
@@ -88,18 +89,34 @@ const KEYWORD_COLUMNS =
   "id, subject, category, keyword, sort_order, stage, textbook_id, chapter_id, chapter_name";
 
 /**
- * 关键词库的进程内 TTL 缓存（30 秒）。
+ * 缓存有效期（毫秒）。
  *
- * 为什么只缓存「不带 category 的按维度查询」：那是工具页每次打开都要跑的那条，
- * 且结果**全用户共享**（RLS 是 using(true)，不区分用户），最适合缓存。
- * 带 category 的查询（管理后台用）不走缓存，避免后台改动看不到。
+ * 静态表一律 **10 分钟**：它们**只有后台会改**，而两个 admin actions 的 `revalidate()`
+ * 里都会调 `invalidateStaticTables()` / `invalidateKeywords()`，所以「改完即生效」
+ * 不靠 TTL —— TTL 只是**兜底**（防止有人绕过代码路径，比如在 Supabase SQL Editor 里直接改）。
+ * 既然只是兜底，就给长一点：短 TTL 会让「用户隔一会儿再用」白白冷一次。
  *
- * ⚠️ 不用 `unstable_cache`：它在 Next 16.3.8 下会让函数返回空数组（tools 表已实测踩过）。
- * 缓存键用「被 scope 实际影响的过滤条件」拼出来，避免不同 scope 互相污染。
+ * 按用户表保持 **25 秒**：用户自己的数据，他改完必须立刻看到（代码里已经主动失效），
+ * TTL 只用来兜「另一个标签页/另一台设备改的」，短一点更稳。
  */
-const KEYWORD_TTL_MS = 30_000;
-const keywordCache = new Map<string, { rows: KeywordRow[]; at: number }>();
-const keywordInflight = new Map<string, Promise<KeywordRow[]>>();
+const STATIC_TTL_MS = 600_000;
+const USER_TTL_MS = 25_000;
+
+/** 按用户缓存最多留几个用户，防止长期运行内存无限涨 */
+const USER_CACHE_MAX_USERS = 200;
+
+/** 静态表缓存：categories（分类）/ phrases（短语）各一份（结果与维度无关） */
+const categoriesCache = createTtlCache(STATIC_TTL_MS);
+const phrasesCache = createTtlCache(STATIC_TTL_MS);
+/** 静态表缓存：textbooks —— **只有一条 key**（见下面 getTextbooks 的注释） */
+const textbooksCache = createTtlCache(STATIC_TTL_MS);
+/** 静态表缓存：chapters —— key 是「学段|科目」（见下面 getChapters* 的注释） */
+const chaptersCache = createTtlCache(STATIC_TTL_MS);
+/** 按用户缓存：students / history（key 里带 user_id，限量） */
+const studentsCache = createTtlCache(USER_TTL_MS, USER_CACHE_MAX_USERS);
+const historyCache = createTtlCache(USER_TTL_MS, USER_CACHE_MAX_USERS);
+/** 关键词缓存 —— 沿用最早那套（只缓存「不带 category 的按维度查询」，后台查的那类不缓存） */
+const keywordCache = createTtlCache(STATIC_TTL_MS);
 
 /** 清掉关键词缓存（改过关键词表之后调用；本进程立即生效）
  *
@@ -108,118 +125,15 @@ const keywordInflight = new Map<string, Promise<KeywordRow[]>>();
  *  调用点：admin/feedback-keywords/actions.ts 与 admin/feedback-candidates/actions.ts
  *  各自的 revalidate()（所有写操作都会经过它）。 */
 export function invalidateKeywords() {
-  keywordCache.clear();
-  keywordInflight.clear();
+  clearCache(keywordCache);
 }
-
-// ============================================================
-// 通用进程内 TTL 缓存（静态表 + 按用户表共用同一套写法）
-// ============================================================
-
-/**
- * 缓存有效期（毫秒）。
- *   · 静态表：全用户共享、极少变（分类 8 行 / 短语 10 行 / 教材 219 行 / 章节按需），30 秒足够；
- *   · 按用户表：用户自己刚存完就调 invalidate*，所以 TTL 只兜「别的标签页/别的设备改的」，
- *     取 25 秒（perf-notes.md 的口径是 20–30 秒）。
- */
-const STATIC_TTL_MS = 30_000;
-const USER_TTL_MS = 25_000;
-
-/** 按用户缓存最多留几个用户，防止长期运行内存无限涨 */
-const USER_CACHE_MAX_USERS = 200;
-
-/**
- * ⚠️ 不要用 `unstable_cache`（2026-10 实测踩过，tools 表那次）：
- *    在 Next 16.3.8 下它会**每次都返回空数组、也从不查库**，
- *    页面不报错、只是**静默地什么都没有**，肉眼根本看不出来。
- *    所以这里一律用显式的进程内 Map 缓存 —— 写法与上面的 keywordCache 一致。
- *
- * 语义：命中且未过期 → 直接返回不查库；过期 → 重查并刷新；
- *      invalidate* → 立即清掉（本实例立即生效）。
- *
- * 局限：每个服务端实例各一份；生产是多实例时，其它实例最多滞后一个 TTL。
- *      对本项目（共享静态表 + 用户自己的几十行数据）可接受。
- */
-type TtlCache = {
-  /** 已缓存的行 */
-  entries: Map<string, { rows: unknown; at: number }>;
-  /** 并发去重：同一瞬间多个请求共用同一个 in-flight promise，只查一次库 */
-  inflight: Map<string, Promise<unknown>>;
-  ttlMs: number;
-  /** 缓存 key 数量上限（0 = 不限）。只有按用户的缓存需要限量。 */
-  maxKeys: number;
-};
-
-function makeCache(ttlMs: number, maxKeys = 0): TtlCache {
-  return { entries: new Map(), inflight: new Map(), ttlMs, maxKeys };
-}
-
-/** 超出上限时按「最久没被写入」淘汰一条；在飞的条目不动，避免丢掉正在等的 promise */
-function evictIfNeeded(cache: TtlCache) {
-  if (!cache.maxKeys || cache.entries.size < cache.maxKeys) return;
-  let oldestKey: string | null = null;
-  let oldestAt = Infinity;
-  for (const [key, entry] of cache.entries) {
-    if (cache.inflight.has(key)) continue;
-    if (entry.at < oldestAt) {
-      oldestAt = entry.at;
-      oldestKey = key;
-    }
-  }
-  if (oldestKey !== null) cache.entries.delete(oldestKey);
-}
-
-/**
- * 带 TTL 与并发去重的读取。
- *
- * `key` 必须只包含**真正影响结果的过滤条件**（否则不同维度会互相污染）；
- * 按用户的表必须把 `user_id` 拼进 key（RLS 只返回本人的行，共用 key 会串号）。
- *
- * `load` 抛异常或失败时不会把结果写进缓存，并且会清掉自己设的那条 in-flight promise
- * （只清「还是自己这条」的，避免把别人新发起的加载顶掉）—— 否则这个 key 会永久卡在
- * 「每次请求都共用一条已经失败的 promise」的状态。
- */
-async function cached<T>(cache: TtlCache, key: string, load: () => Promise<T>): Promise<T> {
-  const hit = cache.entries.get(key);
-  if (hit && Date.now() - hit.at < cache.ttlMs) return hit.rows as T;
-
-  const flying = cache.inflight.get(key);
-  if (flying) return flying as Promise<T>;
-
-  evictIfNeeded(cache);
-  const run: Promise<T> = load().then((rows) => {
-    cache.entries.set(key, { rows, at: Date.now() });
-    return rows;
-  });
-  cache.inflight.set(key, run as Promise<unknown>);
-  const clearInflight = () => {
-    if (cache.inflight.get(key) === (run as Promise<unknown>)) cache.inflight.delete(key);
-  };
-  void run.then(clearInflight, clearInflight);
-  return run;
-}
-
-/** 静态表缓存：categories / phrases 各一份（结果与维度无关） */
-const categoriesCache = makeCache(STATIC_TTL_MS);
-const phrasesCache = makeCache(STATIC_TTL_MS);
-/** 静态表缓存：textbooks 按「学段|科目」分开存 */
-const textbooksCache = makeCache(STATIC_TTL_MS);
-/** 静态表缓存：chapters 按「教材 id 列表」的 key 分开存 */
-const chaptersCache = makeCache(STATIC_TTL_MS);
-/** 按用户缓存：students / history（key 里带 user_id，限量） */
-const studentsCache = makeCache(USER_TTL_MS, USER_CACHE_MAX_USERS);
-const historyCache = makeCache(USER_TTL_MS, USER_CACHE_MAX_USERS);
 
 /** 清掉「静态表」缓存：分类 / 教材 / 章节 / 短语（后台改了这些表之后调用） */
 export function invalidateStaticTables() {
-  categoriesCache.entries.clear();
-  categoriesCache.inflight.clear();
-  textbooksCache.entries.clear();
-  textbooksCache.inflight.clear();
-  chaptersCache.entries.clear();
-  chaptersCache.inflight.clear();
-  phrasesCache.entries.clear();
-  phrasesCache.inflight.clear();
+  clearCache(categoriesCache);
+  clearCache(textbooksCache);
+  clearCache(chaptersCache);
+  clearCache(phrasesCache);
 }
 
 /** 清掉**整个**「学生档案」缓存（写完/删完档案后调用；本进程立即生效）
@@ -228,14 +142,39 @@ export function invalidateStaticTables() {
  *     所以别人会跟着多查一次库。方向是安全的（宁可多查、不会变旧），只是略有浪费。
  *     按用户的数据量很小（每人几十行），不值得为此引入 per-request 上下文。 */
 export function invalidateStudents() {
-  studentsCache.entries.clear();
-  studentsCache.inflight.clear();
+  clearCache(studentsCache);
 }
 
 /** 清掉**整个**「反馈历史」缓存（写完/删完历史后调用；本进程立即生效）；粒度说明同上 */
 export function invalidateHistory() {
-  historyCache.entries.clear();
-  historyCache.inflight.clear();
+  clearCache(historyCache);
+}
+
+// ============================================================
+// 失败兜底：缓存层「不缓存失败」，接口层「不因失败而 500」
+// ============================================================
+
+/**
+ * 把「查失败」翻译成「空结果」，让调用方优雅降级 —— 但**不会**把它写进缓存。
+ *
+ * 为什么两个都要（这是本文件最容易搞混的地方）：
+ *   · `cached()` 要求 `load` 失败时**抛异常**，这样失败不会进缓存 —— 避免
+ *     「一次瞬时故障」被放大成「TTL 时间内这页什么都没有」（`unstable_cache` 那个坑的形态）。
+ *   · 但抛出去会让 `/api/feedback/data` 直接 500、整页空白，比改动前更差
+ *     （改动前是「静默返回空」）。
+ *   所以：**缓存层保持干净（失败不落盘），接口层优雅降级（返回空）**。
+ *
+ * 实际效果：查失败时这一次请求拿到空（与改动前一致），**但下一次请求会重新查库**，
+ * 一旦数据库恢复立刻正常 —— 不会像缓存失败那样一直空到 TTL 过期。
+ */
+async function softFail<T>(label: string, run: () => Promise<T[]>): Promise<T[]> {
+  try {
+    return await run();
+  } catch (e) {
+    console.error(`[feedback] ${label} 查询失败，本次按空结果降级（未写入缓存）:`,
+      e instanceof Error ? e.message : e);
+    return [];
+  }
 }
 
 /**
@@ -282,26 +221,10 @@ function keywordCacheKey(scope: KeywordScope): string {
  * 已归档（archived_at 不为空）的行永远不返回。
  */
 export async function getKeywords(scope: KeywordScope = {}): Promise<KeywordRow[]> {
-  // 只有「工具页会用到、且结果与用户无关」的那类查询才走缓存（见 KEYWORD_TTL_MS 注释）。
-  const cacheable = !scope.category;
-  const key = cacheable ? keywordCacheKey(scope) : "";
-
-  if (cacheable) {
-    const hit = keywordCache.get(key);
-    if (hit && Date.now() - hit.at < KEYWORD_TTL_MS) return hit.rows;
-    const flying = keywordInflight.get(key);
-    if (flying) return flying;
-  }
-
-  const run = loadKeywords(scope).then((rows) => {
-    if (cacheable) keywordCache.set(key, { rows, at: Date.now() });
-    return rows;
-  }).finally(() => {
-    if (cacheable) keywordInflight.delete(key);
-  });
-
-  if (cacheable) keywordInflight.set(key, run);
-  return run;
+  // 只有「工具页会用到、且结果与用户无关」的那类查询才走缓存（见上面 STATIC_TTL_MS 注释）。
+  // 带 category 的查询是管理后台用的，不缓存 —— 否则后台改完关键词看不到效果。
+  if (scope.category) return softFail("关键词", () => loadKeywords(scope));
+  return softFail("关键词", () => cached(keywordCache, keywordCacheKey(scope), () => loadKeywords(scope)));
 }
 
 /** 实际查库（不含缓存） */
@@ -331,7 +254,7 @@ async function loadKeywords(scope: KeywordScope = {}): Promise<KeywordRow[]> {
 
   if (error) {
     console.error("[feedback] 读取关键词失败:", error.code, error.message);
-    return [];
+    throw new Error(`读取关键词失败: ${error.code} ${error.message}`);
   }
   return (data ?? []) as KeywordRow[];
 }
@@ -345,6 +268,8 @@ async function loadKeywords(scope: KeywordScope = {}): Promise<KeywordRow[]> {
  *    而且所有学段共用一份，比按 stage 分开存更省。
  */
 export async function getCategories(stage?: string | null): Promise<CategoryRow[]> {
+  // 读库失败时 loadCategories 自己会用 CATEGORY_FALLBACK 兜底（页面不空白），
+  // 所以这里不需要 softFail —— 它永远不会抛。
   const all = await cached(categoriesCache, "all", loadCategories);
 
   // 只保留「全学段通用」或「匹配当前学段」的分类
@@ -379,43 +304,131 @@ async function loadCategories(): Promise<CategoryRow[]> {
   return (data ?? []) as CategoryRow[];
 }
 
-/** 读取教材（可按学段/科目过滤）。静态表，按「学段|科目」分开缓存 30 秒。 */
+/**
+ * 读取教材（可按学段/科目过滤）。静态表，**整个表只有一条缓存 key**。
+ *
+ * ⚠️ 为什么是「一张表一条 key」，而不是「按学段|科目各一条」：
+ *    `feedback_textbooks` 只有 **219 行 / 24 KB**，而且下面这条查询**本来就没有
+ *    按 stage/subject 过滤**（把全表取回来再在内存里筛，这是原来就有的行为）。
+ *    按维度分 key 的话会有 **17 条**（线上实测 17 个「学段|科目」组合），
+ *    用户每换一个科目就是一次**全新 miss** —— 白付一次外网往返，而省下的那点内存
+ *    毫无意义。收敛成一条 key 之后，**换任何科目/学段都直接命中**（零代价）。
+ *
+ *    实测（2026-10）：换科目从 7 次出网降到 4 次出网。
+ */
 export async function getTextbooks(
   opts: { stage?: string | null; subject?: string | null } = {},
 ): Promise<TextbookRow[]> {
-  const key = `${opts.stage ?? "*"}|${opts.subject ?? "*"}`;
-  return cached(textbooksCache, key, () => loadTextbooks(opts));
+  const all = await softFail("教材", () => cached(textbooksCache, "all", loadTextbooks));
+  return all.filter(
+    (t) => (!opts.stage || t.stage === opts.stage) && (!opts.subject || t.subject === opts.subject),
+  );
 }
 
-/** 实际查库（不含缓存） */
-async function loadTextbooks(opts: {
-  stage?: string | null;
-  subject?: string | null;
-}): Promise<TextbookRow[]> {
+/** 实际查库（不含缓存，也不含 stage/subject 过滤） */
+async function loadTextbooks(): Promise<TextbookRow[]> {
   const supabase = await createClient();
-  let q = supabase.from("feedback_textbooks").select("id, stage, subject, version, name, sort_order");
-  if (opts.stage) q = q.eq("stage", opts.stage);
-  if (opts.subject) q = q.eq("subject", opts.subject);
 
-  const { data, error } = await q
+  const { data, error } = await supabase
+    .from("feedback_textbooks")
+    .select("id, stage, subject, version, name, sort_order")
     .order("version", { ascending: true })
     .order("sort_order", { ascending: true })
     .order("id", { ascending: true });
   if (error) {
     console.error("[feedback] 读取教材失败:", error.code, error.message);
-    return [];
+    throw new Error(`读取教材失败: ${error.code} ${error.message}`);
   }
   return (data ?? []) as TextbookRow[];
 }
 
-/** 读取某个教材下的章节。静态表，按教材 id 缓存 30 秒。 */
+/**
+ * 读取某个教材下的章节。
+ *
+ * 数据源与 `getChaptersByTextbookIds` **是同一份缓存**（按「学段|科目」），
+ * 这样「同一科目内换教材」不会各自 miss 一次。
+ * 但要先知道这本教材属于哪个「学段|科目」—— 从教材表（已缓存）里查，不额外查库。
+ */
 export async function getChapters(textbookId: number): Promise<ChapterRow[]> {
   if (!Number.isFinite(textbookId)) return [];
-  return cached(chaptersCache, `one:${textbookId}`, () => loadChapters(textbookId));
+  return softFail("章节（单本）", async () => {
+    const all = await loadAllTextbooks();
+    const book = all.find((t) => t.id === textbookId);
+    // 教材已被删除/查不到时，退回只查这一本（保证后台页面不出错）
+    if (!book) return loadChaptersByTextbookId(textbookId);
+    const rows = await getChaptersByScope(book.stage, book.subject);
+    return rows.filter((c) => c.textbook_id === textbookId);
+  });
 }
 
-/** 实际查库（不含缓存） */
-async function loadChapters(textbookId: number): Promise<ChapterRow[]> {
+/** 缓存里那份全量教材（给 `getChapters` 定位「学段|科目」用） */
+async function loadAllTextbooks(): Promise<TextbookRow[]> {
+  return cached(textbooksCache, "all", loadTextbooks);
+}
+
+/**
+ * 一次读取**某个「学段+科目」下全部教材**的章节（一条查询，内存里按教材分组）。
+ *
+ * ⚠️ 为什么按「学段|科目」而不是按「教材」分缓存：
+ *    按教材分会有 **64 条** key（线上 64 本教材有章节），用户在**同一科目内换教材**
+ *    （比如人教A版 必修一 → 必修二）就是一次全新 miss。按「学段|科目」只有 **17 条**，
+ *    而且这 17 条正好就是老师实际会来回切的粒度。
+ *
+ *    容量实测（2026-10）：最大的组合 senior|math 一次只有 **417 行 / 约 80 KB**，
+ *    远低于 PostgREST 的 1000 行上限 —— 不会截断。但为防以后数据涨上去静默丢数据，
+ *    仍带分页兜底（见下面 loadChaptersByScope）。
+ */
+export async function getChaptersByScope(
+  stage: string | null | undefined,
+  subject: string | null | undefined,
+): Promise<ChapterRow[]> {
+  if (!stage || !subject) return [];
+  return softFail("章节（按科目）", () =>
+    cached(chaptersCache, `${stage}|${subject}`, () => loadChaptersByScope(stage, subject)),
+  );
+}
+
+const CHAPTER_PAGE = 1000;
+/** 分页上限：正常一次就够（最大组合 417 行），只是防止异常数据把请求拖死 */
+const CHAPTER_MAX_PAGES = 5;
+
+/** 实际查库（按「学段|科目」；含分页兜底） */
+async function loadChaptersByScope(stage: string, subject: string): Promise<ChapterRow[]> {
+  const supabase = await createClient();
+
+  // 该科目下全部教材 id（教材表已缓存，这里不产生额外出网）
+  const books = await loadAllTextbooks();
+  const ids = books.filter((t) => t.stage === stage && t.subject === subject).map((t) => t.id);
+  if (!ids.length) return [];
+
+  const all: ChapterRow[] = [];
+  for (let page = 0; page < CHAPTER_MAX_PAGES; page++) {
+    const from = page * CHAPTER_PAGE;
+    const { data, error } = await supabase
+      .from("feedback_chapters")
+      .select("id, textbook_id, name, sort_order")
+      .in("textbook_id", ids)
+      .order("textbook_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + CHAPTER_PAGE - 1);
+
+    if (error) {
+      console.error("[feedback] 读取章节失败:", error.code, error.message);
+      // 已经拿到部分页时不要丢掉它们（下拉里少几本，好过整片空白）；
+      // 但**一页都没拿到**必须抛，否则「查失败」会被缓存成「这个科目没有章节」。
+      if (!all.length) throw new Error(`读取章节失败: ${error.code} ${error.message}`);
+      return all;
+    }
+    const rows = (data ?? []) as ChapterRow[];
+    all.push(...rows);
+    if (rows.length < CHAPTER_PAGE) break;
+  }
+  return all;
+}
+
+/** 兜底：只查某一本教材的章节（教材在缓存里查不到时用；不进缓存，避免污染按科目的 key） */
+async function loadChaptersByTextbookId(textbookId: number): Promise<ChapterRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_chapters")
@@ -426,30 +439,43 @@ async function loadChapters(textbookId: number): Promise<ChapterRow[]> {
 
   if (error) {
     console.error("[feedback] 读取章节失败:", error.code, error.message);
-    return [];
+    throw new Error(`读取章节失败: ${error.code} ${error.message}`);
   }
   return (data ?? []) as ChapterRow[];
 }
 
 /**
- * 一次读取多本教材的章节（用 in 过滤，**一条查询**）。
+ * 兼容旧签名：一次读取多本教材的章节（用 in 过滤）。
  *
- * 为什么需要它：从前接口对每本教材各查一次章节（N+1）——
- * senior+math 会发 29 次、senior 全科目会发 129 次，每次约 124ms。
- * 调用方拿回结果后按 textbook_id 自行分组即可。
- *
- * 静态表：按「教材 id 列表」缓存 30 秒。不指定册次时这个列表就是该科目**全部**教材，
- * 所以「物理高一没选册次」和「化学高一没选册次」各占一条缓存，互不干扰。
+ * ⚠️ 现在只是**把按「学段|科目」取回的结果在内存里按 id 过滤**（可能就一次查询都不用发），
+ *    所以「不指定册次」那条分支不会再各自 miss 一次。
+ *    调用方拿回结果后按 textbook_id 自行分组即可。
  */
 export async function getChaptersByTextbookIds(textbookIds: number[]): Promise<ChapterRow[]> {
   const ids = textbookIds.filter((n) => Number.isFinite(n));
   if (!ids.length) return [];
-  const key = `many:${ids.join(",")}`;
-  return cached(chaptersCache, key, () => loadChaptersByTextbookIds(ids));
+  return softFail("章节（批量）", () => loadChaptersByTextbookIds(ids));
 }
 
-/** 实际查库（不含缓存） */
+/** 实际实现：先按「学段|科目」整片命中，异常 id 才退回单独查 */
 async function loadChaptersByTextbookIds(ids: number[]): Promise<ChapterRow[]> {
+  const books = await loadAllTextbooks();
+  const wanted = new Set(ids);
+  const scopes = new Set(
+    books.filter((t) => wanted.has(t.id)).map((t) => `${t.stage}|${t.subject}`),
+  );
+
+  // 缓存里能找到「学段|科目」就整片命中；找不到的（异常 id）退回单独查
+  if (scopes.size) {
+    const out: ChapterRow[] = [];
+    for (const key of scopes) {
+      const [stage, subject] = key.split("|");
+      const rows = await getChaptersByScope(stage, subject);
+      out.push(...rows.filter((c) => wanted.has(c.textbook_id)));
+    }
+    return out;
+  }
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_chapters")
@@ -461,14 +487,14 @@ async function loadChaptersByTextbookIds(ids: number[]): Promise<ChapterRow[]> {
 
   if (error) {
     console.error("[feedback] 批量读取章节失败:", error.code, error.message);
-    return [];
+    throw new Error(`批量读取章节失败: ${error.code} ${error.message}`);
   }
   return (data ?? []) as ChapterRow[];
 }
 
-/** 读取短语。静态表（10 行），全站共享缓存 30 秒。 */
+/** 读取短语。静态表（10 行），全站共享缓存 10 分钟。 */
 export async function getPhrases(): Promise<PhraseRow[]> {
-  return cached(phrasesCache, "all", loadPhrases);
+  return softFail("短语", () => cached(phrasesCache, "all", loadPhrases));
 }
 
 /** 实际查库（不含缓存） */
@@ -482,7 +508,7 @@ async function loadPhrases(): Promise<PhraseRow[]> {
 
   if (error) {
     console.error("[feedback] 读取短语失败:", error.code, error.message);
-    return [];
+    throw new Error(`读取短语失败: ${error.code} ${error.message}`);
   }
   return (data ?? []) as PhraseRow[];
 }
@@ -497,8 +523,8 @@ async function loadPhrases(): Promise<PhraseRow[]> {
 export async function getStudents(userId?: string): Promise<StudentRow[]> {
   const uid = await cacheUserId(userId);
   // 拿不到 uid 时不缓存：宁可多查一次库，也不能让「不知道是谁」的数据落进共享桶里
-  if (!uid) return loadStudents();
-  return cached(studentsCache, uid, loadStudents);
+  if (!uid) return softFail("学生档案", loadStudents);
+  return softFail("学生档案", () => cached(studentsCache, uid, loadStudents));
 }
 
 /** 实际查库（不含缓存） */
@@ -511,7 +537,7 @@ async function loadStudents(): Promise<StudentRow[]> {
 
   if (error) {
     console.error("[feedback] 读取学生档案失败:", error.code, error.message);
-    return [];
+    throw new Error(`读取学生档案失败: ${error.code} ${error.message}`);
   }
   return (data ?? []) as StudentRow[];
 }
@@ -524,8 +550,8 @@ async function loadStudents(): Promise<StudentRow[]> {
  */
 export async function getHistory(userId?: string): Promise<HistoryRow[]> {
   const uid = await cacheUserId(userId);
-  if (!uid) return loadHistory();
-  return cached(historyCache, uid, loadHistory);
+  if (!uid) return softFail("反馈历史", loadHistory);
+  return softFail("反馈历史", () => cached(historyCache, uid, loadHistory));
 }
 
 /** 实际查库（不含缓存） */
@@ -538,7 +564,7 @@ async function loadHistory(): Promise<HistoryRow[]> {
 
   if (error) {
     console.error("[feedback] 读取历史失败:", error.code, error.message);
-    return [];
+    throw new Error(`读取历史失败: ${error.code} ${error.message}`);
   }
   return (data ?? []) as HistoryRow[];
 }
@@ -639,3 +665,30 @@ export function historyByStudent(rows: HistoryRow[]): Record<string, unknown[]> 
 }
 
 export { isChapterCategory };
+
+// ============================================================
+// 启动预热（只烤「又小又每次都要」的三张表）
+// ============================================================
+
+/**
+ * 模块加载时**不阻塞**地把分类 / 短语 / 教材烤进缓存，让第一个真实请求到达时它们已经是热的。
+ *
+ * 为什么只烤这三张：
+ *   · 分类 8 行、短语 10 行、教材 219 行（约 24 KB）—— 小，而且**每个请求都要**，稳赚；
+ *   · **章节和关键词故意不烤**：章节全量约 340 KB、关键词更多，预热它们等于给每个新实例
+ *     加一堆启动开销，还会跟第一个真实请求抢连接 —— 那是净亏（见 ttl-cache.ts 的说明）。
+ *
+ * ⚠️ 它**不是**「用户来的时候一定热」的保证：Vercel 实例按需起、闲置就回收，
+ *    而预热正好跑在「有请求才让实例起来」的那一刻，所以常常是跟第一个请求**并发**跑的。
+ *    真正的收益来自缓存 key 收敛（换科目不再 miss），不是这里。
+ *
+ * ⚠️ 必须跳过 `next build`：构建期会 import 这个模块（收集页面数据），
+ *    那时候查库既没意义又会拖慢构建、还可能在缺环境变量的机器上失败。
+ *    `NEXT_PHASE` 是 Next 构建期一定会设的变量。
+ */
+const IS_BUILD =
+  process.env.NEXT_PHASE === "phase-production-build" || !process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+if (!IS_BUILD) {
+  warmInBackground("feedback 静态表", [getCategories, getPhrases, getTextbooks]);
+}
