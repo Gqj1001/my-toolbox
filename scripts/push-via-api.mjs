@@ -193,22 +193,28 @@ const objectSha = (type, buf) =>
 
 /**
  * 按 GitHub API 的规则重写一个 commit 对象的字节，用来**预先算出** API 会生成的 sha。
- * 规则（实测得出）：message 去掉尾部换行；author/committer 时间改写成 UTC（同一时刻）。
- * 这样即使 sha 变了，我们也知道它「本来该是什么」，从而校验 API 没有乱来。
+ *
+ * 规则（2026-10 用真实推送反推、逐项验证出来的）：
+ *   · **author 与 committer 的时间都改写成 UTC**（同一时刻，`+0800` → `+0000`）；
+ *   · **message 去掉结尾的换行**。
+ * 两项**都要**做才算得准。曾经只做第二项（漏了 date 的时区改写），
+ * 于是 `--dry` 打印的「预告 sha」是个不存在的值 —— 实测踩过，别再漏。
+ *
+ * ⚠️ 预告 sha 只是给人看的**参考**；真正决定「推上去的东西对不对」的是 tree sha 的硬闸，
+ *    在下面构造 tree 后校验。跨平台（Windows/Linux 时区写法不同）也可能有细微差别，
+ *    所以预告对不上时**不会**中止，只会提示「以实际为准」。
  */
 function rewriteCommitObjectBytes(localSha) {
   const text = gitRaw("cat-file", "commit", localSha).toString("utf8");
   const i = text.indexOf("\n\n");
-  const header = text.slice(0, i);
-  const body = text.slice(i + 2);
-  const toUtc = (line) =>
-    line.replace(/(\d+) ([+-]\d{4})$/, (_, secs) => `${secs} +0000`);
-  const newHeader = header
+  const header = text
+    .slice(0, i)
     .split("\n")
-    .map((l) => (/^(author|committer) /.test(l) ? toUtc(l) : l))
+    .map((l) => (/^(author|committer) /.test(l) ? l.replace(/(\d+) [+-]\d{4}$/, "$1 +0000") : l))
     .join("\n");
-  const buf = Buffer.from(`${newHeader}\n\n${body.replace(/\n+$/, "")}`, "utf8");
-  return { buf, message: body.replace(/\n+$/, ""), tree: git("rev-parse", `${localSha}^{tree}`) };
+  const body = text.slice(i + 2).replace(/\n+$/, "");
+  const buf = Buffer.from(`${header}\n\n${body}`, "utf8");
+  return { buf, message: body, tree: git("rev-parse", `${localSha}^{tree}`) };
 }
 
 // ---------------------------------------------------------------- 主流程
@@ -321,6 +327,12 @@ async function uploadBlob(localBlobSha, label) {
 }
 
 let parentForNext = baseCommit;
+/** 本地 commit sha → 远端（API 重新生成的）commit sha，用于推完做对齐 */
+const remoteMap = new Map();
+/** 上一个「新建 commit」在**远端**的 tree sha。
+ *  多提交推送时 parentForNext 是远端新生成的 sha，本地对象库里没有它，
+ *  所以不能对它做 `git rev-parse <sha>^{tree}` —— 必须把它的 tree 记下来复用。 */
+let newParentTree = null;
 let lastNewSha = null;
 
 for (const localSha of commitList) {
@@ -339,8 +351,14 @@ for (const localSha of commitList) {
   }
 
   // ---------- 构造 tree（硬闸在这里） ----------
-  const treeBody = { tree: entries, ...(parentForNext ? { base_tree: git("rev-parse", `${parentForNext}^{tree}`) } : {}) };
-  const tree = await api("POST", `/repos/${REPO}/git/trees`, treeBody);
+  // base_tree 要用「父提交的 tree」：第一个提交的父是基点（本地有对象）；
+  // 之后的父是远端新建的 commit，本地没有 —— 用循环里记下来的 tree sha。
+  const baseTreeForCommit =
+    newParentTree ?? git("rev-parse", `${parentForNext}^{tree}`);
+  const tree = await api("POST", `/repos/${REPO}/git/trees`, {
+    tree: entries,
+    base_tree: baseTreeForCommit,
+  });
   const expectedTree = git("rev-parse", `${localSha}^{tree}`);
   if (DRY) {
     console.log(`   [dry] 构造 tree（本地应为 ${expectedTree}）`);
@@ -381,7 +399,9 @@ for (const localSha of commitList) {
     console.log(`  ✓ 建 commit ${commit.sha}${commit.sha === expectedSha ? "（与预告一致）" : `（预告 ${expectedSha}，以实际为准）`}`);
   }
   parentForNext = DRY ? expectedSha : commit.sha;
+  newParentTree = expectedTree; // 供下一轮做 base_tree（本地没有这个远端 commit 的对象）
   lastNewSha = parentForNext;
+  if (!DRY) remoteMap.set(localSha, commit.sha);
 }
 
 if (DRY) {
@@ -446,12 +466,52 @@ if (!NO_VERIFY) {
   );
 }
 
+// ---------- 消除 sha 分叉：把远端 commit 在本地精确重建，让 main == origin/main ----------
+// 做法：API 返回的 author/committer/message 就是「远端对象里的内容」，
+// 按 git 的对象格式拼回字节、算出 sha，**与 API 报告的 sha 比对**，一致才写入本地对象库。
+// 这样本地就有了远端那个对象，`git update-ref` 才推得动（否则报 nonexistent object）。
+console.log("\n--- 本地与远端 sha 对齐（可选，但推荐）---");
+const alignCommands = [];
+for (const localSha of commitList) {
+  const remoteSha = remoteMap.get(localSha);
+  if (!remoteSha) continue;
+  const rc = await api("GET", `/repos/${REPO}/git/commits/${remoteSha}`);
+  const parents = (rc.parents || []).map((p) => (typeof p === "string" ? p : p.sha));
+  const line = (who) =>
+    `${who} ${rc[who].name} <${rc[who].email}> ${Math.floor(new Date(rc[who].date).getTime() / 1000)} +0000`;
+  const bytes = Buffer.from(
+    `tree ${rc.tree.sha}\n` +
+      parents.map((p) => `parent ${p}\n`).join("") +
+      `${line("author")}\n${line("committer")}\n\n${rc.message}`,
+    "utf8",
+  );
+  const computed = objectSha("commit", bytes);
+  if (computed !== remoteSha) {
+    console.log(`  ⚠️ ${remoteSha.slice(0, 8)} 无法在本地精确重建（算出 ${computed.slice(0, 8)}），跳过对齐`);
+    continue;
+  }
+  const written = execFileSync(GIT_BIN, ["-C", PROJECT, "hash-object", "-t", "commit", "-w", "--stdin"], {
+    input: bytes,
+    encoding: "utf8",
+  }).trim();
+  if (written === remoteSha) alignCommands.push({ localSha, remoteSha, branch });
+}
+if (alignCommands.length) {
+  console.log("  已把远端 commit 对象写入本地对象库。要消除分叉（两棵树相同，不会动任何文件）：");
+  for (const a of alignCommands) {
+    console.log(`    git update-ref refs/heads/${a.branch} ${a.remoteSha} ${a.localSha}`);
+  }
+  console.log(`    git update-ref refs/remotes/origin/${branch} ${after}`);
+  console.log("  （最后一条把跟踪引用也指过去，避免下次 pull 误判成「有新提交」）");
+} else {
+  console.log("  （没有可对齐的提交）");
+}
+
 console.log(`
 —— 接下来 ——
-1. commit sha 与本地不同是**正常的**（见文件头「已知副作用」）。内容已由 tree sha 证明一致。
-2. 想消除 sha 分叉（两棵树相同，不会动任何文件）：
-     git update-ref refs/heads/${branch} ${after}
-   若本地 ${branch} 就是当前分支，可改用：
-     git reset --hard ${after}
-3. 网络恢复后可以再跑一次 \`git push origin ${branch}\`，回 "Everything up-to-date" 即为最强佐证。
+1. commit sha 与本地不同是**正常的**（见文件头「已知副作用」）。
+   判断内容是否一致，要看 **tree sha 是否相同**（脚本已自动核对），不要拿 commit sha 比内容。
+2. 网络恢复后可以再跑一次 \`git push origin ${branch}\`：
+   若回 "Everything up-to-date"，说明远端确实已经是你这个提交；
+   若它开始真的传对象，说明本地已对齐，一切归位。
 `);
