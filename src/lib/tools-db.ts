@@ -83,24 +83,6 @@ export function resolveIframeSrc(slug: string): string | null {
   return null;
 }
 
-/** 读取所有启用中的工具，按 sort_order 升序 */
-export async function getActiveTools(): Promise<DbTool[]> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("tools")
-    .select("id, name, description, route, min_plan, active, sort_order")
-    .eq("active", true)
-    .order("sort_order", { ascending: true });
-
-  if (error) {
-    console.error("[tools] 读取 tools 表失败:", error.code, error.message);
-    return [];
-  }
-
-  return (data ?? []) as DbTool[];
-}
-
 /** 按路由读取单个工具（仅 active=true） */
 export async function getToolByRoute(route: string): Promise<DbTool | null> {
   const supabase = await createClient();
@@ -135,6 +117,98 @@ export function toToolView(tool: DbTool, membership: Pick<Membership, "isVip">):
     icon: pickIcon(tool),
     href: unlocked ? tool.route : `/upgrade?tool=${encodeURIComponent(slug)}`,
   };
+}
+
+/** 缓存有效期（毫秒）。tools 表是极少变动的共享目录，30 秒足够。 */
+const TOOLS_TTL_MS = 30_000;
+
+/**
+ * 进程内 TTL 缓存。
+ *
+ * ⚠️ **不要改回 `unstable_cache`**（2026-10 实测踩过）：
+ *    在 Next 16.3.8 下用它包 `getActiveTools` 之后，它**每次都返回空数组、也从不查库**，
+ *    导致 /tools 与 /dashboard **静默地不显示任何工具**。
+ *    实测 A/B（同一份代码，只差这一层）：
+ *      · 原始代码：/tools 响应体 45,534 字节，含工具名，查库 1 次；
+ *      · 加 unstable_cache：响应体 14,889 字节，**工具名全部消失**，查库 0 次。
+ *    故改用下面这套显式缓存。
+ *
+ * 语义：命中且未过期 → 直接返回不查库；过期 → 重查并刷新；
+ *      `revalidateTools()` → 立刻清掉本进程缓存（改完即见）。
+ *
+ * 局限：缓存**每个服务端实例各一份**。改完 tools 表后，本实例立即失效，
+ *      其它已在运行的实例最多滞后 TTL（30 秒）。对「极少变的目录」可接受。
+ */
+type ToolsCacheEntry = { rows: DbTool[]; at: number };
+let toolsCache: ToolsCacheEntry | null = null;
+/** 并发去重：同时到达的多个请求只查一次库 */
+let toolsInflight: Promise<DbTool[]> | null = null;
+
+/**
+ * 读取所有启用中的工具，按 sort_order 升序（带 30 秒进程内缓存）。
+ *
+ * 缓存的目的：/dashboard、/tools、/upgrade 每次渲染都要这份**全用户共享**的目录，
+ * 不缓存就是每次白跑一次外网往返。
+ */
+export async function getActiveTools(): Promise<DbTool[]> {
+  const now = Date.now();
+  if (toolsCache && now - toolsCache.at < TOOLS_TTL_MS) {
+    return toolsCache.rows;
+  }
+
+  // 并发去重：同一瞬间多个请求共用一个 in-flight promise
+  if (toolsInflight) return toolsInflight;
+
+  toolsInflight = loadActiveTools()
+    .then((rows) => {
+      toolsCache = { rows, at: Date.now() };
+      return rows;
+    })
+    .finally(() => {
+      toolsInflight = null;
+    });
+
+  return toolsInflight;
+}
+
+/**
+ * 清掉工具目录缓存（改了 tools 表之后调用）—— 本实例立即生效。
+ *
+ * ⚠️ 两个实测结论（别想当然）：
+ *   1. `revalidatePath("/tools")` **不能**清掉这个进程内缓存 ——
+ *      实测调完 revalidatePath 之后紧接着请求，仍然查库 0 次、仍是旧值。
+ *      所以「改了 tools 表 + 只调 revalidatePath」**不会**立即生效。
+ *   2. 本函数只清**当前实例**的缓存。生产是多实例，其它实例最多滞后 TTL（30 秒）。
+ *
+ * 因此：管理员在 Supabase SQL Editor 里直接改 tools 表 →
+ *      **最多 30 秒后全站生效**（无需手动操作）。
+ *      若以后要在管理后台加「改工具权限」按钮，那个 Server Action 里请调本函数，
+ *      可获得「本实例改完即见」。
+ */
+export function revalidateTools() {
+  toolsCache = null;
+  toolsInflight = null;
+}
+
+/**
+ * 实际查库（不含缓存）。抽出来是为了让缓存层只管缓存，
+ * 也让「缓存坏掉」时容易定位。
+ */
+async function loadActiveTools(): Promise<DbTool[]> {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("tools")
+    .select("id, name, description, route, min_plan, active, sort_order")
+    .eq("active", true)
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    console.error("[tools] 读取 tools 表失败:", error.code, error.message);
+    return [];
+  }
+
+  return (data ?? []) as DbTool[];
 }
 
 /** 一次拿到「已按权限处理」的工具列表 */

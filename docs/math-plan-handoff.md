@@ -10,13 +10,19 @@
 
 | 项目 | 状态 |
 |---|---|
-| 已推送的最新提交 | `0b4126f`「辅导方案 Word 模板化导出（新模板）+ 字体统一 + m41 位置 + 校区/教师拆分」 |
-| 本轮提交 | 「更新 math-plan 交接文档：P1 完成 + 补记踩坑」（**纯文档**，未动代码/模板） |
+| 已推送的最新提交 | **`b249a02`**「自检目标量化修正 + 点名到行 + 文档同步」 |
+| 工作区 | 干净；`main` == `origin/main` == `b249a02`（**已全部推送**） |
+| 上次完整交接（本报告基准） | `b575362`「更新 math-plan 交接文档：P1 完成 + 补记踩坑」 |
+| ⚠️ 本报告写完后又有提交 | **基准之后还有 6 个提交动过真实代码/测试/文档** —— 若读到的还是「基准 = `b575362`」，说明本报告落后，**先按第十一节核对，再动手** |
 | 线上 `tools` 表 | ✅ `/tools/math-plan` 的 `min_plan` **已是 `free`** —— 0011 已在 Supabase SQL Editor 执行成功（核对证据见第七节 P1） |
 | 页面可访问性 | ✅ 非会员可正常打开 `/tools/math-plan`（`min_plan=free` → `vipOnly=false` → 不再跳 `/upgrade`）；页内 AI 功能区仍 VIP 专属 |
 | 模板文件 | `模板-占位符.docx`（185,749 字节，**新版**，由 `make-new-template.py` 从桌面那份重建）；旧版备份 `模板-占位符.old.docx`（185,564 字节，**已废弃**） |
 | 用户桌面模板 | `C:\Users\郭庆杰\Desktop\模板-辅导方案.docx`（232,207 字节）—— **只读基准，全程未改动** |
 | DEMO 产物 | `D:\my-website\.tmp-planning-samples\demo-out\`（v1..v5，最新 **v5** 已通过 Word 验收） |
+
+> **本报告已同步到 `b249a02`。** 第 11 节记录了基准 `b575362` 之后的 6 个提交各自改了什么，
+> 以及本报告里**已被它们推翻**的旧口径（**至少第四节之二的「教师默认值郭庆杰」是错的**）。
+> 先看第 11 节，再看你要改的那一节。
 
 ---
 
@@ -125,17 +131,20 @@ d.period = p.period || '';        // 正确
 | `o.grade` | `#f-grade` | `{{grade}}` | 年级 |
 | `o.book` | `#f-book` | `{{book}}` | 教材版本 |
 | `o.campus` | **`#f-campus`** | `{{camp}}` | **校区**（placeholder「如 燕郊中学校区」） |
-| `o.teacher` | **`#f-teach`** | `{{tchr}}` | **教师**（placeholder「如 郭庆杰」，**默认值郭庆杰**） |
+| `o.teacher` | **`#f-teach`** | `{{tchr}}` | **教师**（**空输入框**，仅 placeholder「如 郭庆杰」，**不预填**） |
 | `o.mgr` / `o.cons` | 无输入框 | `{{mgr}}` / `{{cons}}` | 程序固定传空（学管师/咨询师由老师手填） |
 
 **本轮变更**：原先「校区 / 教师」是**一个**输入框（`#f-teacher`），只喂给了 `o.campus`，
 `o.teacher` 一直是 `undefined` → 导出的 `{{tchr}}` 永远是空。现在拆成两个：
 
-- HTML：`#f-teacher` 删除，改为 `#f-campus` + `#f-teach`（`#f-teach` 带 `value="郭庆杰"`）
-- `readForm()`：`campus: $("#f-campus")…`、新增 `teacher: $("#f-teach")…`
+- HTML：`#f-teacher` 删除，改为 `#f-campus` + `#f-teach`
+  （`#f-teach` 初版带 `value="郭庆杰"`，**已由 `01c5c92` 去掉预填、只留 placeholder** —— 别照旧报告写回默认值）
+- `readForm()`：`campus: $("#f-campus")…`、新增 `teacher: $("#f-teach")…`（**两处都只有 `.value.trim()`，没有兜底默认值**）
 - 屏幕基本信息表：「校区/教师」一格 → `校区`/值 + `教师`/值 两对
 - 顶部 meta 行：**只显示校区**（按需求，不显示教师）
 - payload（`exportWordTemplate` 与 `MathPlanHooks.buildPayload`）已是 `camp: o.campus` / `tchr: o.teacher`，无需改
+- ⚠️ **副作用**：教师不再预填 → 老师**忘了填就是空**，导出的 `{{tchr}}` 会留白。这是刻意取舍（`01c5c92`），
+  不是 bug；要改回预填得先确认需求。
 
 ---
 
@@ -165,7 +174,7 @@ d.period = p.period || '';        // 正确
 | 三轮文案 | **<100h → 基础过关/专项突破/真题模拟**；**≥100h → 一轮补基础/二轮抓题型/三轮练真题**（文案逐字保留原样） | `threeRounds` |
 | 课表排序 | 按轮次稳定排序（一轮→二轮→三轮），收尾检测行仍在最后 | `generate` |
 | **m41 位置** | **优先于轮次排序**：band1 → 第 1 行（不在池也插）；band2&score<70 → 前 3 行；其他不动。**轮次排序后要在 `generate` 里再修正一次**（否则被 `topic:"计算"` 判成第三轮而沉底） | `pickModules` + `generate` |
-| 自检 | 「检测落地」判据放宽为 `/检测｜综合模拟/`；新增「模块覆盖/未排入模块」 | `selfCheck` |
+| 自检 | 「检测落地」判据放宽为 `/检测｜综合模拟/`；新增「模块覆盖/未排入模块」；**「目标量化」不再误报收尾行**，且不合格时**点名「第 N 行「阶段名」」+ 总数**（`b249a02`，见第 11 节） | `selfCheck` |
 
 ## 七、待办的下一步（按优先级；P0、P1 已完成 ✅）
 
@@ -243,11 +252,16 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 差异只有：dashboard 多了会员状态卡（`PLAN_LABELS`/`remainingDays`）+ `SignOutButton`。
 → 可以从 `/tools` 改造成"个人中心"（挂上会员卡 + 退出），dashboard 改成 redirect，消除重复。**未动代码。**
 
-### P3 · 其它已知项
+### P3 · 其它已知项（**代码侧只剩这三条**，其余均已闭环）
 
-- 模板是否补「咨询师」标签（见第三节末）
-- `{{method}}` 三轮叙述的措辞可再润色（当前见 `roundsSentence`）
-- **AI 模型名隐患**：`DEFAULT_MODEL = "deepseek-chat"` 官方已停用但实测仍兼容 —— 详见第九节「已知隐患」。**AI 突然报 502 时先查这一行。**
+- 模板是否补「咨询师」标签（见第三节末）。**需先定需求**：保持留白给老师手填，还是补标签格。
+  改模板要连带重跑 `build-template.py` + `math-plan-template` 套件。
+- `{{method}}` 三轮叙述的措辞可再润色（当前见 `roundsSentence`）。
+  ⚠️ 动它要连带看 `samples.ts` 的 few-shot 措辞口径（`84e537d` 加的），否则示例与提示词会互相打架。
+- **AI 模型名隐患**：`DEFAULT_MODEL = "deepseek-chat"` 官方已停用但实测仍兼容
+  （`route.ts:29`，**核对过仍未被改**）—— 详见第九节「已知隐患」。**AI 突然报 502 时先查这一行。**
+  推荐做法：在 Vercel 加环境变量 `AI_MODEL=deepseek-flash`（代码是 `process.env.AI_MODEL ?? DEFAULT_MODEL`），
+  以后换模型连代码都不用动。
 
 ---
 
@@ -263,6 +277,14 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 | `tests/math-plan-ai-apply.test.mjs` | **20** | **★补上的测试缺口**：自带**本地桩上游**（`AI_BASE_URL` 指向 `127.0.0.1:4567`），让「AI 返回写回 DOM」这一步**真的被执行**。断言：method 6 段的小标题各只出现 1 次、goals 40 格全部落地、请求体里 method 要求「只输出正文」、goals 带 `band` + 每行 `lv`、页面无 JS 异常 |
 
 **合计：6 套 201 项。**（76 + 44 + 18 + 26 + 17 + 20）
+
+> **数法说明（`b249a02` 复核）**：这套测试**不用 `test()`/`assert`**，而是自带 `ok()` 收集器
+> （`results.push(...)` + 末尾打印 `SUMMARY: N/M passed`）。所以：
+> - **`results` 长度才是项数**，`grep -c "ok("` 数出来的是**调用点**，会偏小 ——
+>   静态数得 `template`=60、`lessons`=44，而报告记的是 76 / 44。
+>   差额来自**循环里逐项调用**的断言（同一行代码跑多次、每次记一条）。
+> - **想拿到真实项数，只能实跑看 SUMMARY 行**，不要用 grep 数。
+> - 本文的 76 / 44 / 18 / 26 / 17 / 20 是**实跑记录**，不是静态计数。
 
 > ⚠️ 为什么必须有 `ai-apply`：另外两套 AI 测试**都到不了落地那一步** ——
 > `ai-sections` 本地无 Key → 503，`ai-vip-path` 假 Key → 502，**替换逻辑根本不会执行**。
@@ -360,7 +382,8 @@ const DEFAULT_MODEL = "deepseek-flash";   // 原值 "deepseek-chat"（已于 202
 - 万一 git 用不了，**直接读 `.git` 里的文件也能拿到历史与推送状态**（本轮验证过）：
   - 提交信息：`.git\logs\HEAD`（每行最后一列就是 commit message）
   - 本地分支：`.git\refs\heads\main`；远端：`.git\refs\remotes\origin\main`
-  - **两者哈希相同 = 已推送**（本轮 `main` 与 `origin/main` 都是 `0b4126f`，所以确认已推送）
+  - **两者哈希相同 = 已推送**（核实时 `main` 与 `origin/main` 都是 `b249a02`，所以确认已推送；
+    上一版报告核实的是 `0b4126f` —— **这行只是「怎么核实」的示范，别把哈希当结论，现场重跑一次**）
 
 - **线上 `tools` 表可以用 anon key 直查**（`min_plan` / `active` 等公开字段），**不需要 service_role**，
   命令见第七节 P1。这是核对线上权限口径最快的手段，别再因为「没有 service_role」就放弃核对。
@@ -392,3 +415,32 @@ const DEFAULT_MODEL = "deepseek-flash";   // 原值 "deepseek-chat"（已于 202
 `math-plan.html` 的 `stripMethodLabel(line, label)` 就是这么做的（先按 label 精确比对，再用结构正则兜底）。
 
 **判据**：写任何「拼标签」的代码之前，先问一句「**这个标签还有谁在写？**」答不上来就先别写。
+
+---
+
+## 十一、基准之后的 6 个提交（`b575362` → `b249a02`，**本报告已据此校准**）
+
+> 上一版交接报告把「最新提交」写成 `0b4126f`，**实际已经到 `b249a02`**。
+> 下面这 6 个提交都动过真实代码/测试/文档，读本报告时**必须并着这一节看**。
+
+| 提交 | 标题 | 改了什么 |
+|---|---|---|
+| `84e537d` | AI 分区润色接入 few-shot 示例（4 份真实方案） | 新增 **`src/app/api/math-plan/ai-sections/samples.ts`（295 行）** 导出 `GOAL_EXAMPLES` / `METHOD_STYLE_BLOCK`；`route.ts` 导入并拼进提示词 |
+| `01c5c92` | 教师输入框改为 placeholder 提示（去掉预填「郭庆杰」） | **只改 `math-plan.html`**：`#f-teach` 去掉 `value="郭庆杰"`。**推翻**本报告第四节之二原写的「默认值郭庆杰」 |
+| `c211f5e` | 辅导方案修 4 处 + AI 量化校准 + 补 AI 落地测试 | `math-plan.html`、`route.ts`、**新增 `tests/math-plan-ai-apply.test.mjs`（230 行）**、`math-plan-export-ui.test.mjs` |
+| `b249a02` | 自检目标量化修正 + 点名到行 + 文档同步 | `math-plan.html` 的 `selfCheck`：不再误报收尾行；不合格时点名「第 N 行「阶段名」」+ 总数；`math-plan-lessons.test.mjs` 补断言 |
+
+**两处最容易踩的旧口径**：
+
+1. **教师不再预填**（`01c5c92`）—— 老师忘填就是空，`{{tchr}}` 留白是**刻意取舍**，别当 bug 修回去。
+2. **AI 提示词多了 `samples.ts` few-shot**（`84e537d`）—— 以后改 `{{method}}` 文案或 `roundsSentence`，
+   **必须同时看 `samples.ts`**，否则示例与提示词口径打架。
+
+**核对本报告是否还新鲜**（一行命令）：
+
+```powershell
+& "D:\my-website\.tools\git\cmd\git.exe" -C D:\my-website\my-toolbox log --oneline -3
+```
+
+若首行**不是** `b249a02`，说明又落后了：先跑
+`git log --oneline b249a02..HEAD` 看多出来的提交，再决定要不要信本报告。

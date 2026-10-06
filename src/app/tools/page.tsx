@@ -1,17 +1,16 @@
 import SiteHeader from "@/components/site-header";
 import ToolGrid from "@/components/tool-grid";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
-import { getMembership } from "@/lib/membership";
+import { getViewer } from "@/lib/viewer";
 import { PLAN_LABELS } from "@/lib/membership-types";
-import { getToolViewsForMembership } from "@/lib/tools-db";
+import { getActiveTools, toToolView } from "@/lib/tools-db";
 
 export default async function ToolsPage() {
-  const [membership, { user, role }] = await Promise.all([
-    getMembership(),
-    getCurrentUserWithRole(),
-  ]);
+  // 性能：getActiveTools() 不依赖会员信息，与 getViewer() 并发即可，不要串成两层
+  const [viewer, toolRows] = await Promise.all([getViewer(), getActiveTools()]);
 
-  const tools = await getToolViewsForMembership(membership);
+  const membership = viewer.membership;
+  const { user, role } = viewer;
+  const tools = toolRows.map((row) => toToolView(row, membership));
   const lockedCount = tools.filter((t) => t.locked).length;
 
   return (

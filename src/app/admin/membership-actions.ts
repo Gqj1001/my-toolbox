@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth-role";
+import { revalidateTools } from "@/lib/tools-db";
 import { createClient } from "@/lib/supabase/server";
 import type { AccountStatus, PlanId } from "@/lib/membership-types";
 
@@ -184,6 +185,10 @@ function revalidateAll() {
   revalidatePath("/admin");
   revalidatePath("/dashboard");
   revalidatePath("/tools");
+  // ⚠️ 上面的 revalidatePath 只清**路由缓存**，清不掉 getActiveTools() 的
+  //    unstable_cache **数据缓存**（两套缓存）。会员等级会影响「谁能看到哪些工具」，
+  //    所以这里必须连数据缓存一起清，否则改完会员最多 30 秒后才生效。
+  revalidateTools();
 }
 
 function denyFor(reason: "unauthenticated" | "forbidden"): ActionResult {

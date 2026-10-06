@@ -2,8 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import SiteHeader from "@/components/site-header";
 import ToolIcon from "@/components/tool-icon";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
-import { getMembership } from "@/lib/membership";
+import { getViewer } from "@/lib/viewer";
 import { getToolByRoute, resolveIframeSrc } from "@/lib/tools-db";
 
 type ToolPageShellProps = {
@@ -14,14 +13,18 @@ type ToolPageShellProps = {
 /**
  * 工具页公共外壳：统一处理访问控制，然后渲染工具内容。
  *
- * 守卫顺序：
+ * 守卫顺序（**这个顺序不能改**）：
  *   1. 未登录            -> /login（proxy 已处理，这里再兜一层）
  *   2. status='banned'   -> /banned
  *   3. min_plan='vip' 且非会员 -> /upgrade?tool=<slug>
  *   4. 通过 -> 渲染 iframe（public/tools/<slug>.html）或占位内容
+ *
+ * 性能：viewer 与 tool 是两次独立的库查询，这里并发发出（改动前是 await 串行），
+ * 省掉一个串行跳。注意**只是提前发起查询**，重定向顺序仍严格按上面 1→2→3 判定。
  */
 export default async function ToolPageShell({ route }: ToolPageShellProps) {
-  const membership = await getMembership();
+  const [viewer, tool] = await Promise.all([getViewer(), getToolByRoute(route)]);
+  const membership = viewer.membership;
 
   if (!membership.user) {
     redirect(`/login?redirectTo=${encodeURIComponent(route)}`);
@@ -29,8 +32,6 @@ export default async function ToolPageShell({ route }: ToolPageShellProps) {
   if (membership.status === "banned") {
     redirect("/banned");
   }
-
-  const tool = await getToolByRoute(route);
   if (!tool) notFound();
 
   const slug = route.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "";
@@ -41,7 +42,7 @@ export default async function ToolPageShell({ route }: ToolPageShellProps) {
     redirect(`/upgrade?tool=${encodeURIComponent(slug)}`);
   }
 
-  const { user, role } = await getCurrentUserWithRole();
+  const { user, role } = viewer;
   const iframeSrc = resolveIframeSrc(slug);
 
   return (

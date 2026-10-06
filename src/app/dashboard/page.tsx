@@ -2,10 +2,9 @@ import Link from "next/link";
 import SignOutButton from "@/components/sign-out-button";
 import SiteHeader from "@/components/site-header";
 import ToolGrid from "@/components/tool-grid";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
-import { getMembership } from "@/lib/membership";
+import { getViewer } from "@/lib/viewer";
 import { PLAN_LABELS, remainingDays } from "@/lib/membership-types";
-import { getToolViewsForMembership } from "@/lib/tools-db";
+import { getActiveTools, toToolView } from "@/lib/tools-db";
 
 const errorMessages: Record<string, string> = {
   admin_required: "该页面仅对 admin 角色开放，你没有访问权限。",
@@ -15,16 +14,21 @@ const errorMessages: Record<string, string> = {
 export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   // 未登录到不了这里：src/proxy.ts 会重定向到 /login；
   // status='banned' 也会在 proxy 中拦到 /banned
-  const [membership, { user, role }] = await Promise.all([
-    getMembership(),
-    getCurrentUserWithRole(),
-  ]);
+  //
+  // 性能：两层一起发车，不要写成瀑布。
+  //   · getViewer() = 一次 getUser + 一次 user_roles（已合并、请求内去重）
+  //   · getActiveTools() 本身不依赖会员信息 → 直接并发，不必等第一层
+  //     （会员只用来决定卡片锁不锁，是后面映射阶段的入参）
+  const [viewer, toolRows] = await Promise.all([getViewer(), getActiveTools()]);
+
+  const membership = viewer.membership;
+  const { user, role } = viewer;
+  const tools = toolRows.map((row) => toToolView(row, membership));
 
   const params = await searchParams;
   const errorKey = typeof params.error === "string" ? params.error : "";
   const errorMessage = errorMessages[errorKey];
 
-  const tools = await getToolViewsForMembership(membership);
   const lockedCount = tools.filter((t) => t.locked).length;
   const days = remainingDays(membership.expiresAt);
 

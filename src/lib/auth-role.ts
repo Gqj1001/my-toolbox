@@ -1,58 +1,38 @@
-import { createClient } from "@/lib/supabase/server";
+import "server-only";
 
-/** 应用层角色：数据库 user_role 枚举的超集，未建行的用户按 'user' 处理 */
-export type AppRole = "admin" | "user";
+import { getViewer, type AppRole } from "@/lib/viewer";
 
-export const DEFAULT_ROLE: AppRole = "user";
+/**
+ * 应用层角色：数据库 user_role 枚举的超集，未建行的用户按 'user' 处理。
+ * 类型与常量定义在 src/lib/viewer.ts，这里再导出，保持既有 import 路径可用。
+ */
+export type { AppRole } from "@/lib/viewer";
+export { DEFAULT_ROLE } from "@/lib/viewer";
 
 export function isAdminRole(role: AppRole | null | undefined): boolean {
   return role === "admin";
 }
 
 /**
- * 读取当前登录用户的角色。
- * 读取的是 user_roles 表自身的数据，受 RLS "users read own role" 策略保护。
- * 尚未写入角色行的用户视为普通用户。
+ * 读取当前登录用户的角色（未登录返回 null）。
+ * 实现已合并到 src/lib/viewer.ts 的 getViewer()，同一次渲染内与 getMembership()
+ * 共用同一次 user_roles 查询。
  */
 export async function getCurrentUserRole(): Promise<AppRole | null> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) return null;
-
-  const { data, error } = await supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (error || !data) return DEFAULT_ROLE;
-
-  return data.role === "admin" ? "admin" : "user";
+  const viewer = await getViewer();
+  return viewer.user ? viewer.roleResolved : null;
 }
 
-/** 一次性拿到当前用户与其角色，避免重复请求 */
+/**
+ * 一次性拿到当前用户与其角色。
+ *
+ * 返回结构保持不变（`{ user, role }`，未登录时两者皆为 null）——
+ * 调用点很多，改动返回结构会牵连一大片。
+ * `role` 仍是「已解析」的值：未建行的用户为 'user'，未登录才是 null。
+ */
 export async function getCurrentUserWithRole() {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) return { user: null, role: null as AppRole | null };
-
-  const { data } = await supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  const role: AppRole = data?.role === "admin" ? "admin" : DEFAULT_ROLE;
-
-  return { user, role };
+  const viewer = await getViewer();
+  return { user: viewer.user, role: viewer.role };
 }
 
 /**
@@ -60,14 +40,16 @@ export async function getCurrentUserWithRole() {
  * 前端隐藏 UI 不构成安全边界，所有管理操作都必须先过这里。
  */
 export async function requireAdmin() {
-  const { user, role } = await getCurrentUserWithRole();
+  const viewer = await getViewer();
 
-  if (!user) {
+  if (!viewer.user) {
     return { ok: false as const, reason: "unauthenticated" as const };
   }
-  if (!isAdminRole(role)) {
+  if (!isAdminRole(viewer.role)) {
     return { ok: false as const, reason: "forbidden" as const };
   }
 
-  return { ok: true as const, user, role };
+  return { ok: true as const, user: viewer.user, role: viewer.role as AppRole };
 }
+
+export { getViewer };
