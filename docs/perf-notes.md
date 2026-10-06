@@ -205,9 +205,7 @@ proxy：            1 次 auth.getUser + 1 次 user_roles     ← 省不掉（�
 route 里已经把 `guard.user.id` 直接传进 `getStudents(uid)` / `getHistory(uid)` ——
 **别为了「顺便查一次会话」把那两个参数删掉**（删了会退回再付一次 `auth/v1/user` 往返）。
 
-### ⚠️ 这个缓存最危险的失效方式不是「慢」，而是「静默变空」
-
-`unstable_cache` 那次就是这样：页面不报错、只是**什么都没有**，肉眼看不出来。
+### ⚠️ 这个缓存最危险的失效方式不是「慢」，而是「静默变空」`unstable_cache` 那次就是这样：页面不报错、只是**什么都没有**，肉眼看不出来。
 所以本步**必须**有一条「缓存命中时数据不为空」的断言 —— 见
 `tests/feedback-data-cache.test.mjs`（冷/热两次响应体逐字节比对 + 各字段非空）。
 **只测「快了」是不够的：快和空可以同时成立。**
@@ -330,6 +328,114 @@ route 里已经把 `guard.user.id` 直接传进 `getStudents(uid)` / `getHistory
 > 「build 完再改 `.env.local` 来模拟数据库连不通」**是无效的** —— 服务端用的还是构建时那份，
 > 测试会假绿。（本轮踩过：以为在测降级，其实服务端一直是好的。）
 - **导航预取 `prefetch={false}`**：取舍，不做。
+
+---
+
+## 六之三、P3：中间件缓存（已完成）—— 「打开工具页 5–6 秒」的最后一块
+
+> 起因：用户实测「进入 `/tools/feedback` 后 5–6 秒才出现学生面板与教材下拉；
+> F12 显示**等待服务器 4.31 秒、Content download 只 8ms**」——不是内容大，是服务端往返多。
+
+### 根因：中间件在每次带 cookie 的请求上做 **2 次**外网查询
+
+`src/proxy.ts` 每次请求都要：
+
+1. `supabase.auth.getUser()` —— 向 Auth 服务校验 token（**1 次往返**）
+2. `user_roles` 查询（封禁 + 管理员判定，**1 次往返**）
+
+而打开一个工具页，中间件要跑 **2–4 次**（页面壳 `/tools/feedback` → iframe 里的
+`/tools/feedback.html` → 之后每个 API 请求）。香港→新加坡每次 400–500ms，
+这就是那 4.31 秒的主要来源。
+
+⚠️ **页面侧的缓存帮不到这里**：`src/lib/viewer.ts` 里 P2 加的 `user_roles` 缓存
+跑在 React 渲染树所在的运行时；中间件不在渲染树里，两边内存不共享。
+**所以两边各缓存一份不是重复劳动。**
+
+### 做法
+
+在 `src/proxy.ts` 里加两个**模块级** TTL 缓存：
+
+| 缓存 | key | 值 |
+|---|---|---|
+| 认证结果 | **access token 本身** | 最小用户信息 `{id, email}` |
+| 角色/封禁 | `user.id` | `{role, status}` |
+
+- cache key 用 token ⇒ **token 一变 key 就变，自动 miss**；登出后浏览器不再带该 token ⇒ 也自然 miss。
+  **不需要额外设计失效机制。**
+- token **只当缓存 key**，绝不参与身份判定；缓存里的 user 仍然来自**被 Auth 服务校验过**的
+  `getUser()` 返回值 —— **不是**用 `getSession()` 读 cookie 冒充校验。
+- 容量上限 500 key，超出按最久未写淘汰。
+- 缓存逻辑抽在 `src/lib/three-state-cache.ts`（**不 import `server-only`**、
+  只用 Map/Date.now，Edge 与 Node 都能跑）。它与 `ttl-cache.ts` 的区别：
+  那个只能表达「一次成功加载」，中间件要缓存**三态**（已登录 / 未登录 / 查不到），
+  而且「未登录」**必须**被缓存，否则匿名请求反而变慢。
+
+### 开关：`MIDDLEWARE_CACHE_TTL`
+
+| 值 | 行为 |
+|---|---|
+| 不设 / 空 | **默认 30（秒）** |
+| `30` | 30 秒 |
+| `0`（或负数 / 非法） | **关闭缓存**，回到「每次都查」 |
+
+> 名字**不带 AI 前缀**（原标题 `AI_MIDDLEWARE_CACHE_TTL` 是错的：它同时管认证与角色，
+> 跟 AI 无关）。线上出问题时设成 `0` 即可**不改代码**摘掉缓存。
+
+### 安全取舍（用户明确接受）
+
+- **最多延迟一个 TTL（默认 30 秒）**才察觉 token 被吊销 / 会话失效。
+- ⚠️ **做不到「登出/改密码时主动清缓存」** —— 原因是结构性的：
+  中间件与 API 路由 / Server Action **不是同一个执行环境、内存不共享**，
+  在 logout 路由里 `clear()` 中间件那份内存是**无效的**。只有中间件自己能清自己的。
+- **封禁不受影响**：封禁走 `user_roles`，`/admin` 点封禁会主动清页面侧缓存；
+  中间件这份最多滞后 30 秒（与上面同源）。
+
+### 实测（`tests/middleware-cache.test.mjs`，6/6）
+
+连续请求同一个受保护页面：
+
+```
+第 1 次 [auth:user, user_roles, tools] 共 4 次出网
+第 2 次 [auth:user, tools]             共 2 次出网      ← user_roles 归零
+耗时：809ms → 18ms
+```
+
+> **必须钉住的假设**：这套做法依赖「**中间件里模块级变量能跨请求存活**」。
+> 该假设一旦不成立（Next 换运行时 / 部署形态变成每请求一个新 isolate），
+> 代码不报错、功能正常，只是**静默失去全部收益** —— 没有任何迹象。
+> 所以测试直接断言「第 2 次的 `user_roles` 次数为 0」；
+> 另外用 `MIDDLEWARE_CACHE_TTL=0` 跑同一套件，断言「关掉后第 2 次**仍会**查 user_roles」。
+
+**顺带结论：这条链上不再靠排除静态资源提速。** 实测 `public/tools/feedback.html`
+**没有任何外部 `<script src>`/`<link>`**（0 个子资源），所以 matcher 排不排 `.js`/`.css`
+对反馈工具几乎没影响；而 `.html`/`.js`/`.css` 被中间件拦住是**刻意设计**
+（`tests/paper-regression.test.mjs` 断言未登录取 `/tools/feedback.html` 必须 307），
+不能为了提速排掉。
+
+### 另一块：`/tools/feedback` 的骨架屏
+
+`tools/loading.tsx` **不会**套用到 `/tools/feedback` 这条动态子路由，
+所以服务端渲染出页面壳之前是**整屏空白**。现在补了两层**纯静态**骨架：
+
+- `src/app/tools/feedback/loading.tsx` —— 盖住服务端渲染阶段；
+- `ToolFrame`（客户端组件）+ `feedback-skeleton.tsx` —— 盖住 iframe 加载阶段，加载完淡出。
+
+⚠️ 实现要点：iframe **从第一次渲染就挂上**，骨架是叠在它上面的绝对定位层。
+若写成「等 onLoad 再渲染 iframe」，改 state 引起的重渲染可能让 React
+**重新挂载 iframe → 工具被加载两次**。另外骨架加载完必须 `pointer-events-none`，
+否则看不见的骨架会挡住工具页的点击。
+
+### 复测方法
+
+```powershell
+# 先 pnpm build，然后：
+& "C:\Users\郭庆杰\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe" `
+  tests\middleware-cache.test.mjs
+```
+
+期望：第 1 次 4 次出网 → 第 2 次 2 次（`user_roles` 为 0）。
+若第 2 次仍是 4 次 → **缓存没生效**（中间件模块状态没能跨请求存活，
+或 `readAccessToken` 没解析出 token）。
 
 ### 复测方法
 

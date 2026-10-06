@@ -217,21 +217,24 @@ try {
     `${first.calls} → ${second.calls}（省 ${first.calls - second.calls} 次）`,
   );
 
-  // 会员状态（user_roles）也进了 30 秒进程内缓存 —— 但**只能省掉页面侧那一次**。
-  // 中间件（src/proxy.ts）不在 React 渲染树里，用不到这个缓存，它自己那次省不掉。
-  // 所以正确的期望是：冷请求 2 次 → 热请求 1 次（中间件那一次），**不是 0 次**。
+  // ⚠️ 这两个数字在 P3（中间件缓存）之后**又降了一次**，历史沿革必须记清楚，
+  //    否则下次有人看到"热请求只剩 1 次"会以为哪里坏了：
+  //      · P1 之前：每次请求 2 次 user_roles（中间件 1 + getViewer 1）
+  //      · P2 之后：getViewer 那次进缓存 → 热请求 1 次 user_roles（中间件的）
+  //      · P3 之后：中间件自己也缓存 → 热请求 **0 次 user_roles**
+  //    中间件的缓存与页面侧**不共享**（不同运行时），所以两边都要各自缓存。
   record(
-    "★会员状态命中：user_roles 从每次 2 次降到 1 次（剩下的是中间件那次，省不掉）",
-    second.byTable["user_roles"] === 1,
-    `冷 ${first.byTable["user_roles"]} 次 → 热 ${second.byTable["user_roles"]} 次；热请求打了 [${second.keys.join(", ")}]`,
+    "★会员状态：热请求 user_roles 归零（中间件与页面侧各自命中缓存）",
+    (second.byTable["user_roles"] ?? 0) === 0,
+    `冷 ${first.byTable["user_roles"] ?? 0} 次 → 热 ${second.byTable["user_roles"] ?? 0} 次；热请求打了 [${second.keys.join(", ")}]`,
   );
 
-  // 每次请求的**理论下限**：中间件 auth.getUser + 中间件 user_roles
-  //  + getViewer 的 auth.getUser（安全底线，必须实时校验会话，不能缓存）。
-  // getViewer 的 user_roles 已经命中缓存 —— 所以是 3 次，不是原来的 4 次。
+  // 热请求剩下的那 1 次是**页面侧** getViewer 的 auth.getUser() —— 会话校验必须实时，
+  // 这是安全底线，绝不能缓存。（中间件的 auth.getUser 已被 P3 缓存掉；
+  // 中间件的 user_roles 也被缓存掉。所以从 4 次一路降到 1 次。）
   record(
-    "★热请求降到 3 次出网 = 安全底线（auth×2 + 中间件 user_roles×1）",
-    second.calls === 3 && second.keys.every((k) => /^auth:/.test(k) || k === "user_roles"),
+    "★热请求只剩 1 次出网 = 安全底线（页面侧 getViewer 的会话校验）",
+    second.calls === 1 && second.keys.every((k) => /^auth:/.test(k)),
     `热请求 ${describe(second)}`,
   );
 

@@ -1,6 +1,8 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { notFound, redirect } from "next/navigation";
 import SiteHeader from "@/components/site-header";
+import ToolFrame from "@/components/tool-frame";
 import ToolIcon from "@/components/tool-icon";
 import { getViewer } from "@/lib/viewer";
 import { getToolByRoute, resolveIframeSrc } from "@/lib/tools-db";
@@ -8,6 +10,11 @@ import { getToolByRoute, resolveIframeSrc } from "@/lib/tools-db";
 type ToolPageShellProps = {
   /** 数据库 tools 表中的 route，如 /tools/math-plan */
   route: string;
+  /**
+   * iframe 加载期间显示的骨架（纯静态内容）。
+   * **不传即维持原行为**（直接渲染 iframe，没有骨架）—— 这样另外两个工具页不受影响。
+   */
+  skeleton?: ReactNode;
 };
 
 /**
@@ -22,7 +29,7 @@ type ToolPageShellProps = {
  * 性能：viewer 与 tool 是两次独立的库查询，这里并发发出（改动前是 await 串行），
  * 省掉一个串行跳。注意**只是提前发起查询**，重定向顺序仍严格按上面 1→2→3 判定。
  */
-export default async function ToolPageShell({ route }: ToolPageShellProps) {
+export default async function ToolPageShell({ route, skeleton }: ToolPageShellProps) {
   const [viewer, tool] = await Promise.all([getViewer(), getToolByRoute(route)]);
   const membership = viewer.membership;
 
@@ -50,15 +57,8 @@ export default async function ToolPageShell({ route }: ToolPageShellProps) {
       <SiteHeader email={user?.email ?? null} role={role ?? "user"} current="/dashboard" />
 
       {iframeSrc ? (
-        // 单文件 HTML 工具：iframe 撑满剩余高度
-        <main className="flex w-full flex-1 flex-col overflow-hidden">
-          <iframe
-            src={iframeSrc}
-            title={tool.name}
-            className="block h-full min-h-0 w-full border-0 bg-white"
-            allow="clipboard-write"
-          />
-        </main>
+        // 单文件 HTML 工具：iframe 撑满剩余高度；传了 skeleton 就先顶着加载骨架
+        <ToolFrame src={iframeSrc} title={tool.name} skeleton={skeleton} />
       ) : (
         // 尚未接入具体实现的占位内容
         <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { createThreeStateCache, readCacheTtlMs } from "@/lib/three-state-cache";
 
 /** 无需登录即可访问的路径前缀 */
 const PUBLIC_PATHS = ["/login", "/signup", "/auth"];
@@ -12,6 +13,85 @@ const BANNED_ALLOWED_PATHS = ["/banned", "/login", "/logout", "/signup", "/auth"
 
 /** 需要 admin 角色才能访问的路径前缀（工具级的会员要求在各页面与 Server Action 中判定） */
 const ADMIN_PATHS = ["/admin"];
+
+// ============================================================
+// 进程内短 TTL 缓存（本文件是**中间件**，与页面侧不是同一个执行环境）
+// ============================================================
+//
+// 为什么中间件要自己缓存一遍：
+//   · 打开一个工具页，中间件要跑 2–4 次（页面壳 + iframe 里的工具 HTML + 各 API 请求）；
+//   · **每次带 cookie 的请求都要 2 次外网往返**：`auth.getUser()`（校验 token）
+//     与 `user_roles`（封禁/管理员判定）。香港→新加坡每次约 400–500ms
+//     —— 这正是用户实测「进入 /tools/feedback 要 5–6 秒、其中等待服务器 4.31 秒」的主因。
+//   · 页面侧（`src/lib/viewer.ts`）的 `user_roles` 缓存**帮不到这里**：
+//     中间件不在 React 渲染树里，而且很可能跑在 Edge runtime，与 Node 侧各有各的内存。
+//     两边都缓存不是重复劳动，是各修各的那一份。
+//
+// ⚠️ 两台缓存都以**「存下来的 token」**为 key 语义（user 缓存直接用 token 当 key）：
+//    token 一变 key 就变 → 自动 miss；登出后浏览器不再带该 token → 也自然 miss。
+//    所以**不需要额外设计失效机制**。
+//
+// ⚠️ 安全取舍（用户已确认接受）：token 被吊销 / 改密码导致会话失效时，
+//    最多延迟一个 TTL（默认 30 秒）才被这里察觉。
+//    **做不到主动清缓存**：中间件与 API 路由/Server Action 不是同一个执行环境
+//    （Edge vs Node 内存不共享），在 logout 路由里 clear 这里的内存是无效的。
+//
+// ⚠️ token **只用作缓存 key**，绝不参与身份判定 —— 缓存里存的 user 仍然来自
+//    被 Auth 服务校验过的 `getUser()` 返回值，**不是**用 `getSession()` 读 cookie 冒充校验。
+const TTL_MS = readCacheTtlMs(process.env.MIDDLEWARE_CACHE_TTL);
+
+/** 认证结果缓存：key = access token；值 = 最小用户信息（只保留代码实际用到的字段） */
+type CachedUser = { id: string; email?: string };
+const authCache = createThreeStateCache<CachedUser>(TTL_MS, 500);
+/** 角色/封禁缓存：key = user id；值 = { role, status } */
+const roleCache = createThreeStateCache<{ role: string | null; status: string | null }>(TTL_MS, 500);
+
+/**
+ * 从请求 Cookie 里取出会话的 access token（仅用作缓存 key）。
+ *
+ * `@supabase/ssr` 把会话存成 `sb-<ref>-auth-token`，值可能是
+ * `base64-<base64url 的 JSON>`，超过 3180 字符时切成 `.0`/`.1`… 分片。
+ * 该包 0.12.7 没有公开这项读取工具（只导出了 `clearAuthCookiesAtScopes`），
+ * 所以这里自己拼一次。**取不到就返回 null → 不缓存**（宁可多查一次，也不猜）。
+ */
+const AUTH_COOKIE_SUFFIX = "-auth-token";
+
+/**
+ * base64url → 字符串。**优先用 Web 标准的 atob**，避免依赖 Node 专有的 Buffer
+ * （中间件可能跑在 Edge runtime 上；万一两者都不可用，调用方会 catch 住并放弃缓存 ——
+ * 也就是退化成「每次都查」，功能不受影响）。
+ */
+function decodeBase64Url(s: string): string {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  if (typeof atob === "function") return atob(padded);
+  return Buffer.from(b64, "base64").toString("binary");
+}
+
+function readAccessToken(request: NextRequest): string | null {
+  try {
+    const ref = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").hostname.split(".")[0];
+    const storageKey = `sb-${ref}${AUTH_COOKIE_SUFFIX}`;
+    const chunks: string[] = [];
+    for (const c of request.cookies.getAll()) {
+      if (c.name === storageKey) {
+        chunks.push(c.value);
+      } else if (c.name.startsWith(`${storageKey}.`)) {
+        const idx = Number(c.name.slice(storageKey.length + 1));
+        if (Number.isInteger(idx)) chunks[idx] = c.value;
+      }
+    }
+    const joined = chunks.filter((x) => typeof x === "string").join("");
+    if (!joined) return null;
+    const raw = joined.startsWith("base64-") ? joined.slice(7) : joined;
+    const session = JSON.parse(decodeBase64Url(raw)) as { access_token?: unknown };
+    return typeof session.access_token === "string" && session.access_token
+      ? session.access_token
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 function matchesPath(pathname: string, paths: string[]) {
   return paths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
@@ -80,9 +160,22 @@ export default async function proxy(request: NextRequest) {
 
   // 必须尽早调用：触发 Token 刷新，并把新会话写入上面的 response。
   // 使用 getUser() 而不是 getSession()，因为它会向 Auth 服务校验 Token。
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  //
+  // 缓存：key = 存下来的 access token。命中则**跳过这次外网往返**。
+  // （token 变了 key 就变，所以不需要额外的失效逻辑；见文件上方长注释。）
+  const token = readAccessToken(request);
+  const cachedAuth = token ? authCache.get(token) : undefined;
+
+  let user: CachedUser | null;
+  if (cachedAuth !== undefined) {
+    user = cachedAuth.value;
+  } else {
+    const {
+      data: { user: fetched },
+    } = await supabase.auth.getUser();
+    user = fetched ? { id: fetched.id, email: fetched.email ?? undefined } : null;
+    if (token) authCache.set(token, user);
+  }
 
   const { pathname, search } = request.nextUrl;
 
@@ -131,15 +224,24 @@ export default async function proxy(request: NextRequest) {
   let status: string | null = null;
 
   if (user && !matchesPath(pathname, BANNED_ALLOWED_PATHS)) {
-    // 受 RLS "users read own role" 策略保护，只能读到自己那一行
-    const { data } = await supabase
-      .from("user_roles")
-      .select("role, status")
-      .eq("user_id", user.id)
-      .maybeSingle();
+    // 缓存：key = user id（这里已经没有 token 了，但 user.id 同样稳定）。
+    // 命中则跳过这次查询；未命中才查库。
+    const cachedRole = roleCache.get(user.id);
+    if (cachedRole !== undefined) {
+      role = cachedRole.value?.role ?? null;
+      status = cachedRole.value?.status ?? null;
+    } else {
+      // 受 RLS "users read own role" 策略保护，只能读到自己那一行
+      const { data } = await supabase
+        .from("user_roles")
+        .select("role, status")
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-    role = data?.role ?? null;
-    status = data?.status ?? null;
+      role = data?.role ?? null;
+      status = data?.status ?? null;
+      roleCache.set(user.id, { role, status });
+    }
 
     // 3) 封禁拦截：status='banned' 的用户访问任何页面都跳到 /banned
     //    API 路径返回 403 JSON，避免前端 fetch 拿到 HTML
