@@ -693,10 +693,13 @@ function askAccessPass(){
 
 /* 探测是否运行在服务器上 */
 function detectServer(){
-  // 集成到 Next 应用：走内置接口，数据存 Supabase
+  // 集成到 Next 应用：只问「我是谁 / 是不是管理员」。
+  // 从前这里打的是 /api/feedback/data（不带参数），会把整棵关键词树拉回来——
+  // 而本函数只用到 d.isAdmin，既慢又是残缺数据（1000 行上限）。
+  // 现改用轻量接口 /api/feedback/mode；关键词一律由 loadCloudScoped() 按维度取。
   if(NEXT_MODE){
     API.mode = 'next';
-    return fetch('/api/feedback/data', {credentials:'same-origin'})
+    return fetch('/api/feedback/mode', {credentials:'same-origin'})
       .then(r=>r.ok ? r.json() : null)
       .then(d=>{
         if(d && d.ok){
@@ -1086,36 +1089,16 @@ function deleteStudentAdapter(name){
   localStorage.setItem(HIST_KEY, JSON.stringify(history));
 }
 /* 拉取服务端数据（next 模式） */
-function bootFromApi(){
-  return fetch('/api/feedback/data', {credentials:'same-origin', cache:'no-store'})
-    .then(r=> r.ok ? r.json() : null)
-    .then(d=>{
-      if(!d || !d.ok) return false;
-      if(d.keywordTree && Object.keys(d.keywordTree).length){
-        // 与默认库合并：保留分类顺序，缺失分类用默认关键词补齐
-        const merged = JSON.parse(JSON.stringify(DEFAULT_DATA));
-        for(const [subj, dd] of Object.entries(d.keywordTree)){
-          if(!dd || !Array.isArray(dd.categories)) continue;
-          const byName = {};
-          dd.categories.forEach(c=>{ if(c && c.name) byName[c.name] = c; });
-          merged[subj] = { categories: CATS.map(c=>{
-            const hit = byName[c.name];
-            return hit
-              ? { name:c.name, keywords:Array.isArray(hit.keywords)?hit.keywords:[] }
-              : { name:c.name, keywords:[...(DEFAULT_DATA[subj]?.categories.find(x=>x.name===c.name)?.keywords || [])] };
-          })};
-          dd.categories.forEach(c=>{
-            if(c && c.name && !CATS.some(x=>x.name===c.name)) merged[subj].categories.push(c);
-          });
-        }
-        allData = merged;
-      }
-      if(Array.isArray(d.phrases) && d.phrases.length) phrases = d.phrases;
-      if(d.students && typeof d.students === 'object') students = d.students;
-      if(d.history && typeof d.history === 'object') history = d.history;
-      return true;
-    })
-    .catch(()=>false);
+/* 把「按维度拉取」的响应里那份基础数据写进内存。
+   基础数据（phrases / students / history）与关键词**同在一个响应里**，
+   所以不再需要单独打一次无参数请求去拿它们。
+   从前 bootFromApi() 就是那个多余请求的发起者，已删除。 */
+function applyScopedBase(d){
+  let changed = false;
+  if(d && Array.isArray(d.phrases) && d.phrases.length){ phrases = d.phrases; changed = true; }
+  if(d && d.students && typeof d.students === 'object'){ students = d.students; changed = true; }
+  if(d && d.history && typeof d.history === 'object'){ history = d.history; changed = true; }
+  return changed;
 }
 
 /* ---- 服务器同步（仅 server 模式生效）----
@@ -1594,6 +1577,9 @@ function applyCloudKeywordStore(){
   })) };
 }
 
+/** 正在飞行的「按维度拉取」请求，key = query string（并发去重用） */
+const _scopedInflight = new Map();
+
 /* 按当前学段/科目/教材/章节拉取云端关键词 */
 function loadCloudScoped(){
   if(!NEXT_MODE) return Promise.resolve();
@@ -1606,11 +1592,18 @@ function loadCloudScoped(){
   if(ch) qs.set('chapter', ch);
   const sh = document.getElementById('syncHint');
   if(sh) sh.textContent = '⏳ 正在载入该学段/科目的关键词…';
-  return fetch('/api/feedback/data?' + qs.toString(), {credentials:'same-origin', cache:'no-store'})
+
+  // 并发去重：同一组参数若已有请求在飞，就直接复用那一个。
+  // 初始化时 fillSubjectSelect / onScopeChanged 可能连续触发，没有这层就会重复请求。
+  const dedupeKey = qs.toString();
+  if(_scopedInflight.has(dedupeKey)) return _scopedInflight.get(dedupeKey);
+
+  const p = fetch('/api/feedback/data?' + qs.toString(), {credentials:'same-origin', cache:'no-store'})
     .then(r=> r.ok ? r.json() : null)
     .then(d=>{
       if(!d || !d.ok){ if(sh) sh.textContent = '⚠️ 关键词载入失败，请刷新重试'; return; }
       cloudData = d;
+      applyScopedBase(d);        // phrases / students / history 与关键词同一个响应，顺手写入
       applyCloudKeywordStore();
       renderTextbookSelect();
       renderGenerate();
@@ -1620,7 +1613,11 @@ function loadCloudScoped(){
       if(sh) sh.textContent = '✓ 已载入云端数据：' + (stageName ? stageName + ' · ' : '')
         + (SUBJECT_NAME[subject] || subject) + extra + '，共 ' + total + ' 个关键词';
     })
-    .catch(()=>{ if(sh) sh.textContent = '⚠️ 关键词载入失败（网络错误）'; });
+    .catch(()=>{ if(sh) sh.textContent = '⚠️ 关键词载入失败（网络错误）'; })
+    .finally(()=>{ _scopedInflight.delete(dedupeKey); });
+
+  _scopedInflight.set(dedupeKey, p);
+  return p;
 }
 
 /* 学段变化：重置下游选择并重新载入 */
@@ -1719,8 +1716,7 @@ function wireBookGrids(cats){
 }
 function renderGenerate(){
   const cats = getCategories();
-  const subj = getSubject();
-  const useBookGrid = NEXT_MODE ? mathBookIsUsable() : mathBookIsUsable();
+  const useBookGrid = mathBookIsUsable();
   let html = '';
   cats.forEach((cat, ci)=>{
     const isBook = (useBookGrid && (cat.name==='课堂内容' || cat.name==='下节课内容'));
@@ -1729,7 +1725,12 @@ function renderGenerate(){
       // 课本知识点面板 + 该分类在关键词库里的词（两者互补：选到具体教材时网格就是该册章节词）
       body = bookTopicsBlock(ci, cat.name);
     }
-    if(cat.keywords && cat.keywords.length){
+    // 选了教材之后，「课本」网格里已经是该册的章节词，而后端会把同一批章节词
+    // 也塞进 categoryKeywords —— 于是下面这个「关键词库」网格会与课本网格**完全重复**。
+    // 所以选到教材时就不再渲染关键词库（只针对这两个课本分类；其余 6 个分类没有课本面板，必须保留）。
+    // 取消选择教材后 selectedBookTopics() 变回 null，下一次 renderGenerate() 自动恢复，无需额外分支。
+    const bookCoversKeywords = isBook && selectedBookTopics() !== null;
+    if(cat.keywords && cat.keywords.length && !bookCoversKeywords){
       body += (isBook ? `<div class="tip" style="margin-top:10px">关键词库（${cat.keywords.length} 条）</div>` : '')
         + `<div class="grid">` + cat.keywords.map((kw,ki)=>`
           <label class="chip"><input type="checkbox" data-cat-index="${ci}" data-kw-index="${ki}" data-keyword="${esc(kw)}">${esc(kw)}</label>`).join('') + `</div>`;
@@ -2544,20 +2545,18 @@ function init(){
         : '☁️ 云端版 — 关键词库来自服务器；档案与历史保存在你的账号下';
       const sh = document.getElementById('syncHint');
       if(sh) sh.textContent = '✅ AI 润色由服务器代理（会员专属）';
-      return bootFromApi().then(okp=>{
-        if(okp){
-          renderStuList(); renderHist(); renderPhrases();
-          // 关键词按「学段 × 科目 × 教材/章节」维度单独拉取
-          try{
-            const st = localStorage.getItem(CLOUD_STAGE_KEY);
-            if(st) $('#stageSelect').value = st;
-            fillSubjectSelect();
-            const sb = localStorage.getItem(CLOUD_SUBJ_KEY);
-            if(sb && subjectsForStage(getStage()).some(x=>x.code===sb)) $('#subjectSelect').value = sb;
-          }catch(e){}
-          return loadCloudScoped().then(()=>{ renderManage(); });
-        }
-        if(sh) sh.textContent = '⚠️ 云端数据载入失败，请刷新重试';
+      // 先把「学段 / 科目」下拉恢复成上次选择，再拉一次带维度的数据。
+      // 这一步同时带回 phrases / students / history（见 applyScopedBase），
+      // 所以不再需要单独打一次无参数请求（原 bootFromApi 已删除）。
+      try{
+        const st = localStorage.getItem(CLOUD_STAGE_KEY);
+        if(st) $('#stageSelect').value = st;
+        fillSubjectSelect();
+        const sb = localStorage.getItem(CLOUD_SUBJ_KEY);
+        if(sb && subjectsForStage(getStage()).some(x=>x.code===sb)) $('#subjectSelect').value = sb;
+      }catch(e){}
+      return loadCloudScoped().then(()=>{
+        renderStuList(); renderHist(); renderPhrases(); renderManage();
       });
     }
     if(isServer){

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth-role";
+import { invalidateKeywords } from "@/lib/feedback-db";
 import { createClient } from "@/lib/supabase/server";
 
 export type KeywordActionResult = {
@@ -37,6 +38,10 @@ function revalidate() {
   revalidatePath("/admin/feedback-keywords");
   // 工具页的关键词来自同一份数据，也一并刷新
   revalidatePath("/tools/feedback");
+  // ⚠️ revalidatePath 只清**路由缓存**，清不掉 getKeywords() 的**进程内 TTL 缓存**
+  //    （实测过：调完 revalidatePath 再请求，仍然不查库、仍是旧值）。
+  //    所以这里必须显式清一次，否则改完关键词最多 30 秒后工具页才更新。
+  invalidateKeywords();
 }
 
 // ============================================================

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth-role";
+import { invalidateKeywords } from "@/lib/feedback-db";
 import { createClient } from "@/lib/supabase/server";
 
 export type CandidateActionResult = {
@@ -34,6 +35,8 @@ function revalidate() {
   revalidatePath("/admin/feedback-candidates");
   revalidatePath("/admin/feedback-keywords");
   revalidatePath("/tools/feedback");
+  // 同上：revalidatePath 清不掉 getKeywords() 的进程内缓存，必须显式清
+  invalidateKeywords();
 }
 
 // ============================================================

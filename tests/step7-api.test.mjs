@@ -145,6 +145,12 @@ const EXPECT = {
   mathSeniorGenericContent: await dbCount((q) => q.eq("subject", "math").eq("stage", "senior").eq("category", "课堂内容").is("chapter_id", null)),
   mathSeniorGenericNext: await dbCount((q) => q.eq("subject", "math").eq("stage", "senior").eq("category", "下节课内容").is("chapter_id", null)),
   mathSeniorPerf: await dbCount((q) => q.eq("subject", "math").eq("stage", "senior").eq("category", "课堂表现（正面）")),
+  // 教材数从库里查，不写死。写死会随数据增长而失效：
+  // 从前这里断言 10 / 3 / 1，而库里实际已是 29 / 21 / 6（多出的是 name='-' 的占位教材），
+  // 接口并没有过滤错 —— 是断言本身过时了。
+  mathSeniorBooks: (await db.from("feedback_textbooks").select("*", { count: "exact", head: true }).eq("stage", "senior").eq("subject", "math")).count,
+  mathJuniorBooks: (await db.from("feedback_textbooks").select("*", { count: "exact", head: true }).eq("stage", "junior").eq("subject", "math")).count,
+  chineseSeniorBooks: (await db.from("feedback_textbooks").select("*", { count: "exact", head: true }).eq("stage", "senior").eq("subject", "chinese")).count,
 };
 const bookRow = (await db.from("feedback_textbooks").select("id, version, name")
   .eq("version", "人教A版").eq("name", "必修第一册").maybeSingle()).data;
@@ -156,15 +162,16 @@ console.log("权威期望值:", JSON.stringify(EXPECT));
 try {
   await login(adminEmail);
 
-  // ============ 1. 向后兼容 ============
-  console.log("\n--- 1. 向后兼容（不带参数）---");
+  // ============ 1. 维度参数现在是必传的 ============
+  console.log("\n--- 1. 不带参数必须被拒绝 ---");
   {
+    // 从前这里是「向后兼容：不带参数返回整棵 keywordTree」。
+    // 但那个分支受 PostgREST 1000 行上限影响，8992 行里只返回 1000 行
+    // （静默丢 89% 数据，旧断言写的 634 条早已不符），故改为强制带维度参数。
     const j = await api("");
-    record("不带参数仍返回 keywordTree", j.ok === true && !!j.keywordTree, `status=${j.status}`);
-    const total = Object.values(j.keywordTree ?? {}).reduce((n, s) => n + s.categories.reduce((m, c) => m + c.keywords.length, 0), 0);
-    record("全量关键词 634 条（未归档）", total === 634, `${total}`);
-    record("归档词未泄漏（数学课堂内容 55-24+94=125）", j.keywordTree?.math?.categories?.find((c) => c.name === "课堂内容")?.keywords.length === 125,
-      `实际 ${j.keywordTree?.math?.categories?.find((c) => c.name === "课堂内容")?.keywords.length}`);
+    record("不带参数返回 400", j.status === 400, `status=${j.status}`);
+    record("400 带 scope_required 标记", j.code === "scope_required", `code=${j.code}`);
+    record("不再返回残缺的 keywordTree", !j.keywordTree, `keywordTree=${j.keywordTree ? "有" : "无"}`);
   }
 
   // ============ 2. 按学段+科目过滤 ============
@@ -174,7 +181,7 @@ try {
     record("stage/subject 生效", j.ok === true && j.stage === "senior" && j.subject === "math", `stage=${j.stage} subject=${j.subject}`);
     record("返回 8 个分类（来自数据库）", (j.categories ?? []).length === 8, `${(j.categories ?? []).length}`);
     record("hasTextbook=true（数学有教材）", j.hasTextbook === true, `${j.hasTextbook}`);
-    record("返回 10 本数学教材", (j.textbooks ?? []).length === 10, `${(j.textbooks ?? []).length} 本`);
+    record(`返回 ${EXPECT.mathSeniorBooks} 本数学教材（按 subject 过滤）`, (j.textbooks ?? []).length === EXPECT.mathSeniorBooks, `${(j.textbooks ?? []).length} 本`);
     record("未选章节时章节清单为空", (j.chapters ?? []).length === 0, `${(j.chapters ?? []).length}`);
     const content = j.categoryKeywords?.["课堂内容"] ?? [];
     const next = j.categoryKeywords?.["下节课内容"] ?? [];
@@ -228,9 +235,9 @@ try {
     const j2 = await api("?stage=senior&subject=general");
     record("通用科目 hasTextbook=false", j2.hasTextbook === false, `${j2.hasTextbook}`);
     const j3 = await api("?stage=junior&subject=math");
-    record("初中数学有 3 本教材", (j3.textbooks ?? []).length === 3, `${(j3.textbooks ?? []).length}`);
+    record(`初中数学有 ${EXPECT.mathJuniorBooks} 本教材`, (j3.textbooks ?? []).length === EXPECT.mathJuniorBooks, `${(j3.textbooks ?? []).length}`);
     const j4 = await api("?stage=senior&subject=chinese");
-    record("高中语文教材=统编版 1 本", (j4.textbooks ?? []).length === 1, `${(j4.textbooks ?? []).length}`);
+    record(`高中语文有 ${EXPECT.chineseSeniorBooks} 本教材`, (j4.textbooks ?? []).length === EXPECT.chineseSeniorBooks, `${(j4.textbooks ?? []).length}`);
   }
 
   // ============ 6. 非法参数被忽略 ============
@@ -247,7 +254,7 @@ try {
   {
     await login(userEmail);
     const j = await api("?stage=senior&subject=math");
-    record("普通用户可读维度数据", j.ok === true && (j.textbooks ?? []).length === 10, `教材 ${(j.textbooks ?? []).length}`);
+    record("普通用户可读维度数据", j.ok === true && (j.textbooks ?? []).length === EXPECT.mathSeniorBooks, `教材 ${(j.textbooks ?? []).length}`);
     record("普通用户非管理员", j.isAdmin === false, `${j.isAdmin}`);
   }
   {

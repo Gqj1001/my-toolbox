@@ -2,9 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
 import {
   assembleCategoryKeywords,
-  buildKeywordTree,
   getCategories,
   getChapters,
+  getChaptersByTextbookIds,
   getHistory,
   getKeywords,
   getPhrases,
@@ -23,9 +23,12 @@ import { createClient } from "@/lib/supabase/server";
  * 因此 RLS 会对 feedback_students / feedback_history 自动按 auth.uid() 隔离，
  * 前端无法越权访问他人数据。
  *
- * GET    /api/feedback/data                    拉取全部关键词树（向后兼容）
- * GET    /api/feedback/data?stage=&subject=…    按「学段 × 科目」拉取
+ * GET    /api/feedback/data?stage=&subject=…    按「学段 × 科目」拉取（**必传**）
  *        可选 &textbook=<id>&chapter=<id>       进一步限定教材/章节
+ *        ⚠️ 不带维度参数 → 400 scope_required。
+ *           从前这里返回「全量关键词树」，但 PostgREST 默认只给 1000 行，
+ *           而未归档关键词已达 8992 行 —— 那个分支一直在静默丢 89% 的数据，故移除。
+ *           工具页改用 GET /api/feedback/mode 取身份，关键词一律按维度拉。
  * POST   /api/feedback/data  { op: 'student' | 'history', ... }   写入
  * DELETE /api/feedback/data?student=姓名        删除档案（同时删其历史）
  * DELETE /api/feedback/data?id=<historyId>      删除单条历史
@@ -65,43 +68,77 @@ export async function GET(request: NextRequest) {
     chapter: sp.get("chapter"),
   });
 
-  const [phrases, students, history] = await Promise.all([getPhrases(), getStudents(), getHistory()]);
-  const base = {
-    ok: true as const,
-    // 当前登录用户（前端用于区分档案归属、调试）
-    userId: guard.user.id,
-    email: guard.user.email ?? null,
-    phrases: phrases.map((p) => p.phrase),
-    // 按 user_id 隔离（RLS）
-    students: studentsByName(students),
-    history: historyByStudent(history),
-    // 前端据此决定是否显示「管理关键词」入口
-    isAdmin: guard.role === "admin",
-  };
-
   // ---------- 带维度参数：只取所需关键词，并附上分类/教材/章节清单 ----------
   if (hasScope) {
     const { stage, subject, textbookId, chapterId } = scope;
+
+    // 基础数据（短语 / 档案 / 历史）与关键词无关，但前端每次打开都要。
+    // 从前它们在函数最开头无条件查，导致**每次请求都白付约 780ms**（实测 308+148+324）；
+    // 现在收进本分支并与下面的查询并发，取消选课时不再触发。
+    const [phrases, students, history] = await Promise.all([
+      getPhrases(),
+      getStudents(),
+      getHistory(),
+    ]);
+
     const categories = stage || subject ? await getCategories(stage) : await getCategories();
     const categoryNames = categories.map((c) => c.name);
 
-    const textbooks = subject ? await getTextbooks({ stage, subject }) : await getTextbooks({ stage });
-    const chapters = textbookId ? await getChapters(textbookId) : [];
+    // ⚠️ 必须同时按 subject 过滤：只按 stage 会把该学段**所有科目**的教材都捞回来
+    //    （senior 有 129 本），下面的章节查询会跟着放大成 129 次。
+    const textbooks = subject
+      ? await getTextbooks({ stage, subject })
+      : await getTextbooks({ stage });
 
-    // 每本教材附上自己的章节名（供工具页在云端模式下渲染「课本知识点」面板）
-    const textbooksWithTopics = await Promise.all(
-      textbooks.map(async (t) => {
-        const chs = t.id === textbookId && chapters.length ? chapters : await getChapters(t.id);
-        return {
-          id: t.id,
-          name: t.name,
-          version: t.version,
-          stage: t.stage,
-          subject: t.subject,
-          topics: chs.map((c) => c.name),
-        };
-      }),
-    );
+    // 只查「当前选中教材」的章节。
+    // 从前这里对每本教材各查一次章节（N+1）：senior+math 会发 29 次、每次约 124ms。
+    // 而前端只有「已选中那本」会用到 topics（selectedBookTopics()），
+    // 教材下拉只用 version / name / id —— 所以其余教材的章节名是白拿的。
+    // 例外：没指定册次时，册次下拉仍需要各册的章节数，见下面 fallback。
+    const selectedBookChapters = textbookId ? await getChapters(textbookId) : [];
+
+    const base = {
+      ok: true as const,
+      // 当前登录用户（前端用于区分档案归属、调试）
+      userId: guard.user.id,
+      email: guard.user.email ?? null,
+      phrases: phrases.map((p) => p.phrase),
+      // 按 user_id 隔离（RLS）
+      students: studentsByName(students),
+      history: historyByStudent(history),
+      // 前端据此决定是否显示「管理关键词」入口
+      isAdmin: guard.role === "admin",
+    };
+
+    let fallbackTopics: Map<number, string[]> | null = null;
+    if (!textbookId && textbooks.length) {
+      // 只走一次查询：把该科目全部教材的章节一次取回，在内存里按教材分组。
+      // 这样「不指定册次」时下拉仍有册次信息，且总请求数固定为 1（不是 N）。
+      const all = await getChaptersByTextbookIds(textbooks.map((t) => t.id));
+      fallbackTopics = new Map();
+      for (const ch of all) {
+        const list = fallbackTopics.get(ch.textbook_id) ?? [];
+        list.push(ch.name);
+        fallbackTopics.set(ch.textbook_id, list);
+      }
+    }
+
+    const isSelectedBook = (id: number) => String(id) === String(textbookId);
+    const topicsFor = (t: (typeof textbooks)[number]): string[] => {
+      if (isSelectedBook(t.id)) return selectedBookChapters.map((c) => c.name);
+      return fallbackTopics?.get(t.id) ?? [];
+    };
+
+    const textbooksWithTopics = textbooks.map((t) => ({
+      id: t.id,
+      name: t.name,
+      version: t.version,
+      stage: t.stage,
+      subject: t.subject,
+      topics: topicsFor(t),
+    }));
+
+    const chapters = textbookId ? selectedBookChapters : [];
 
     // 当前维度下的关键词，分两类：
     //   ① 通用词：教材/章节都为空的词（内容类的通用词 + 6 个通用分类的词）
@@ -154,12 +191,20 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // ---------- 不带参数：保留原有的全量关键词树（向后兼容） ----------
-  const keywords = await getKeywords();
-  return NextResponse.json({
-    ...base,
-    keywordTree: buildKeywordTree(keywords),
-  });
+  // ---------- 不带参数：不再返回全量关键词树 ----------
+  // 从前这里返回「全量关键词树」（向后兼容）。但 PostgREST 默认只返回 1000 行，
+  // 而 feedback_keywords 未归档已达 8992 行 —— 也就是说这个分支**一直在静默丢 89% 的数据**，
+  // 前端拿到的是一棵残缺的树。既慢又错，故改为明确拒绝：
+  //   · 工具页的 detectServer 改用轻量接口 /api/feedback/mode（只取 isAdmin）
+  //   · 工具页的 bootFromApi 在 NEXT_MODE 下跳过（关键词一律由 loadCloudScoped 按维度取）
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "该接口需要指定维度参数。请使用 ?stage=&subject=（可选 &textbook=&chapter=）。",
+      code: "scope_required",
+    },
+    { status: 400 },
+  );
 }
 
 /**

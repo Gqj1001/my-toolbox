@@ -88,6 +88,43 @@ const KEYWORD_COLUMNS =
   "id, subject, category, keyword, sort_order, stage, textbook_id, chapter_id, chapter_name";
 
 /**
+ * 关键词库的进程内 TTL 缓存（30 秒）。
+ *
+ * 为什么只缓存「不带 category 的按维度查询」：那是工具页每次打开都要跑的那条，
+ * 且结果**全用户共享**（RLS 是 using(true)，不区分用户），最适合缓存。
+ * 带 category 的查询（管理后台用）不走缓存，避免后台改动看不到。
+ *
+ * ⚠️ 不用 `unstable_cache`：它在 Next 16.3.8 下会让函数返回空数组（tools 表已实测踩过）。
+ * 缓存键用「被 scope 实际影响的过滤条件」拼出来，避免不同 scope 互相污染。
+ */
+const KEYWORD_TTL_MS = 30_000;
+const keywordCache = new Map<string, { rows: KeywordRow[]; at: number }>();
+const keywordInflight = new Map<string, Promise<KeywordRow[]>>();
+
+/** 清掉关键词缓存（改过关键词表之后调用；本进程立即生效）
+ *
+ *  名字用 invalidate* 而不是 revalidate*，是为了跟 Next 的 revalidatePath /
+ *  revalidateTag 区分开 —— 那两者都**清不掉**这个进程内缓存（实测过）。
+ *  调用点：admin/feedback-keywords/actions.ts 与 admin/feedback-candidates/actions.ts
+ *  各自的 revalidate()（所有写操作都会经过它）。 */
+export function invalidateKeywords() {
+  keywordCache.clear();
+  keywordInflight.clear();
+}
+
+/** 把 scope 规范化成缓存键（只含真正参与过滤的维度） */
+function keywordCacheKey(scope: KeywordScope): string {
+  const has = (k: keyof KeywordScope) => Object.prototype.hasOwnProperty.call(scope, k);
+  return JSON.stringify([
+    scope.stage ?? null,
+    scope.subject ?? null,
+    scope.category ?? null,
+    has("textbookId") ? (scope.textbookId ?? "null") : "any",
+    has("chapterId") ? (scope.chapterId ?? "null") : "any",
+  ]);
+}
+
+/**
  * 读取关键词。
  *
  * scope 语义（都是「不传 = 不过滤」）：
@@ -99,6 +136,30 @@ const KEYWORD_COLUMNS =
  * 已归档（archived_at 不为空）的行永远不返回。
  */
 export async function getKeywords(scope: KeywordScope = {}): Promise<KeywordRow[]> {
+  // 只有「工具页会用到、且结果与用户无关」的那类查询才走缓存（见 KEYWORD_TTL_MS 注释）。
+  const cacheable = !scope.category;
+  const key = cacheable ? keywordCacheKey(scope) : "";
+
+  if (cacheable) {
+    const hit = keywordCache.get(key);
+    if (hit && Date.now() - hit.at < KEYWORD_TTL_MS) return hit.rows;
+    const flying = keywordInflight.get(key);
+    if (flying) return flying;
+  }
+
+  const run = loadKeywords(scope).then((rows) => {
+    if (cacheable) keywordCache.set(key, { rows, at: Date.now() });
+    return rows;
+  }).finally(() => {
+    if (cacheable) keywordInflight.delete(key);
+  });
+
+  if (cacheable) keywordInflight.set(key, run);
+  return run;
+}
+
+/** 实际查库（不含缓存） */
+async function loadKeywords(scope: KeywordScope = {}): Promise<KeywordRow[]> {
   const supabase = await createClient();
   let q = supabase
     .from("feedback_keywords")
@@ -132,7 +193,7 @@ export async function getKeywords(scope: KeywordScope = {}): Promise<KeywordRow[
 /** 读取通用分类（数据库为权威来源，含 stage/subject 为空的全局分类） */
 export async function getCategories(stage?: string | null): Promise<CategoryRow[]> {
   const supabase = await createClient();
-  let q = supabase
+  const q = supabase
     .from("feedback_categories")
     .select("id, name, sort_order, stage, subject, active")
     .eq("active", true);
@@ -193,6 +254,32 @@ export async function getChapters(textbookId: number): Promise<ChapterRow[]> {
 
   if (error) {
     console.error("[feedback] 读取章节失败:", error.code, error.message);
+    return [];
+  }
+  return (data ?? []) as ChapterRow[];
+}
+
+/**
+ * 一次读取多本教材的章节（用 in 过滤，**一条查询**）。
+ *
+ * 为什么需要它：从前接口对每本教材各查一次章节（N+1）——
+ * senior+math 会发 29 次、senior 全科目会发 129 次，每次约 124ms。
+ * 调用方拿回结果后按 textbook_id 自行分组即可。
+ */
+export async function getChaptersByTextbookIds(textbookIds: number[]): Promise<ChapterRow[]> {
+  const ids = textbookIds.filter((n) => Number.isFinite(n));
+  if (!ids.length) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("feedback_chapters")
+    .select("id, textbook_id, name, sort_order")
+    .in("textbook_id", ids)
+    .order("textbook_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error) {
+    console.error("[feedback] 批量读取章节失败:", error.code, error.message);
     return [];
   }
   return (data ?? []) as ChapterRow[];
