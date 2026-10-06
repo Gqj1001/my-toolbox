@@ -122,8 +122,46 @@ export async function POST(request: NextRequest) {
     const out: string | undefined = data?.choices?.[0]?.message?.content;
 
     if (!out || !out.trim()) {
+      // ⚠️ 这条分支以前**不打任何日志**，导致「AI 返回内容为空」这个偶发问题
+      //    在线上完全查不出原因（上游响应读完就丢）。
+      //    这里只记录**结构信息**，用于判断到底是什么形态：
+      //      · contentLen=0 + reasoningLen>0  → 模型把答案放进了 reasoning_content
+      //        （DeepSeek 思考型模型的已知问题，见 deepseek-ai/DeepSeek-V3 issue #1673 / #1610）
+      //      · finish_reason="length"        → 被 max_tokens 截断
+      //      · finish_reason="content_filter" → 被内容策略拦截
+      //      · choices 整体缺失              → 上游返回了非预期结构
+      //    **绝不记录正文内容、不记录 AI Key。**
+      console.error(
+        "[feedback/ai] 上游 200 但内容为空 | 诊断:",
+        JSON.stringify({
+          model,
+          finish_reason: data?.choices?.[0]?.finish_reason ?? null,
+          choiceCount: Array.isArray(data?.choices) ? data.choices.length : null,
+          contentLen: typeof out === "string" ? out.length : null,
+          hasMessage: !!data?.choices?.[0]?.message,
+          hasReasoningContent: !!data?.choices?.[0]?.message?.reasoning_content,
+          reasoningLen: data?.choices?.[0]?.message?.reasoning_content?.length ?? 0,
+          usage: data?.usage ?? null,
+          inputChars: text.length,
+        }),
+      );
       return NextResponse.json({ ok: false, error: "AI 返回内容为空。" }, { status: 502 });
     }
+
+    // 成功路径也留一行低噪声日志：以后对比「成功 vs 为空」时，
+    // reasoningLen 与 completion_tokens 的差异往往就是答案所在。
+    console.log(
+      "[feedback/ai] 成功 | 诊断:",
+      JSON.stringify({
+        model,
+        finish_reason: data?.choices?.[0]?.finish_reason ?? null,
+        outChars: out.trim().length,
+        reasoningLen: data?.choices?.[0]?.message?.reasoning_content?.length ?? 0,
+        completion_tokens: data?.usage?.completion_tokens ?? null,
+        reasoning_tokens: data?.usage?.completion_tokens_details?.reasoning_tokens ?? null,
+        inputChars: text.length,
+      }),
+    );
 
     // 只回正文，绝不回传 key / 模型配置
     return NextResponse.json({ ok: true, text: out.trim() });

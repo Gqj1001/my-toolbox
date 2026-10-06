@@ -116,12 +116,44 @@ export async function POST(request: NextRequest) {
     }
 
     const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{
+        finish_reason?: string;
+        message?: { content?: string; reasoning_content?: string };
+      }>;
+      usage?: Record<string, unknown>;
     };
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
     if (!text) {
+      // ⚠️ 与 feedback/ai 同样的诊断缺口：这条分支以前不打日志，
+      //    「AI 返回内容为空」在线上无法定位。只记录结构信息，不记录正文与 Key。
+      console.error(
+        "[paper-analysis/ai-advice] 上游 200 但内容为空 | 诊断:",
+        JSON.stringify({
+          model,
+          finish_reason: data.choices?.[0]?.finish_reason ?? null,
+          choiceCount: Array.isArray(data.choices) ? data.choices.length : null,
+          hasMessage: !!data.choices?.[0]?.message,
+          hasReasoningContent: !!data.choices?.[0]?.message?.reasoning_content,
+          reasoningLen: data.choices?.[0]?.message?.reasoning_content?.length ?? 0,
+          usage: data.usage ?? null,
+          inputChars: payload.length,
+        }),
+      );
       return NextResponse.json({ ok: false, error: "AI 返回内容为空，请重试。" }, { status: 502 });
     }
+
+    // 成功路径同样留一行低噪声日志，便于与「为空」那几次做对比
+    console.log(
+      "[paper-analysis/ai-advice] 成功 | 诊断:",
+      JSON.stringify({
+        model,
+        finish_reason: data.choices?.[0]?.finish_reason ?? null,
+        outChars: text.length,
+        reasoningLen: data.choices?.[0]?.message?.reasoning_content?.length ?? 0,
+        completion_tokens: (data.usage as { completion_tokens?: number } | undefined)?.completion_tokens ?? null,
+        inputChars: payload.length,
+      }),
+    );
 
     return NextResponse.json({ ok: true, text });
   } catch (e) {
