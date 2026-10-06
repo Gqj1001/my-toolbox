@@ -49,6 +49,11 @@ const checks = [
   ["#textbookSelect 元素", /id="textbookSelect"/],
   ["生物科目", /code:'biology'/],
   ["地理科目", /code:'geography'/],
+  // 云端启动流程（2026-10 重写：不再先渲染 localStorage）
+  ["initCloud 函数", /function initCloud\(/],
+  ["启动骨架元素 #appSkeleton", /id="appSkeleton"/],
+  ["cloudBootFailed 函数", /function cloudBootFailed\(/],
+  ["云端总预算常量", /CLOUD_BOOT_TIMEOUT_MS/],
 ];
 console.log("\n=== 结构确认 ===");
 for (const [label, re] of checks) {

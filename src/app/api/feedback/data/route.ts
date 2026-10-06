@@ -31,7 +31,11 @@ import { getViewer } from "@/lib/viewer";
  *        ⚠️ 不带维度参数 → 400 scope_required。
  *           从前这里返回「全量关键词树」，但 PostgREST 默认只给 1000 行，
  *           而未归档关键词已达 8992 行 —— 那个分支一直在静默丢 89% 的数据，故移除。
- *           工具页改用 GET /api/feedback/mode 取身份，关键词一律按维度拉。
+ *           关键词一律按维度拉取；响应里同时带回 categories / textbooks / chapters
+ *           / categoryKeywords / phrases / students / history / isAdmin。
+ *           ⚠️ 2026-10：工具页启动**不再**先打 /api/feedback/mode 取身份 ——
+ *              `isAdmin` 就在本接口的响应里，云端模式的首屏只打这一次请求。
+ *              （多那一跳会多跑一次中间件：auth 校验 + user_roles 查询。）
  * POST   /api/feedback/data  { op: 'student' | 'history', ... }   写入
  * DELETE /api/feedback/data?student=姓名        删除档案（同时删其历史）
  * DELETE /api/feedback/data?id=<historyId>      删除单条历史
@@ -209,8 +213,8 @@ export async function GET(request: NextRequest) {
   // 从前这里返回「全量关键词树」（向后兼容）。但 PostgREST 默认只返回 1000 行，
   // 而 feedback_keywords 未归档已达 8992 行 —— 也就是说这个分支**一直在静默丢 89% 的数据**，
   // 前端拿到的是一棵残缺的树。既慢又错，故改为明确拒绝：
-  //   · 工具页的 detectServer 改用轻量接口 /api/feedback/mode（只取 isAdmin）
-  //   · 工具页的 bootFromApi 在 NEXT_MODE 下跳过（关键词一律由 loadCloudScoped 按维度取）
+  //   · 工具页云端模式下直接调本接口（带维度参数）拿全部数据（含 isAdmin）
+  //   · 关键词一律由 loadCloudScoped 按维度取
   return NextResponse.json(
     {
       ok: false,

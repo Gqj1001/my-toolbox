@@ -56,6 +56,26 @@ header .spacer{flex:1}
 .wrap{display:grid;grid-template-columns:330px 1fr;gap:16px;padding:16px;align-items:start;
       max-width:1500px;margin:0 auto}
 
+/* 启动骨架（云端模式专用，纯静态、不发任何请求）。
+   绝对定位盖在 .wrap 上；隐藏时整块 hidden（display:none），不会挡住点击。 */
+.wrap{position:relative}
+.app-skeleton{position:absolute;inset:0;z-index:20;background:var(--bg);
+  padding:16px;max-width:1500px;margin:0 auto}
+.app-skeleton[hidden]{display:none}
+.sk-row{display:grid;grid-template-columns:330px 1fr;gap:16px;align-items:start}
+.sk-row.sk-gap8{grid-template-columns:none;display:flex;gap:8px}
+.sk-panel{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);padding:14px}
+.sk{background:#e9edf3;border-radius:8px;height:14px;animation:skPulse 1.3s ease-in-out infinite}
+@keyframes skPulse{0%,100%{opacity:1}50%{opacity:.55}}
+.sk-h26{height:26px}.sk-h28{height:28px}.sk-h34{height:34px}
+.sk-mt8{margin-top:8px}.sk-mt12{margin-top:12px}.sk-mt16{margin-top:16px}.sk-mt18{margin-top:18px}
+.sk-w16{width:16%}.sk-w20{width:20%}.sk-w24{width:24%}.sk-w30{width:30%}
+.sk-w40{width:40%}.sk-w60{width:60%}.sk-w90{width:90%}.sk-w100{width:100%}
+.sk-chips{display:flex;flex-wrap:wrap;gap:8px}
+.sk-chip{width:88px;height:26px;border-radius:999px}
+.sk-msg{margin-top:14px;text-align:center;font-size:13px;color:var(--ink2)}
+@media (max-width:1080px){.sk-row{grid-template-columns:1fr}}
+
 /* 手机上显示的三个区块（桌面端三栏并排；≤1080px 改为单列纵向滚动，全部可见） */
 
 /* 移动端底部悬浮操作条 */
@@ -364,6 +384,48 @@ header .spacer{flex:1}
 </div>
 
 <div class="wrap">
+  <!-- ==================== 启动骨架（纯静态，云端模式下盖住整页） ====================
+       ⚠️ 存在的理由：这个工具在云端模式下要打一次 /api/feedback/data 才能拿到全部数据
+       （关键词库 / 档案 / 历史 / 教材 / isAdmin）。在那之前**不能**先用 localStorage 渲染 ——
+       否则用户会先看到「💾 本机版 + 旧关键词」，几秒后才切成「☁️ 云端版 + 新数据」，
+       而且真正的问题是：他可能拿旧数据生成了反馈。
+       所以：云端模式下先用这层静态骨架盖住，数据到了再一次性渲染。
+       它**不依赖任何 API、不发任何请求**，纯灰块。 -->
+  <div id="appSkeleton" class="app-skeleton" hidden aria-busy="true">
+    <div class="sk-row">
+      <div class="sk-panel">
+        <div class="sk sk-w40"></div>
+        <div class="sk sk-h28 sk-mt12"></div>
+        <div class="sk sk-h28 sk-mt8"></div>
+        <div class="sk sk-h34 sk-mt8"></div>
+        <div class="sk sk-w60 sk-mt16"></div>
+        <div class="sk sk-h28 sk-mt8"></div>
+        <div class="sk sk-h28 sk-mt8"></div>
+      </div>
+      <div class="sk-panel">
+        <div class="sk-row sk-gap8">
+          <div class="sk sk-w20 sk-h26"></div>
+          <div class="sk sk-w24 sk-h26"></div>
+          <div class="sk sk-w16 sk-h26"></div>
+        </div>
+        <div class="sk sk-w30 sk-mt16"></div>
+        <div class="sk-chips sk-mt8">
+          <div class="sk sk-chip"></div><div class="sk sk-chip"></div><div class="sk sk-chip"></div>
+          <div class="sk sk-chip"></div><div class="sk sk-chip"></div><div class="sk sk-chip"></div>
+          <div class="sk sk-chip"></div><div class="sk sk-chip"></div>
+        </div>
+        <div class="sk sk-w30 sk-mt18"></div>
+        <div class="sk-chips sk-mt8">
+          <div class="sk sk-chip"></div><div class="sk sk-chip"></div><div class="sk sk-chip"></div>
+          <div class="sk sk-chip"></div><div class="sk sk-chip"></div>
+        </div>
+        <div class="sk sk-w100 sk-mt18"></div>
+        <div class="sk sk-w90 sk-mt8"></div>
+        <div class="sk sk-w100 sk-mt8"></div>
+      </div>
+    </div>
+    <div class="sk-msg" id="appSkeletonMsg">⏳ 正在载入云端数据…</div>
+  </div>
   <!-- ==================== 左：参数 ==================== -->
   <div class="col on" id="cSetup">
     <div class="panel" style="margin-bottom:14px">
@@ -644,13 +706,30 @@ const HIST_KEY    = 'feedback_history_v1';
    · 部署到服务器打开  → MODE='server'，关键词库全员共享、AI Key 只存在服务器
    同一份 HTML 两种模式自动切换，无需改代码。
    ========================================================================== */
+/* ⚠️ API.mode 在这里就**同步**定好初值（见下面 NEXT_MODE 的说明）。
+   云端模式下如果等到异步回调里才设 'next'，徽章会先显示「💾 本机版」再跳成「☁️ 云端版」——
+   那正是要消灭的闪烁。'connecting' 是云端模式「数据还没到」的中间态。 */
 const API = { mode:'local', isAdmin:false, serverCfg:{}, writeToken:'' };
 
 /* 集成到 Next 应用时使用内置接口；离线双击打开仍是 local 模式。
    注意：iframe 加载的是 /tools/feedback.html，因此用 startsWith 匹配前缀，
-   让 /tools/feedback 与 /tools/feedback.html 都识别为云端模式。 */
+   让 /tools/feedback 与 /tools/feedback.html 都识别为云端模式。
+
+   ⚠️ 这是**纯本地判断**（只看 protocol 与 pathname），页面加载时即确定，
+   与任何请求无关 —— 所以启动流程不需要先问服务器「我是谁」。
+   云端模式下 API.mode 直接定为 'next'（见下方 API 对象）。 */
 const NEXT_MODE = (location.protocol === 'http:' || location.protocol === 'https:')
   && location.pathname.replace(/\/+$/,'').startsWith('/tools/feedback');
+
+// 立刻把「云端模式」定下来（本地判断，不问服务器）。
+// 数据还没到，所以先进 'connecting'；initCloud() 拿到数据后才切成 'next'。
+// 非云端模式保持 'local'，由 detectServer() 决定是否升为 'server'。
+if(NEXT_MODE) API.mode = 'connecting';
+
+/** 启动骨架最长等待时间（总预算，从 init 的云端分支开始计时）。
+ *  跨洋访问下「中间件 + 数据接口」合起来 3–5 秒是正常的，8 秒留足余量；
+ *  超时后**不回退 localStorage**（回退会让用户拿旧数据生成反馈，比空着更糟）。 */
+const CLOUD_BOOT_TIMEOUT_MS = 8000;
 
 async function apiFetch(path, opts){
   const o = Object.assign({credentials:'same-origin'}, opts||{});
@@ -691,25 +770,21 @@ function askAccessPass(){
   }
 }
 
-/* 探测是否运行在服务器上 */
+/* 探测「独立后端（联网版）」模式 —— **只在非云端模式下调用**。
+ *
+ * ⚠️ 这里从前还有一个 `if(NEXT_MODE){ …请求 /api/feedback/mode… }` 分支，**已彻底删除**。
+ *    原因（一次一劳永逸的清理，别再加回来）：
+ *      · `NEXT_MODE` 是**纯本地判断**（protocol + pathname），不需要问服务器；
+ *      · 那次请求唯一的作用是取 `isAdmin`，而 **`/api/feedback/data` 的响应里已经带了
+ *        `isAdmin`** —— 云端模式直接从数据响应里读即可；
+ *      · 多这一跳意味着多跑一次中间件（中间件里还有 auth 校验与 user_roles 查询），
+ *        在跨洋网络下就是白等几百毫秒；
+ *      · 更要紧的是：它让「云端模式的启动流程」分裂成两处
+ *        （一处等 mode、一处等 data），很容易出现「谁先谁后 / 到底哪条生效」的困惑 ——
+ *        这个项目已经在「标签有两个来源」上踩过一次，不再留第二套逻辑。
+ *    `/api/feedback/mode` 这个**路由文件仍然保留**（将来别的入口可能要用），
+ *    只是**不再出现在工具页的启动链路上**。 */
 function detectServer(){
-  // 集成到 Next 应用：只问「我是谁 / 是不是管理员」。
-  // 从前这里打的是 /api/feedback/data（不带参数），会把整棵关键词树拉回来——
-  // 而本函数只用到 d.isAdmin，既慢又是残缺数据（1000 行上限）。
-  // 现改用轻量接口 /api/feedback/mode；关键词一律由 loadCloudScoped() 按维度取。
-  if(NEXT_MODE){
-    API.mode = 'next';
-    return fetch('/api/feedback/mode', {credentials:'same-origin'})
-      .then(r=>r.ok ? r.json() : null)
-      .then(d=>{
-        if(d && d.ok){
-          API.isAdmin = !!d.isAdmin;
-          return true;
-        }
-        return false;
-      })
-      .catch(()=>false);
-  }
   // 非 http/https（即 file:// 双击打开）直接判定为离线模式
   if(location.protocol !== 'http:' && location.protocol !== 'https:') return Promise.resolve(false);
   return apiFetch('api/mode').then(d=>{
@@ -722,6 +797,95 @@ function detectServer(){
     return false;
   }).catch(()=>false);
 }
+
+/* ---------------- 启动骨架：显示 / 隐藏 / 超时 ---------------- */
+let _cloudBooted = false;     // 云端模式是否已完成第一次渲染（用于 loadCloudScoped 里区分首屏与后续切换）
+let _cloudBootTimer = null;   // 总预算定时器
+
+function showAppSkeleton(){
+  const el = document.getElementById('appSkeleton');
+  if(!el) return;
+  el.hidden = false;
+  const msg = document.getElementById('appSkeletonMsg');
+  if(msg) msg.textContent = '⏳ 正在载入云端数据…';
+}
+function hideAppSkeleton(){
+  const el = document.getElementById('appSkeleton');
+  if(el) el.hidden = true;
+  if(_cloudBootTimer){ clearTimeout(_cloudBootTimer); _cloudBootTimer = null; }
+}
+/** 8 秒仍没拿到云端数据：隐藏骨架（让页面可用）+ 明确报错 + **清空结果区**。
+ *  ⚠️ 刻意**不回退 localStorage**（关键词库 / 档案 / 历史都不回退）：回退等于让用户
+ *     拿一份旧数据去生成反馈，家长会收到错内容 —— 宁可空着并明说。 */
+function cloudBootFailed(reason){
+  hideAppSkeleton();
+  const sh = document.getElementById('syncHint');
+  if(sh) sh.textContent = '⚠️ 云端数据加载失败（' + reason + '），请刷新重试';
+  const rt = document.getElementById('resultText');
+  if(rt) rt.textContent = '';            // 防「拿旧数据生成反馈」
+  const sc = document.getElementById('stChars');
+  if(sc) sc.textContent = '0';
+  updateModeBadge();
+}
+
+/* 云端模式的启动流程（唯一的入口，只在这里打数据接口） */
+async function initCloud(){
+  showAppSkeleton();
+  updateModeBadge();                     // 此时 API.mode='connecting' → 徽章显示「正在载入」，不是「本机版」
+
+  // 恢复上次的学段 / 科目（教材与章节存在 localStorage 里，由 loadCloudScoped 自己读）
+  try{
+    const st = localStorage.getItem(CLOUD_STAGE_KEY);
+    if(st) $('#stageSelect').value = st;
+    fillSubjectSelect();
+    const sb = localStorage.getItem(CLOUD_SUBJ_KEY);
+    if(sb && subjectsForStage(getStage()).some(x=>x.code===sb)) $('#subjectSelect').value = sb;
+  }catch(e){}
+
+  // ⚠️ 顺序很重要：这几条提示必须在 loadCloudScoped() **之前**写。
+  //    因为 loadCloudScoped() 成功时会自己把 syncHint 覆盖成
+  //    「✓ 已载入云端数据：…共 N 个关键词」——那才是更能说明「已经好了」的信息。
+  //    （本轮踩过：写在 await 之后，把成功提示盖掉了，三个套件的断言因此变红。）
+  const box = document.getElementById('serverBox');
+  const line = document.getElementById('serverLine');
+  if(box) box.style.display = 'block';
+  if(line) line.textContent = API.isAdmin
+    ? '☁️ 云端版（管理员）— 关键词库全员共享，可在此维护'
+    : '☁️ 云端版 — 关键词库来自服务器；档案与历史保存在你的账号下';
+  {
+    const sh0 = document.getElementById('syncHint');
+    if(sh0) sh0.textContent = '✅ AI 润色由服务器代理（会员专属）';
+  }
+
+  // 总预算：从此刻开始 8 秒
+  const timedOut = new Promise(resolve=>{ _cloudBootTimer = setTimeout(()=>resolve('timeout'), CLOUD_BOOT_TIMEOUT_MS); });
+
+  const loaded = loadCloudScoped().then(()=> (cloudData && cloudData.ok) ? 'ok' : 'fail');
+
+  const outcome = await Promise.race([loaded, timedOut]);
+  _cloudBootTimer = null;
+
+  if(outcome === 'ok'){
+    // isAdmin 直接来自数据响应（不再单独打 /api/feedback/mode）
+    API.mode = 'next';
+    API.isAdmin = !!cloudData.isAdmin;
+    _cloudBooted = true;
+    // 一次性渲染全部（第二次渲染的闪烁就是这一步要消灭的）
+    renderStuList(); renderHist(); renderPhrases(); renderManage();
+    renderTextbookSelect(); renderGenerate();
+    hideAppSkeleton();
+    updateModeBadge();
+    // ⚠️ 这里**不要**再写 syncHint —— loadCloudScoped 已经写好了「✓ 已载入云端数据…」
+    console.log('[feedback] 云端首屏已完成（mode 请求已移除，isAdmin 取自 data 响应）');
+  }else{
+    // 超时，或数据请求失败（loadCloudScoped 内部已把 syncHint 写成失败提示）
+    API.mode = 'next';                   // 仍然是云端模式，只是这轮没拿到数据
+    cloudBootFailed(outcome === 'timeout'
+      ? '超过 ' + Math.round(CLOUD_BOOT_TIMEOUT_MS/1000) + ' 秒未响应'
+      : '数据接口返回失败');
+  }
+}
+
 
 /* 把整份数据发布到服务器（全员共享） */
 function publishData(){
@@ -1149,6 +1313,13 @@ function pullServerData(){
 function updateModeBadge(){
   const b = document.getElementById('modeBadge');
   if(!b) return;
+  if(API.mode === 'connecting'){
+    // 云端模式但数据还没到：不要显示「本机版」（那会让用户以为数据是本机的）
+    b.textContent = '⏳ 正在载入…';
+    b.style.background = 'rgba(255,255,255,.18)';
+    b.title = '正在从云端载入关键词库与你的档案';
+    return;
+  }
   if(API.mode === 'next'){
     b.textContent = API.isAdmin ? '☁️ 云端·管理员' : '☁️ 云端版';
     b.style.background = 'rgba(255,255,255,.28)';
@@ -1605,8 +1776,13 @@ function loadCloudScoped(){
       cloudData = d;
       applyScopedBase(d);        // phrases / students / history 与关键词同一个响应，顺手写入
       applyCloudKeywordStore();
-      renderTextbookSelect();
-      renderGenerate();
+      // ⚠️ 云端**首屏**不在这里渲染：首屏由 initCloud() 在拿到数据后**一次性**渲染
+      //    （关键词 + 教材下拉 + 档案 + 历史一起），避免「同一屏被渲染两遍」的闪烁。
+      //    这里的渲染只服务于**后续**的维度切换（换学段/科目/教材）。
+      if(_cloudBooted){
+        renderTextbookSelect();
+        renderGenerate();
+      }
       const total = Object.keys(d.categoryKeywords||{}).reduce((n,k)=>n+(d.categoryKeywords[k]||[]).length,0);
       const stageName = (STAGES.find(x=>x.code===d.stage)||{}).name || '';
       const extra = (ch && (d.chapters||[]).length) ? '（已限定章节）' : (tb ? '（已限定教材）' : '');
@@ -2543,43 +2719,34 @@ function init(){
   refreshGreetingOptions();
   applyApiCfg();
   bind();
+  updateGreetPreview();
+  $('#curStuHint').textContent = '未选择';
+  compactForPhone();
+
+  /* ---------- 云端模式（嵌在 Next 应用里）----------
+     与从前最大的不同：**不再先渲染一遍 localStorage 数据**。
+     从前那版会在云端数据到达前就把界面画出来（关键词用默认/localStorage），
+     于是用户先看到「💾 本机版 + 旧关键词」，2–3 秒后才切成「☁️ 云端版 + 新数据」；
+     真正的问题不是闪，而是他可能**拿旧数据生成了反馈**。
+     现在：先盖上静态骨架 → 一次请求拿全部数据（含 isAdmin）→ 一次性渲染。 */
+  if(NEXT_MODE){
+    initCloud();
+    return;
+  }
+
+  /* ---------- 本机版 / 独立后端：保持原有行为，一行未改 ---------- */
   renderStuList();
   applyCloudKeywordStore();
   renderGenerate();
   renderManage();
   renderPhrases();
   renderHist();
-  updateGreetPreview();
-  $('#curStuHint').textContent = '未选择';
   updateModeBadge();
-  compactForPhone();
 
-  /* 探测服务器模式：是联网版就拉取共享关键词库 */
   detectServer().then(isServer=>{
     updateModeBadge();
     const box = document.getElementById('serverBox');
     const line = document.getElementById('serverLine');
-    if(API.mode === 'next'){
-      if(box) box.style.display = 'block';
-      if(line) line.textContent = API.isAdmin
-        ? '☁️ 云端版（管理员）— 关键词库全员共享，可在此维护'
-        : '☁️ 云端版 — 关键词库来自服务器；档案与历史保存在你的账号下';
-      const sh = document.getElementById('syncHint');
-      if(sh) sh.textContent = '✅ AI 润色由服务器代理（会员专属）';
-      // 先把「学段 / 科目」下拉恢复成上次选择，再拉一次带维度的数据。
-      // 这一步同时带回 phrases / students / history（见 applyScopedBase），
-      // 所以不再需要单独打一次无参数请求（原 bootFromApi 已删除）。
-      try{
-        const st = localStorage.getItem(CLOUD_STAGE_KEY);
-        if(st) $('#stageSelect').value = st;
-        fillSubjectSelect();
-        const sb = localStorage.getItem(CLOUD_SUBJ_KEY);
-        if(sb && subjectsForStage(getStage()).some(x=>x.code===sb)) $('#subjectSelect').value = sb;
-      }catch(e){}
-      return loadCloudScoped().then(()=>{
-        renderStuList(); renderHist(); renderPhrases(); renderManage();
-      });
-    }
     if(isServer){
       if(box) box.style.display = 'block';
       if(line) line.textContent = API.isAdmin ? '🌐 联网版（管理员）— 关键词库全员共享' : '🌐 联网版 — 关键词库来自服务器';

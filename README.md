@@ -78,8 +78,9 @@ slug | name | description | icon | route | min_plan | sort_order | active
 服务端口：
 
 ```
-GET /api/feedback/mode                          → 轻量身份探测（只需 isAdmin 时用它）
-GET /api/feedback/data?stage=&subject=          → 按学段/科目取（**维度参数必传**）
+GET /api/feedback/mode                          → 轻量身份探测（**工具页已不再使用**，路由保留备用）
+GET /api/feedback/data?stage=&subject=          → 按学段/科目取（**维度参数必传**），
+                                                   响应里已含 isAdmin 与教材/章节/短语/档案/历史
      &textbook=<id>&chapter=<id>                → 再限定教材/章节
      ⚠️ 不带维度参数 → 400 scope_required
 ```
@@ -87,7 +88,13 @@ GET /api/feedback/data?stage=&subject=          → 按学段/科目取（**维�
 > **为什么不带参数会 400**：从前 `/api/feedback/data` 不带参数会返回「全量关键词树」（号称向后兼容），
 > 但 PostgREST 默认单次最多返回 **1000 行**，而 `feedback_keywords` 未归档已达 **8992 行** ——
 > 那个分支**一直在静默丢约 89% 的数据**（既慢又错，且前端拿到的是残缺的树）。
-> 现已移除：工具页启动时用 `/api/feedback/mode` 取身份，关键词一律按维度拉取。
+> 现已移除：关键词一律按维度拉取。
+>
+> ⚠️ **2026-10 变更**：工具页启动曾用 `/api/feedback/mode` 取 `isAdmin`，**现已删除这次请求** ——
+> 因为 `/api/feedback/data` 的响应里本来就有 `isAdmin`，而多这一跳要多跑一次中间件
+> （中间件里含 auth 校验与 `user_roles` 查询），跨洋网络下就是白等几百毫秒。
+> 云端模式下 `API.mode` 现在由**本地判断**（protocol + pathname）直接定为 `next`。
+> `/api/feedback/mode` 路由文件保留，但**不在工具页的启动链路上**。
 
 管理页 `/admin/feedback-keywords` 用 URL 查询参数驱动级联选择
 （`?stage=&subject=&textbook=&chapter=`），两种模式：
