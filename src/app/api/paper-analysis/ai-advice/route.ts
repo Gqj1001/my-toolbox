@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireVip } from "@/lib/membership";
+import {
+  readContent,
+  reasoningLength,
+  thinkingDisabled,
+  truncatedByReasoning,
+} from "@/lib/deepseek-thinking";
 
 /**
  * 试卷分析：AI 改写「教学辅导建议与安排」段（会员专属）
@@ -40,7 +46,11 @@ const ADVICE_PROMPT =
   "注意：「不要标题」只是不要加格式化小标题，**不是**不要分段。";
 
 const MAX_PAYLOAD = 40_000;
-const MAX_TOKENS = 2800;
+/** 输出上限。2026-10 由 2800 提到 6000：DeepSeek 思考模式默认开启，会先吐一大段
+ *  `reasoning_content` 并**与正文共享** max_tokens，2800 会被思考吃光导致正文为空
+ *  （线上实测 reasoningLen=3414）。现已同时关闭思考模式（见 `thinkingDisabled`），
+ *  6000 全部留给正文。max_tokens 是上限、按实际用量计费，调大不增加成本。 */
+const MAX_TOKENS = 6000;
 const TIMEOUT_MS = 60_000;
 
 export async function POST(request: NextRequest) {
@@ -100,8 +110,9 @@ export async function POST(request: NextRequest) {
   // ---------- 4. 调用上游 ----------
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+
+  const callUpstream = () =>
+    fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -114,10 +125,19 @@ export async function POST(request: NextRequest) {
           { role: "user", content: payload },
         ],
         temperature: 0.7,
-        max_tokens: MAX_TOKENS,
+        // 6000：见下方 thinking 说明 —— 从前 2800 会被思考过程吃光。
+        // max_tokens 是上限、按实际用量计费，调大没有额外成本。
+        max_tokens: 6000,
+        // 关闭 DeepSeek 思考模式（默认 enabled）。官方：
+        // https://api-docs.deepseek.com/guides/thinking_mode/
+        // 非 DeepSeek 模型时展开为空对象，不会带上这个专有字段。
+        ...thinkingDisabled(model),
       }),
       signal: controller.signal,
     });
+
+  try {
+    let res = await callUpstream();
 
     if (!res.ok) {
       // 只在服务端记录，不把上游原文透传给前端
@@ -128,14 +148,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const data = (await res.json()) as {
+    let data = (await res.json()) as {
       choices?: Array<{
         finish_reason?: string;
         message?: { content?: string; reasoning_content?: string };
       }>;
       usage?: Record<string, unknown>;
     };
-    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+
+    // ---------- 兜底重试：思考过程吃光预算 ----------
+    // 同 feedback/ai：finish_reason="length" 且 content 空 且 reasoning 非空时，
+    // 关掉 thinking 再试一次。刻意不从 reasoning_content 抠答案（那是思考草稿，
+    // 含试错，当正文用属于「静默贴错内容」）。
+    let retried = false;
+    if (truncatedByReasoning(data)) {
+      retried = true;
+      console.warn(
+        "[paper-analysis/ai-advice] 思考过程吃光 max_tokens，关掉 thinking 重试一次 | 诊断:",
+        JSON.stringify({
+          model,
+          reasoningLen: reasoningLength(data),
+          inputChars: payload.length,
+          usage: data.usage ?? null,
+        }),
+      );
+      res = await callUpstream();
+      if (res.ok) {
+        data = (await res.json()) as typeof data;
+      } else {
+        console.error(
+          "[paper-analysis/ai-advice] 重试仍失败，上游返回",
+          res.status,
+          (await res.text()).slice(0, 300),
+        );
+      }
+    }
+
+    const text = readContent(data);
     if (!text) {
       // ⚠️ 与 feedback/ai 同样的诊断缺口：这条分支以前不打日志，
       //    「AI 返回内容为空」在线上无法定位。只记录结构信息，不记录正文与 Key。
@@ -143,11 +192,12 @@ export async function POST(request: NextRequest) {
         "[paper-analysis/ai-advice] 上游 200 但内容为空 | 诊断:",
         JSON.stringify({
           model,
+          retried,
           finish_reason: data.choices?.[0]?.finish_reason ?? null,
           choiceCount: Array.isArray(data.choices) ? data.choices.length : null,
           hasMessage: !!data.choices?.[0]?.message,
           hasReasoningContent: !!data.choices?.[0]?.message?.reasoning_content,
-          reasoningLen: data.choices?.[0]?.message?.reasoning_content?.length ?? 0,
+          reasoningLen: reasoningLength(data),
           usage: data.usage ?? null,
           inputChars: payload.length,
         }),
@@ -160,9 +210,10 @@ export async function POST(request: NextRequest) {
       "[paper-analysis/ai-advice] 成功 | 诊断:",
       JSON.stringify({
         model,
+        retried,
         finish_reason: data.choices?.[0]?.finish_reason ?? null,
         outChars: text.length,
-        reasoningLen: data.choices?.[0]?.message?.reasoning_content?.length ?? 0,
+        reasoningLen: reasoningLength(data),
         completion_tokens: (data.usage as { completion_tokens?: number } | undefined)?.completion_tokens ?? null,
         inputChars: payload.length,
       }),

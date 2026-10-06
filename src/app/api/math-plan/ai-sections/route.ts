@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireVip } from "@/lib/membership";
+import {
+  readContent,
+  reasoningLength,
+  thinkingDisabled,
+  truncatedByReasoning,
+} from "@/lib/deepseek-thinking";
 import { GOAL_EXAMPLES, METHOD_STYLE_BLOCK } from "./samples";
 
 /**
@@ -102,7 +108,12 @@ export function buildMessages(section: "method" | "goals", payload: string): Cha
 }
 
 const MAX_PAYLOAD = 60_000;
-const MAX_TOKENS = 3000;
+/** 输出上限。2026-10 由 3000 提到 6000：DeepSeek 思考模式默认开启，先吐的
+ *  `reasoning_content` 与正文**共享** max_tokens，会把预算吃光导致正文为空
+ *  （线上实测 reasoningLen=3414 / inputChars=275）。现已同时关闭思考模式
+ *  （见 `thinkingDisabled`），6000 全部留给正文。max_tokens 是上限、
+ *  按实际用量计费，调大不增加成本。 */
+const MAX_TOKENS = 6000;
 const MAX_LINES = 200;
 const TIMEOUT_MS = 90_000;
 
@@ -207,8 +218,9 @@ export async function POST(request: NextRequest) {
   // ---------- 4. 调用上游 ----------
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+
+  const callUpstream = () =>
+    fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -218,10 +230,19 @@ export async function POST(request: NextRequest) {
         model,
         messages: buildMessages(section, payload),
         temperature: 0.6,
+        // 6000：见下方 thinking 说明 —— 从前 3000 会被思考过程吃光。
+        // max_tokens 是上限、按实际用量计费，调大没有额外成本。
         max_tokens: MAX_TOKENS,
+        // 关闭 DeepSeek 思考模式（默认 enabled）。官方：
+        // https://api-docs.deepseek.com/guides/thinking_mode/
+        // 非 DeepSeek 模型时展开为空对象，不会带上这个专有字段。
+        ...thinkingDisabled(model),
       }),
       signal: controller.signal,
     });
+
+  try {
+    let res = await callUpstream();
 
     if (!res.ok) {
       // 只在服务端记录，不把上游原文透传给前端
@@ -232,11 +253,58 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+    let data = (await res.json()) as {
+      choices?: Array<{
+        finish_reason?: string;
+        message?: { content?: string; reasoning_content?: string };
+      }>;
+      usage?: Record<string, unknown>;
     };
-    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+
+    // ---------- 兜底重试：思考过程吃光预算 ----------
+    // 同 feedback/ai：finish_reason="length" 且 content 空 且 reasoning 非空时，
+    // 关掉 thinking 再试一次。刻意不从 reasoning_content 抠答案（思考草稿含试错，
+    // 当正文用＝静默贴错内容；本站还有「行数必须与原文一致」的硬校验，更不能猜）。
+    let retried = false;
+    if (truncatedByReasoning(data)) {
+      retried = true;
+      console.warn(
+        `[math-plan/ai-sections] 思考过程吃光 max_tokens，关掉 thinking 重试一次 section=${section} | 诊断:`,
+        JSON.stringify({
+          model,
+          reasoningLen: reasoningLength(data),
+          inputChars: payload.length,
+          usage: data.usage ?? null,
+        }),
+      );
+      res = await callUpstream();
+      if (res.ok) {
+        data = (await res.json()) as typeof data;
+      } else {
+        console.error(
+          "[math-plan/ai-sections] 重试仍失败，上游返回",
+          res.status,
+          (await res.text()).slice(0, 300),
+        );
+      }
+    }
+
+    const text = readContent(data);
     if (!text) {
+      // 这条分支以前完全不打日志，「AI 返回内容为空」在线上无法定位。
+      // 只记录结构信息，不记录正文与 Key。
+      console.error(
+        `[math-plan/ai-sections] 上游 200 但内容为空 section=${section} | 诊断:`,
+        JSON.stringify({
+          model,
+          retried,
+          finish_reason: data.choices?.[0]?.finish_reason ?? null,
+          hasReasoningContent: !!data.choices?.[0]?.message?.reasoning_content,
+          reasoningLen: reasoningLength(data),
+          usage: data.usage ?? null,
+          inputChars: payload.length,
+        }),
+      );
       return NextResponse.json({ ok: false, error: "AI 返回内容为空，请重试。" }, { status: 502 });
     }
 

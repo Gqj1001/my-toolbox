@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireVip } from "@/lib/membership";
+import {
+  readContent,
+  reasoningLength,
+  thinkingDisabled,
+  truncatedByReasoning,
+} from "@/lib/deepseek-thinking";
 
 /**
  * AI 润色代理（课后反馈工作台专用）
@@ -112,8 +118,10 @@ export async function POST(request: NextRequest) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-  try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+  // 调用上游。每次都带 DeepSeek 的「关闭思考模式」参数
+  // （非 DeepSeek 模型时 `thinkingDisabled` 展开成空对象，不会带上专有字段）。
+  const callUpstream = () =>
+    fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -126,10 +134,20 @@ export async function POST(request: NextRequest) {
           { role: "user", content: text },
         ],
         temperature: 0.7,
-        max_tokens: 2000,
+        // 6000：思考模式关闭后这 6000 全部留给正文；从前 2000 会被思考过程吃光
+        // （实测线上失败样本 reasoningLen=3414 / inputChars=275）。max_tokens 是**上限**、
+        // 按实际用量计费，不是预扣，所以调大没有额外成本。
+        max_tokens: 6000,
+        // 关闭 DeepSeek 思考模式（默认是 enabled）。官方文档：
+        // https://api-docs.deepseek.com/guides/thinking_mode/
+        // 非 DeepSeek 模型时展开为空对象，不会带上这个专有字段。
+        ...thinkingDisabled(model),
       }),
       signal: controller.signal,
     });
+
+  try {
+    let res = await callUpstream();
 
     if (!res.ok) {
       // 上游错误原文可能含 key / 账户信息，不透传
@@ -144,16 +162,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: hint }, { status: 502 });
     }
 
-    const data = await res.json().catch(() => null);
-    const out: string | undefined = data?.choices?.[0]?.message?.content;
+    let data = await res.json().catch(() => null);
 
-    if (!out || !out.trim()) {
+    // ---------- 兜底重试：思考过程吃光预算 ----------
+    // 条件：finish_reason="length" 且 content 空 且 reasoning_content 非空。
+    // 说明本次的预算全被思考占掉了 —— 关掉思考**再试一次**。
+    // ⚠️ 刻意**不**从 reasoning_content 里抠答案：那是思考草稿（含试错与自我怀疑），
+    //    把草稿当正文贴给家长属于「静默贴错内容」，比报错更糟。
+    let retried = false;
+    if (truncatedByReasoning(data)) {
+      retried = true;
+      console.warn(
+        "[feedback/ai] 思考过程吃光 max_tokens，关掉 thinking 重试一次 | 诊断:",
+        JSON.stringify({
+          model,
+          reasoningLen: reasoningLength(data),
+          inputChars: text.length,
+          usage: (data as { usage?: unknown })?.usage ?? null,
+        }),
+      );
+      res = await callUpstream();
+      if (res.ok) {
+        data = await res.json().catch(() => null);
+      } else {
+        console.error("[feedback/ai] 重试仍失败，上游返回", res.status, (await res.text().catch(() => "")).slice(0, 200));
+      }
+    }
+
+    const out = readContent(data);
+
+    if (!out) {
       // ⚠️ 这条分支以前**不打任何日志**，导致「AI 返回内容为空」这个偶发问题
       //    在线上完全查不出原因（上游响应读完就丢）。
       //    这里只记录**结构信息**，用于判断到底是什么形态：
-      //      · contentLen=0 + reasoningLen>0  → 模型把答案放进了 reasoning_content
-      //        （DeepSeek 思考型模型的已知问题，见 deepseek-ai/DeepSeek-V3 issue #1673 / #1610）
-      //      · finish_reason="length"        → 被 max_tokens 截断
+      //      · contentLen=0 + reasoningLen>0  且 finish_reason=length → 思考吃光预算
       //      · finish_reason="content_filter" → 被内容策略拦截
       //      · choices 整体缺失              → 上游返回了非预期结构
       //    **绝不记录正文内容、不记录 AI Key。**
@@ -161,13 +203,13 @@ export async function POST(request: NextRequest) {
         "[feedback/ai] 上游 200 但内容为空 | 诊断:",
         JSON.stringify({
           model,
+          retried,
           finish_reason: data?.choices?.[0]?.finish_reason ?? null,
           choiceCount: Array.isArray(data?.choices) ? data.choices.length : null,
-          contentLen: typeof out === "string" ? out.length : null,
           hasMessage: !!data?.choices?.[0]?.message,
           hasReasoningContent: !!data?.choices?.[0]?.message?.reasoning_content,
-          reasoningLen: data?.choices?.[0]?.message?.reasoning_content?.length ?? 0,
-          usage: data?.usage ?? null,
+          reasoningLen: reasoningLength(data),
+          usage: (data as { usage?: unknown })?.usage ?? null,
           inputChars: text.length,
         }),
       );
@@ -180,9 +222,10 @@ export async function POST(request: NextRequest) {
       "[feedback/ai] 成功 | 诊断:",
       JSON.stringify({
         model,
+        retried,
         finish_reason: data?.choices?.[0]?.finish_reason ?? null,
         outChars: out.trim().length,
-        reasoningLen: data?.choices?.[0]?.message?.reasoning_content?.length ?? 0,
+        reasoningLen: reasoningLength(data),
         completion_tokens: data?.usage?.completion_tokens ?? null,
         reasoning_tokens: data?.usage?.completion_tokens_details?.reasoning_tokens ?? null,
         inputChars: text.length,

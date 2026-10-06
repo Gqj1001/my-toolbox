@@ -1,20 +1,29 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireVip } from "@/lib/membership";
 import { getViewer } from "@/lib/viewer";
+import { readContent, reasoningLength, truncatedByReasoning } from "@/lib/deepseek-thinking";
 
 /**
  * 试卷分析：拍照识别答题卡得分（视觉模型，可选功能）
  *
- * 当前**未启用**：DeepSeek 的 deepseek-chat 不支持图片输入，需要一个多模态模型。
- * 因此本路由的行为是：
- *   · 未配置 AI_VISION_MODEL  → 返回 ok:false + 明确提示（前端会引导改用 docx / 粘贴）
- *   · 已配置                  → 走 OpenAI 兼容的 chat/completions 多模态格式
+ * ✅ **2026-10 更新：DeepSeek 已经支持图片输入** —— 官方文档
+ *    （https://api-docs.deepseek.com/guides/vision/）原文：
+ *    "The `deepseek-flash` model accepts images alongside text, so you can ask the model
+ *     to describe pictures, read text from screenshots, analyze charts, and more."
+ *    （旧注释写「deepseek-chat 不支持图片输入」已经过时。）
  *
- * 也就是说：路由结构已经完整，以后在 Vercel 上配好
- *   AI_VISION_MODEL（如某个支持视觉的模型名）
- *   AI_VISION_BASE_URL / 可复用 AI_BASE_URL
- *   AI_KEY
- * 就自动可用，不需要改代码。
+ *    也就是说：**在 Vercel 上把 `AI_VISION_MODEL` 配成 `deepseek-flash` 即可启用**，
+ *    不需要第三方多模态模型；`AI_KEY` 复用同一个。
+ *
+ *    官方对图片输入的要求与限制（本路由已满足）：
+ *      · `content` 用数组块：text + image_url（data: URL 可用）—— 本路由就是这么写的
+ *      · **图片只能放在 `user` 消息里**（放 system/assistant 会 400）—— 本路由 system 只放纯文本
+ *      · 单图最大 32 MiB（base64/外链）、请求体 48 MiB、每请求最多 600 张
+ *        —— 本路由另有更紧的 4 MiB body 上限
+ *
+ * 行为：
+ *   · 未配置 AI_VISION_MODEL  → ok:false + 明确提示（前端引导改用 docx / 粘贴）
+ *   · 已配置                  → 走 OpenAI 兼容的 chat/completions 多模态格式
  */
 
 const DEFAULT_BASE = "https://api.deepseek.com/v1";
@@ -99,8 +108,22 @@ export async function POST(request: NextRequest) {
   // ---------- 调用上游（OpenAI 兼容的多模态格式）----------
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+
+  /**
+   * ⚠️ 护栏：**只有确认是 DeepSeek 才带 `thinking` 这个专有字段**。
+   *
+   * 本路由与另外三个不同 —— 它在设计上就是「任意 OpenAI 兼容多模态模型」：
+   * 模型名来自 `AI_VISION_MODEL`，而且**前端还能覆盖它**（见上面的 `body.model`）。
+   * 给一个不认识 `thinking` 的厂商（例如某些国产视觉模型）发这个字段，可能直接 400。
+   *
+   * 所以：模型名含 deepseek 才带；另外留 `AI_VISION_SUPPORTS_THINKING=0` 作为
+   * 「不改代码就能摘掉」的紧急开关。
+   */
+  const supportsThinking =
+    /deepseek/i.test(model) && process.env.AI_VISION_SUPPORTS_THINKING !== "0";
+
+  const callUpstream = () =>
+    fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -118,19 +141,60 @@ export async function POST(request: NextRequest) {
             ],
           },
         ],
-        max_tokens: 1500,
+        // 6000：DeepSeek 思考模式与正文共享 max_tokens，从前 1500 很容易被吃光。
+        // 本路由的输出其实只有一小段 JSON，6000 是上限、按实际用量计费，没有额外成本。
+        max_tokens: 6000,
+        // 关闭 DeepSeek 思考模式（默认 enabled）。官方：
+        // https://api-docs.deepseek.com/guides/thinking_mode/
+        ...(supportsThinking ? { thinking: { type: "disabled" } } : {}),
       }),
       signal: controller.signal,
     });
+
+  try {
+    let res = await callUpstream();
 
     if (!res.ok) {
       console.error("[paper-analysis/vision-scores] 上游返回", res.status, (await res.text()).slice(0, 300));
       return NextResponse.json({ ok: false, error: "识别服务暂时不可用，请稍后重试。" }, { status: 502 });
     }
 
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const out = data.choices?.[0]?.message?.content ?? "";
+    let data = (await res.json()) as {
+      choices?: Array<{
+        finish_reason?: string;
+        message?: { content?: string; reasoning_content?: string };
+      }>;
+      usage?: Record<string, unknown>;
+    };
 
+    // ---------- 兜底重试：思考过程吃光预算 ----------
+    // 同三个文本路由（根因同源：DeepSeek 视觉模型也默认开思考）。
+    // 关掉 thinking 再跑一遍，JSON 解析逻辑跟第一次完全一样（下面照旧执行）。
+    let retried = false;
+    if (truncatedByReasoning(data)) {
+      retried = true;
+      console.warn(
+        "[paper-analysis/vision-scores] 思考过程吃光 max_tokens，关掉 thinking 重试一次 | 诊断:",
+        JSON.stringify({
+          model,
+          supportsThinking,
+          reasoningLen: reasoningLength(data),
+          usage: data.usage ?? null,
+        }),
+      );
+      res = await callUpstream();
+      if (res.ok) {
+        data = (await res.json()) as typeof data;
+      } else {
+        console.error(
+          "[paper-analysis/vision-scores] 重试仍失败，上游返回",
+          res.status,
+          (await res.text()).slice(0, 300),
+        );
+      }
+    }
+
+    const out = readContent(data);
     // 从返回里抠出 JSON
     let scores: Array<{ no: number; got: number }> = [];
     try {
@@ -138,7 +202,19 @@ export async function POST(request: NextRequest) {
       const parsed = JSON.parse(m ? m[0] : out);
       scores = Array.isArray(parsed.scores) ? parsed.scores : [];
     } catch {
-      console.error("[paper-analysis/vision-scores] 无法解析为 JSON:", out.slice(0, 200));
+      // 空响应与「返回了但解析不出来」要分开记：前者是本次修复的目标，
+      // 后者是模型没按 JSON 输出，两者排查方向不同。
+      console.error(
+        "[paper-analysis/vision-scores] 无法解析为 JSON:",
+        JSON.stringify({
+          model,
+          retried,
+          outLen: out.length,
+          finish_reason: data.choices?.[0]?.finish_reason ?? null,
+          reasoningLen: reasoningLength(data),
+        }),
+        out.slice(0, 200),
+      );
     }
 
     return NextResponse.json({
