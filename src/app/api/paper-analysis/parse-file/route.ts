@@ -1,11 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
 import {
   extractDocxText,
   extractLegacyDocText,
   extractPdfText,
 } from "@/lib/paper-extract";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/viewer";
 
 /**
  * 试卷文件解析：接收 base64 dataURL，抽取纯文本
@@ -24,20 +23,14 @@ const MAX_BODY = 4 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
   // ---------- 鉴权 ----------
-  const { user } = await getCurrentUserWithRole();
-  if (!user) {
+  // 用 getViewer()：一次拿到 user + membership.status，
+  // 不必再单独 select("status")（那会多付一次 Supabase 往返）。
+  const viewer = await getViewer();
+  if (!viewer.user) {
     return NextResponse.json({ ok: false, error: "请先登录。" }, { status: 401 });
   }
-  {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("user_roles")
-      .select("status")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (data?.status === "banned") {
-      return NextResponse.json({ ok: false, error: "账号已被封禁。" }, { status: 403 });
-    }
+  if (viewer.membership.status === "banned") {
+    return NextResponse.json({ ok: false, error: "账号已被封禁。" }, { status: 403 });
   }
 
   // ---------- 读 body ----------

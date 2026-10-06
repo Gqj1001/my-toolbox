@@ -133,4 +133,73 @@ proxy：            1 次 auth.getUser + 1 次 user_roles     ← 省不掉（�
   涨回去说明 `React.cache()` 去重或并发被破坏（常见原因：有人把 `getViewer()` 换成
   自己新建 client 直接查、把并发改回 `await` 串行、或动了 `getActiveTools` 的缓存）。
 
-**最快的单点验证**：连续两次请求 `/tools`，看第二次有没有再查 `tools` 表 —— 没有就对了。
+**最快的单点验证**：连续两次请求 `/tools`，看第二次有没有再再查 `tools` 表 —— 没有就对了。
+
+---
+
+## 六、课后反馈工具（当前主瓶颈）· 交接
+
+### 现状：每次切科目/教材约 5–6 秒
+
+**根因（已实测定位，不是猜测）**：香港 Vercel → 新加坡 Supabase，**每次调用约 400–500ms**；
+而**单次 scoped 请求要打 10 次 Supabase**。10 × 500ms ≈ 5 秒。
+
+**注意**：不是"浏览器到 Vercel 的固定往返"，也不是冷启动 —— 框架自身只花 3–14ms。
+贵的全是 **Vercel → Supabase 的每一次调用**。所以**唯一有效的方向是减少调用次数**。
+
+### 一次 `GET /api/feedback/data?stage=senior&subject=math` 的调用清单
+
+| # | 调用 | 来源 | 能否省 |
+|---|---|---|---|
+| 1 | `auth/v1/user` | `src/proxy.ts:85` 中间件 | 否（Next 无法与 route 共享） |
+| 2 | `user_roles` (`role,status`) | `src/proxy.ts:136` 中间件 | 否（同上） |
+| 3 | `auth/v1/user` | `src/lib/viewer.ts:52` `getViewer` | 否（同上） |
+| 4 | `user_roles` (`role,plan,status,expires_at`) | `src/lib/viewer.ts:64` | 否 |
+| 5 | `feedback_history` | route（`getHistory()`） | **能**（按 user 短缓存） |
+| 6 | `feedback_phrases` | route（`getPhrases()`） | **能**（静态表缓存） |
+| 7 | `feedback_students` | route（`getStudents()`） | **能**（按 user 短缓存） |
+| 8 | `feedback_categories` | route（`getCategories()`） | **能**（静态表缓存） |
+| 9 | `feedback_textbooks` | route（`getTextbooks()`） | **能**（静态表缓存） |
+| 10 | `feedback_chapters` | route（按需 1 本 or 1 条 in 查询） | **能**（静态表缓存） |
+
+> 第 1–4 项是**理论下限**（中间件 2 + getViewer 2）。除非改用 JWT 本地取 `sub`
+> （用户已决定**不做**，安全取舍不值得），否则降不下去。
+
+### 本轮已完成（commit `5803dd8` + P0-fix）
+
+- **N+1 干掉**：`feedback_chapters` 从 **29 次 → 1 次**（原来对每本教材各查一次章节）
+- **数据截断修复**：不带参数的「全量分支」返回 **400**（原来 8992 行只返回 1000 行，静默丢 89%）
+- **关键词 30 秒缓存**：连续请求的第 2 次起不再查 `feedback_keywords`
+- **P0-fix**：删掉 `route.ts` 里多余的 `user_roles` 查询（`user_roles` **3 → 2**）；
+  同样修掉 `paper-analysis` 的 3 处（`mode` / `parse-file` / `vision-scores`）
+- **UI**：选了教材后隐藏重复的「关键词库」区块（取消后自动恢复）
+- 净效果：**36 次 → 10 次**调用
+
+### ⚠️ 未完成（P1，留给新会话）
+
+| 项 | 做法 | 预期 |
+|---|---|---|
+| **静态表缓存** | `categories`(8 行) / `textbooks`(219 行) / `chapters`(按需) / `phrases`(10 行) —— 全用户共享、极少变。照 `src/lib/tools-db.ts` 里 `getActiveTools` 的**进程内 TTL 缓存**写法（**不要用 `unstable_cache`**，见第四节踩坑） | 每次请求 **−4 次** ≈ **−2 秒** |
+| **students/history 按 user 短缓存** | key 用 `user_id`，TTL 20–30 秒 | **−2 次** ≈ **−0.8 秒** |
+
+**预期合计：10 次 → 4–5 次，5–6 秒 → 约 2 秒。**
+
+### ⚠️ 明确不做的（用户已决定）
+
+- **全量关键词缓存**（"一次拉完 8992 条放内存、按参数切片"）：评估后**降级不做**。
+  实测单次最多只能拿 1000 行，拉全量要 **9 次分页**（1.80MB / 本地 2.6 秒 / 用户环境约 4.5 秒），
+  而它**只省 1 次调用**（关键词本来已缓存）—— 性价比低于静态表缓存。
+  （内存本身不是问题：8992 行 ≈ 2.1MB，Vercel 默认 1024MB。）
+- **中间件与 route 去重**：Next 无法传递，风险大于收益。
+- **`getViewer` 并行 / JWT 取 sub**：安全取舍，不做，保留 1 次 `auth/v1/user` 网络校验。
+- **导航预取 `prefetch={false}`**：取舍，不做。
+
+### 复测方法
+
+```powershell
+# 期望（改完 P1 前）：feedback/data scoped 每次约 10 次出网、user_roles 2 次
+# 改完 P1 后应降到 4-5 次
+```
+
+**排查原则**：**看调用次数，不要看毫秒**。本机到 Supabase 延迟低（约 120ms），
+绝对耗时没有代表性；**次数 × 用户环境的单次成本才是真实体感**。

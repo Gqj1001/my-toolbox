@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/viewer";
 
 /**
  * 试卷分析工作台的「模式探测」接口
@@ -19,19 +18,12 @@ const DEFAULT_BASE = "https://api.deepseek.com/v1";
 const DEFAULT_MODEL = "deepseek-chat";
 
 export async function GET() {
-  const { user, role } = await getCurrentUserWithRole();
+  // 用 getViewer()：它已经一次拿到 user + role + membership.status，
+  // 不必再单独 select("status")（那会多付一次 Supabase 往返）。
+  const viewer = await getViewer();
 
   // 被封禁的账号不给"云端模式"，让它退回本机模式（同时前端页面本身也会被门禁拦住）
-  let banned = false;
-  if (user) {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("user_roles")
-      .select("status")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    banned = data?.status === "banned";
-  }
+  const banned = viewer.membership.status === "banned";
 
   return NextResponse.json(
     {
@@ -39,7 +31,7 @@ export async function GET() {
       mode: "next",
       // 新版不需要访问口令：站点登录本身已经是鉴权边界
       requiresPass: false,
-      isAdmin: role === "admin",
+      isAdmin: viewer.role === "admin",
       banned,
       config: {
         hasKey: Boolean(process.env.AI_KEY),

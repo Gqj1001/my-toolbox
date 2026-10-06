@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
 import {
   assembleCategoryKeywords,
   getCategories,
@@ -15,6 +14,7 @@ import {
 } from "@/lib/feedback-db";
 import { parseScope, subjectHasTextbook } from "@/lib/feedback-taxonomy";
 import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/viewer";
 
 /**
  * 课后反馈工作台的数据接口。
@@ -34,21 +34,22 @@ import { createClient } from "@/lib/supabase/server";
  * DELETE /api/feedback/data?id=<historyId>      删除单条历史
  */
 
+/**
+ * 鉴权守卫。
+ *
+ * ⚠️ 这里从前是 `getCurrentUserWithRole()` + **又一次** `select("status")` 查询 ——
+ *    而 getViewer() 已经同时拿到 user / role / membership.status。
+ *    多出来的那一次是纯浪费（实测：每次请求白付 1 次 Supabase 往返，
+ *    用户环境约 500ms）。现在改为直接用 getViewer()。
+ */
 async function requireUser() {
-  const { user, role } = await getCurrentUserWithRole();
-  if (!user) return { ok: false as const, status: 401, message: "请先登录。" };
+  const viewer = await getViewer();
+  if (!viewer.user) return { ok: false as const, status: 401, message: "请先登录。" };
 
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("user_roles")
-    .select("status")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (data?.status === "banned") {
+  if (viewer.membership.status === "banned") {
     return { ok: false as const, status: 403, message: "账号已被封禁。" };
   }
-  return { ok: true as const, user, role: role ?? "user" };
+  return { ok: true as const, user: viewer.user, role: viewer.role ?? "user" };
 }
 
 export async function GET(request: NextRequest) {

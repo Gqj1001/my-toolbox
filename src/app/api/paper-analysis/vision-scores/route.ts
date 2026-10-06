@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
 import { requireVip } from "@/lib/membership";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/viewer";
 
 /**
  * 试卷分析：拍照识别答题卡得分（视觉模型，可选功能）
@@ -48,19 +47,15 @@ export async function POST(request: NextRequest) {
       { status: 403 },
     );
   }
+  // ---------- 纵深防御：确认账号未被封禁 ----------
+  // requireVip() 内部走的就是 getViewer()，已经包含了 status='banned' 判定
+  // （viewer.ts 一次查询同时取 role/plan/status/expires_at）。
+  // 从前这里又单独 select("status") 查了一遍 —— 重复，且白付一次 Supabase 往返。
+  // 现在改为复用同一个 getViewer()（同一请求内 React.cache 去重，不会多查库）。
   {
-    // requireVip 已保证是有效会员；这里再确认账号未被封禁（纵深防御）
-    const { user } = await getCurrentUserWithRole();
-    if (user) {
-      const supabase = await createClient();
-      const { data } = await supabase
-        .from("user_roles")
-        .select("status")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (data?.status === "banned") {
-        return NextResponse.json({ ok: false, error: "账号已被封禁。" }, { status: 403 });
-      }
+    const viewer = await getViewer();
+    if (viewer.membership.status === "banned") {
+      return NextResponse.json({ ok: false, error: "账号已被封禁。" }, { status: 403 });
     }
   }
 
