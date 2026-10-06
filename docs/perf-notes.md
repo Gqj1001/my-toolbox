@@ -597,8 +597,12 @@ init()
 | 存储 | **IndexedDB**（库 `feedback_cache_v1`，表 `kv`） | 不用 localStorage：静态数据一份几百 KB，localStorage 只有约 5MB 且是同步 API |
 | 键 | **一个维度一条**，key = query string（如 `stage=senior&subject=math`） | 与请求参数**共用同一处拼法**（`_scopeKeyOf()`），避免「缓存 key 说 A、请求其实是 B」 |
 | 条目的字段 | `{ value, savedAt, fetchedAt, version }` | `fetchedAt` = 最后一次**被确认是最新的**时刻 |
-| TTL | 10 分钟（`CLIENT_TTL_MS`） | 与服务端静态表 TTL 对齐；**过期不影响显示**，只是后台一定会重新拉 |
-| 「可能不是最新」提示阈值 | 24 小时（`CLIENT_STALE_HINT_MS`） | 超过它且**没能核对成功** → 顶部明确提示（见下） |
+| TTL | 10 分钟（`CLIENT_TTL_MS`） | 只管「要不要在后台重新拉」；**过期不影响显示**，只是后台一定会重新拉 |
+| 「可能不是最新」提示阈值 | 24 小时（`CLIENT_STALE_HINT_MS`） | **另一条独立规则**：只管「要不要告诉用户这可能不是最新」。超过它且**没能核对成功** → 顶部明确提示 |
+
+> ⚠️ 这两条**故意不合并**：TTL 过期（隔一顿饭回来）是常态，每次都弹警告纯属吓人；
+> 只有「超过 24 小时都没能成功核对一次」才值得说出口。合并成一个判据是本轮先写错的一版
+> （见下面第 3 条不变量）。
 | 版本号 | 响应里的 `dataVersion`（`src/lib/feedback-db.ts`） | 客户端只拿它判断「该不该把本地那份整批作废」 |
 
 ### `dataVersion` 是怎么来的（以及为什么不是查库得来的）

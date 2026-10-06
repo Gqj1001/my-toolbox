@@ -2206,13 +2206,18 @@ function rememberRenderedPayload(scopeKey, d){
  *     但也不能算新鲜 —— 必须继续提示「可能不是最新」。
  *     （本轮踩过：只用 `fetchedAt` 判断时，一条「只写了、从没核对成功过」的
  *       缓存永远显得新鲜，提示语永远不会出现。） */
+/** 这条缓存还算「新鲜」吗（新鲜 = 不必为一个刚拉过的数据打任何提示）。
+ *  ⚠️ 这里**只管 TTL**；「超过 24 小时要提示」是 `cacheHintText` 里**另一条**判据。
+ *     两条是独立的规则，别合并：
+ *       · TTL（10 分钟）决定「要不要在后台重新拉」—— 过期就一定重拉；
+ *       · 24 小时决定「要不要告诉用户这可能不是最新」—— 只有很久没核对上才说，
+ *         否则每次隔一顿饭回来就弹个警告，纯属吓人。
+ *  ⚠️ 方向别写反：`_lastFreshOk` 必须是「真实拉取/后台核对成功过」的意思。
+ *     核对失败时 `fetchedAt` 不会推进，所以「放得越久」应该「越可疑」。 */
 function cacheIsFresh(entry){
   if(!entry) return false;
   if(_lastFreshOk) return true;
-  // ⚠️ 判据是「**超过 24 小时没能核对上**」，所以这里必须是 `>` 而不是 `<`：
-  //    写成「在 TTL 内就算新鲜」是错的 —— 核对失败时时间戳不会推进，
-  //    于是时间越久反而越「新鲜」，提示永远不会出现（本轮就是先写错了一版）。
-  return !!(entry.fetchedAt && (Date.now() - entry.fetchedAt) <= CLIENT_STALE_HINT_MS);
+  return (Date.now() - (entry.fetchedAt || 0)) <= CLIENT_TTL_MS;
 }
 
 /** 这条缓存的「有效新鲜时间」：核对成功过就用此刻，否则用原始拉取时间 */

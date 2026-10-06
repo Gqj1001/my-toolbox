@@ -604,6 +604,20 @@ try {
   record("★场景5 新鲜度判定：刚拉过 → 判为新鲜，不给过期提示",
     !!probeFresh && probeFresh.fresh === true && !/数据可能不是最新/.test(probeFresh.hint || ""),
     `probe=${JSON.stringify(probeFresh)}`);
+  // 边界：超过 TTL（10 分钟）但远未到 24 小时。
+  // 这里应当 fresh=false（该缓存确实「不新鲜」了 → 后台一定会重拉），
+  // 但**不该**吓用户：24 小时那条提示的判据是独立的，见下一条。
+  const probeMid = await inTool(`return w.__fbClientCacheProbe({
+      fetchedAt: Date.now() - 30*60*1000, lastFreshOk: false });`);
+  record("★场景5 新鲜度判定：超 TTL（10 分钟）但未超 24 小时 → 算不新鲜，但不打「可能不是最新」",
+    !!probeMid && probeMid.fresh === false && !/数据可能不是最新/.test(probeMid.hint || ""),
+    `probe=${JSON.stringify(probeMid)}`);
+  // 边界：刚好在 TTL 内 → 算新鲜
+  const probeInTtl = await inTool(`return w.__fbClientCacheProbe({
+      fetchedAt: Date.now() - 9*60*1000, lastFreshOk: false });`);
+  record("★场景5 新鲜度判定：TTL 内（9 分钟）→ 算新鲜",
+    !!probeInTtl && probeInTtl.fresh === true,
+    `probe=${JSON.stringify(probeInTtl)}`);
   // 第二条（观察性）：真浏览器这一趟到底写没写过那条提示。
   // 本机太快时后台核对可能抢在首屏读取之前完成，那就**不该**提示 —— 所以这里
   // 按「首屏那一刻缓存是否还旧」来判断该不该出现，而不是无脑要求它出现。
