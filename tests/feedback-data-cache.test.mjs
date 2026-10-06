@@ -28,6 +28,32 @@ const BASE = "http://127.0.0.1:3000";
 
 const { record, summary } = makeRecorder();
 
+// ---------------------------------------------------------------- 提示词不漂移（纯文件比对，不需要服务）
+// 为什么放在这里：feedback 的润色提示词在**两处**各写了一份
+// （public/tools/feedback.html 的 DEFAULT_PROMPT 与 src/app/api/feedback/ai/route.ts 的
+//  DEFAULT_PROMPT），而前端会把**自己那份**传上来覆盖服务端默认值 ——
+// 所以两份一旦不一致，实际行为就取决于「谁在生效」，且很难发现。
+// 2026-10 修「分段被合并 + 几乎没润色」时就踩在这个结构上，故加断言钉住。
+{
+  const html = readFileSync(`${PROJECT}\\public\\tools\\feedback.html`, "utf8");
+  const route = readFileSync(`${PROJECT}\\src\\app\\api\\feedback\\ai\\route.ts`, "utf8");
+  const client = html.match(/const DEFAULT_PROMPT = `([\s\S]*?)`;/)?.[1] ?? null;
+  const server = route.match(/const DEFAULT_PROMPT = `([\s\S]*?)`;/)?.[1] ?? null;
+  record("两处 DEFAULT_PROMPT 都能提取到", !!client && !!server, `前端 ${client?.length ?? "?"} / 服务端 ${server?.length ?? "?"}`);
+  record("★两处 DEFAULT_PROMPT 逐字一致（防漂移）", !!client && client === server, `长度 ${client?.length}`);
+  // 关键措辞必须在位：这正是「分段被合并」的护栏
+  record(
+    "★提示词含结构要求（保留分段标记 / 不要把多段合并）",
+    !!client && client.includes("保留原有的分段标记") && client.includes("不要把多段合并"),
+    "",
+  );
+  record(
+    "★提示词不再把模型的手绑死（已去掉「一个都不能改或删」）",
+    !!client && !client.includes("一个都不能改或删") && client.includes("字数扩充 30%~50%"),
+    "",
+  );
+}
+
 // ---------------------------------------------------------------- 计数器
 async function counter(pathname) {
   const r = await fetch(COUNTER + pathname, { method: pathname === "/stats" ? "GET" : "POST" });

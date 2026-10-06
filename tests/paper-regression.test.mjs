@@ -15,18 +15,6 @@ const PASSWORD = info.password;
 const results = [];
 const rec = (n, p, d) => { results.push({ n, p }); console.log(`${p ? "PASS" : "FAIL"} | ${n}${d ? ` | ${d}` : ""}`); };
 
-/** 查线上 tools 表某一行的 active —— 用来让断言跟随真实状态，而不是写死快照 */
-async function toolIsActive(route) {
-  const envText = readFileSync(`${PROJECT}/.env.local`, "utf8").split(/\r?\n/);
-  const url = envText.find((l) => l.startsWith("NEXT_PUBLIC_SUPABASE_URL=")).split("=")[1].trim();
-  const key = envText.find((l) => l.startsWith("NEXT_PUBLIC_SUPABASE_ANON_KEY=")).split("=").slice(1).join("=").trim();
-  const r = await fetch(`${url}/rest/v1/tools?select=active&route=eq.${encodeURIComponent(route)}`, {
-    headers: { apikey: key, Authorization: `Bearer ${key}` },
-  });
-  const rows = await r.json();
-  return Array.isArray(rows) && rows.length ? rows[0].active === true : null;
-}
-
 class CDP {
   constructor(ws) { this.ws = ws; this.id = 0; this.pending = new Map(); this.events = [];
     ws.addEventListener("message", (e) => { const m = JSON.parse(e.data);
@@ -94,11 +82,21 @@ await goto("/dashboard", 6000);
   const cards = await ev(`[...document.querySelectorAll('a')].filter(a=>a.href.includes('/tools/')).map(a=>({href:a.getAttribute('href'), text:a.innerText.replace(/\\s+/g,' ').slice(0,40)}))`);
   const paper = (cards ?? []).find((c) => String(c.href).includes("paper-analysis"));
   rec("卡片链接指向 /tools/paper-analysis", !!paper, JSON.stringify(paper ?? {}));
-  // 排序：应在数学方案之后、JSON 之前
+  // 排序：0012 之后普通用户只看到 3 张卡，顺序应为 math-plan(1) → paper-analysis(6) → feedback(15)。
+  // ⚠️ 旧断言写的是「试卷分析在 JSON 之前」——JSON 已被 0012 下线，卡片不再存在，
+  //    那条断言永远失败（而且它想抓的「顺序错乱」现在由下面的相对顺序覆盖）。
   const order = (cards ?? []).map((c) => c.text);
+  const iMath = order.findIndex((x) => /辅导方案/.test(x));
   const iPaper = order.findIndex((x) => /试卷分析/.test(x));
-  const iJson = order.findIndex((x) => /JSON/.test(x));
-  rec("卡片按 sort_order 排序（试卷分析在 JSON 之前）", iPaper >= 0 && iJson >= 0 && iPaper < iJson, `paper@${iPaper} json@${iJson}`);
+  const iFeedback = order.findIndex((x) => /课后反馈/.test(x));
+  rec(
+    "三张卡片按 sort_order 排序（辅导方案 → 试卷分析 → 课后反馈）",
+    iMath >= 0 && iPaper >= 0 && iFeedback >= 0 && iMath < iPaper && iPaper < iFeedback,
+    `math@${iMath} paper@${iPaper} feedback@${iFeedback}`,
+  );
+  rec("已下线的 4 个空壳工具不再出现（JSON/密码/vip-batch/vip-report）",
+    !order.some((x) => /JSON|密码生成|批量数据|高级报表/.test(x)),
+    order.slice(0, 8).join(" | "));
   console.log(`     卡片: ${order.slice(0, 6).join(" | ")}`);
 }
 
@@ -122,34 +120,36 @@ await goto("/tools/feedback", 10000);
 
 // ---------- 其他工具页 ----------
 console.log("\n=== 其他工具页回归 ===");
-// math-plan 现在是 free（所有登录用户可开），所以路径应该留在 /tools/math-plan。
-//
-// json-formatter 的期望**从线上 tools 表实时读**，不写死快照：
-//   · active=false（0012 执行后）→ getToolByRoute 返回 null → notFound()
-//   · active=true （0012 执行前）→ 正常渲染占位页
-// 为什么要这样：迁移 SQL 由用户手动执行，如果这里写死「应为 404」，那在用户执行 SQL
-// **之前**套件就是红的（反过来写死「应为占位页」，执行之后就红）。两种都会让回归失去意义。
-// 实测（Next 16.3.8）notFound() 的表现：**URL 不变**，页面换成内置 404，
-// document.title 形如 "404: This page could not be found." —— 所以判据用 title，不能用 pathname。
-const jsonFormatterActive = await toolIsActive("/tools/json-formatter");
-if (jsonFormatterActive === null) {
-  rec("读到了 /tools/json-formatter 的 active 状态", false, "线上查不到这条 route，无法判定期望");
-}
-for (const [label, path, expect404] of [
-  ["math-plan（免费工具）", "/tools/math-plan", false],
-  [
-    `json-formatter（线上 active=${jsonFormatterActive}）`,
-    "/tools/json-formatter",
-    jsonFormatterActive === false,
-  ],
-]) {
-  await goto(path, 6000);
+// ⚠️ 这里**不能**再靠 anon key 去查 tools 表的 active 来判断期望值。
+//    踩过的坑：tools 的 RLS 对 anon **只放行 active=true 的行**，所以已下线的
+//    json-formatter 用 anon 查是「查不到这条 route」，会被误读成「不存在」。
+//    改成断言一个**与环境无关、且真正有价值**的性质：
+//      json-formatter 是免费工具，但它没有 public/tools/json-formatter.html，
+//      所以只要它没被下线就会渲染「功能开发中」占位页；被下线（0012）则渲染 404。
+//    → 两种状态**都合法**，但「渲染出功能开发中占位页」永远不该发生。
+//      （若真发生了，说明 0012 没执行 / 被回滚 —— 这才是要抓的回归。）
+//    实测（Next 16.3.8）notFound()：URL 不变，页面换成内置 404，
+//    document.title 形如 "404: This page could not be found."（判据用 title，不能用 pathname）。
+{
+  await goto("/tools/math-plan", 6000);
   const r = await ev(`(() => ({ path: location.pathname, title: document.title }))()`);
-  const looks404 = /^\s*404/.test(String(r.title));
   rec(
-    `${label} 访问行为正确${expect404 ? "（应为 404 页）" : ""}`,
-    expect404 ? looks404 : !looks404 && String(r.path) === path,
+    "math-plan（免费工具）访问行为正确",
+    !/^\s*404/.test(String(r.title)) && String(r.path) === "/tools/math-plan",
     `pathname=${JSON.stringify(r.path)} title=${JSON.stringify(r.title)}`,
+  );
+}
+{
+  await goto("/tools/json-formatter", 6000);
+  const r = await ev(
+    `(() => ({ path: location.pathname, title: document.title, body: document.body.innerText }))()`,
+  );
+  const is404 = /^\s*404/.test(String(r.title));
+  const isPlaceholder = /功能开发中/.test(String(r.body));
+  rec(
+    "json-formatter 要么 404（已下线）要么正常页，但绝不出现「功能开发中」占位页",
+    !isPlaceholder && (is404 || String(r.path) === "/tools/json-formatter"),
+    `title=${JSON.stringify(r.title)} 占位页=${isPlaceholder}`,
   );
 }
 

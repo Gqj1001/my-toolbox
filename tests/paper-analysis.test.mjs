@@ -98,9 +98,27 @@ try {
   }
 
   // 用管理员会话登录（拿 cookie 调接口）
-  const { data: signIn } = await db.auth.signInWithPassword({ email: adminEmail, password: PASSWORD });
-  const cookie = `sb-${new URL(SUPABASE_URL).hostname.split(".")[0]}-auth-token=${encodeURIComponent(JSON.stringify(signIn.session))}`;
+  // signInCookie：给任意账号换一个可直接塞进请求头的会话 cookie（按 @supabase/ssr 的格式）
+  const signInCookie = async (email) => {
+    const { data: s } = await db.auth.signInWithPassword({ email, password: PASSWORD });
+    return `sb-${new URL(SUPABASE_URL).hostname.split(".")[0]}-auth-token=${encodeURIComponent(JSON.stringify(s.session))}`;
+  };
+  const cookie = await signInCookie(adminEmail);
   const api = (path, init = {}) => fetch(BASE + path, { ...init, headers: { "Content-Type": "application/json", cookie, ...(init.headers ?? {}) } });
+
+  // 防御性收尾：确保 rolea 保持「免费版」，否则后面别的套件会因为它被改成 VIP 而行为漂移。
+  // （本套件现在**不再改库**了 —— 见下面第 5 节的注释；这一句是兜底，防止历史遗留状态。）
+  {
+    const { data: list } = await db.rpc("admin_list_users");
+    const adminId = list?.find((u) => u.email === adminEmail)?.user_id;
+    if (adminId) {
+      const cur = (await db.from("user_roles").select("plan").eq("user_id", adminId).maybeSingle()).data;
+      if (cur && cur.plan !== "free") {
+        await db.from("user_roles").update({ plan: "free", expires_at: null, status: "active" }).eq("user_id", adminId);
+        console.log("（注意）rolea 原本不是 free，已重置为 free");
+      }
+    }
+  }
 
   // ================= 3. mode =================
   console.log("\n=== 3. /mode ===");
@@ -206,45 +224,52 @@ try {
   }
 
   // ================= 5. ai-advice 鉴权 =================
+  //
+  // ⚠️ 这里**故意不再改数据库里的会员状态**来在两种身份之间切换。
+  //    原因（2026-10 踩过）：`getViewer()` 现在把 `user_roles` 那一行做了 **30 秒进程内缓存**
+  //    （P2 加的，为省掉每次请求一次外网往返），而它只在**走 /admin 的开通/取消/封禁**
+  //    时被主动清掉。测试直接改库 + 只 sleep 600ms 的写法清不掉那个缓存，
+  //    于是「刚改成 VIP」依然被判成免费 → 4 项断言全部 403 失败。
+  //    正确做法：**用本来就符合该身份的真实账号**，一个数据库调用都不用改：
+  //      · rolea = 管理员但**免费版** → 验 403（非会员被拒）
+  //      · roleb = **会员版**          → 验 403 之后的 503 / 400（越过了会员鉴权）
+  //    这样断言与缓存无关，也不会再把测试账号的会员状态改来改去。
   console.log("\n=== 5. /ai-advice 鉴权 ===");
   {
-    // 5.1 管理员当前不是 VIP → 403
-    const { data: list } = await db.rpc("admin_list_users");
-    const adminId = list.find((u) => u.email === adminEmail)?.user_id;
-    const orig = (await db.from("user_roles").select("plan, expires_at, status").eq("user_id", adminId).maybeSingle()).data;
-    await db.from("user_roles").update({ plan: "free", expires_at: null, status: "active" }).eq("user_id", adminId);
-    await sleep(600);
-
+    // 5.1 非会员（rolea，免费版）→ 必须在鉴权阶段就被拒 403
     const r1 = await api("/api/paper-analysis/ai-advice", {
       method: "POST",
       body: JSON.stringify({ task: "advice", name: "测试", score: 100, full: 150 }),
     });
-    const j1 = await r1.json();
-    rec("非会员调用 AI 建议被拒 403", r1.status === 403, `HTTP ${r1.status} ${j1.error ?? ""}`);
+    const j1 = await r1.json().catch(() => ({}));
+    rec("非会员（rolea）调用 AI 建议被拒 403", r1.status === 403, `HTTP ${r1.status} ${j1.error ?? ""}`);
 
-    // 5.2 非法 JSON → 400（先升 VIP 以越过鉴权）
-    await db.from("user_roles").update({ plan: "vip", expires_at: new Date(Date.now() + 86400000).toISOString(), status: "active" }).eq("user_id", adminId);
-    await sleep(600);
+    // 下面用 roleb（会员版）的会话：它的「是会员」来自数据库真实状态，不依赖任何改库/等缓存
+    const vipCookie = await signInCookie(userEmail);
+    const apiVip = (p, init = {}) =>
+      fetch(BASE + p, {
+        ...init,
+        headers: { "Content-Type": "application/json", cookie: vipCookie, ...(init.headers ?? {}) },
+      });
 
-    // 注意：路由的检查顺序是「鉴权 → AI_KEY → 入参」，所以本地没配 AI_KEY 时
-    // 会在校验入参之前就返回 503。两种环境的期望值不同，分别断言。
+    // 5.2 非法 JSON → 会员已过鉴权，本地无 AI_KEY 时先返回 503（顺序：鉴权 → AI_KEY → 入参）
     const localKey = Boolean(process.env.AI_KEY);
-    const r2 = await api("/api/paper-analysis/ai-advice", { method: "POST", body: "not json{" });
+    const r2 = await apiVip("/api/paper-analysis/ai-advice", { method: "POST", body: "not json{" });
     rec(
-      localKey ? "非法 JSON 返回 400" : "无 AI_KEY 时先返回 503（校验顺序正确）",
+      localKey ? "非法 JSON 返回 400" : "会员 + 无 AI_KEY 时先返回 503（校验顺序正确）",
       r2.status === (localKey ? 400 : 503),
       `HTTP ${r2.status}（本地 AI_KEY=${localKey ? "有" : "无"}）`,
     );
 
     // 5.3 空诊断数据
-    const r3 = await api("/api/paper-analysis/ai-advice", { method: "POST", body: JSON.stringify({}) });
+    const r3 = await apiVip("/api/paper-analysis/ai-advice", { method: "POST", body: JSON.stringify({}) });
     rec(
-      localKey ? "空诊断数据返回 400" : "无 AI_KEY 时先返回 503（校验顺序正确）",
+      localKey ? "空诊断数据返回 400" : "会员 + 无 AI_KEY 时先返回 503（校验顺序正确）",
       r3.status === (localKey ? 400 : 503),
       `HTTP ${r3.status}`,
     );
 
-    // 5.4 有效 payload + VIP：本地无 AI_KEY 时应为 503，有 key 时应为 200/502
+    // 5.4 有效 payload + 会员：本地无 AI_KEY 时应为 503，有 key 时应为 200/502
     const payload = {
       task: "advice", name: "测试学生", subject: "数学", examName: "单元测",
       score: 96, full: 150, scoreRate: "64%",
@@ -254,44 +279,39 @@ try {
       blanks: [7], wrongItems: [{ 题号: 18, 题型: "解答题", 分值: 12, 得分: 3, 难度: "0.42", 知识点: ["导数"], 失分类型: ["计算"], 已有原因: "" }],
       teacherNote: "",
     };
-    const r4 = await api("/api/paper-analysis/ai-advice", { method: "POST", body: JSON.stringify(payload) });
+    const r4 = await apiVip("/api/paper-analysis/ai-advice", { method: "POST", body: JSON.stringify(payload) });
     const j4 = await r4.json().catch(() => ({}));
-    const hasKey = Boolean(process.env.AI_KEY);
     rec(
-      "会员调用走通鉴权（503=未配Key / 200=成功 / 502=上游错）",
+      "会员（roleb）调用走通鉴权（503=未配Key / 200=成功 / 502=上游错）",
       [200, 502, 503].includes(r4.status),
       `HTTP ${r4.status} ${j4.error ?? (j4.text ? `返回 ${j4.text.length} 字` : "")}`,
     );
     rec("失败响应不透传上游原文", !/sk-|api\.deepseek|Bearer/.test(JSON.stringify(j4)), JSON.stringify(j4).slice(0, 80));
+  }
 
-    // ================= 6. vision-scores 降级（仍处于 VIP 会话内）=================
-    console.log("\n=== 6. /vision-scores 降级 ===");
-    {
-      // 非会员先被 403 拦下 —— 这也是正确行为，单独确认一次
-      const rVip = await api("/api/paper-analysis/vision-scores", {
-        method: "POST",
-        body: JSON.stringify({ image: "data:image/png;base64,AAAA", questions: [] }),
-      });
-      const jVip = await rVip.json().catch(() => ({}));
-      rec(
-        "会员访问时因未配视觉模型返回 503 并给出提示",
-        rVip.status === 503 && /未启用|多模态/.test(jVip.error || ""),
-        `HTTP ${rVip.status} ${jVip.error ?? ""}`,
-      );
-    }
+  // ================= 6. vision-scores 降级 =================
+  // 同样不再改库：roleb 是会员 → 验「越过鉴权后因未配视觉模型返回 503」；
+  // rolea 是免费版 → 验「非会员在鉴权阶段被拒 403」。
+  console.log("\n=== 6. /vision-scores 降级 ===");
+  {
+    const vipCookie = await signInCookie(userEmail);
+    const rVip = await fetch(BASE + "/api/paper-analysis/vision-scores", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: vipCookie },
+      body: JSON.stringify({ image: "data:image/png;base64,AAAA", questions: [] }),
+    });
+    const jVip = await rVip.json().catch(() => ({}));
+    rec(
+      "会员（roleb）访问时因未配视觉模型返回 503 并给出提示",
+      rVip.status === 503 && /未启用|多模态/.test(jVip.error || ""),
+      `HTTP ${rVip.status} ${jVip.error ?? ""}`,
+    );
 
-    // 还原会员状态
-    await db.from("user_roles").update(orig ?? { plan: "free", expires_at: null, status: "active" }).eq("user_id", adminId);
-    await sleep(600);
-
-    // 非会员再试一次：应在鉴权阶段就被拒（403）
-    {
-      const r = await api("/api/paper-analysis/vision-scores", {
-        method: "POST",
-        body: JSON.stringify({ image: "data:image/png;base64,AAAA", questions: [] }),
-      });
-      rec("非会员访问答题卡识别被拒 403", r.status === 403, `HTTP ${r.status}`);
-    }
+    const rFree = await api("/api/paper-analysis/vision-scores", {
+      method: "POST",
+      body: JSON.stringify({ image: "data:image/png;base64,AAAA", questions: [] }),
+    });
+    rec("非会员（rolea）访问答题卡识别被拒 403", rFree.status === 403, `HTTP ${rFree.status}`);
   }
 
   // ================= 7. 静态资源 =================
