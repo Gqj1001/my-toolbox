@@ -20,6 +20,34 @@
 ⚠️ **重建数据库会失败**：`tools` 表和 `user_roles` 表里，**有一部分结构只存在于线上**，
 代码仓库里根本没有对应的建表语句（详见第三节末「三个隐患」）。**不要试图用仓库的 SQL 重建数据库。**
 
+### 学生档案现在有三个工具在共用（2026-10 起）
+
+`feedback_students` / `feedback_history` 这两张表**名字带 feedback，但已经是全站统一的学生档案**
+（`0014_students_unified_fields.sql` 给它们补了公共字段 + `extra jsonb`）。
+写入有**两个入口，语义不同**，这是当前最容易踩的地方：
+
+| 入口 | 语义 | 谁在用 |
+|---|---|---|
+| `POST /api/feedback/data`（老） | **整行覆盖**（PostgREST upsert，没带的列写 NULL） | feedback 工具（**一行未改**，正常工作） |
+| **`POST /api/students`（新，0015 起）** | **合并语义**（先读旧行，只覆盖传了的字段） | paper-analysis / math-plan，以及将来的统一档案首页 |
+
+> ⚠️ **为什么必须有两个入口**：0014 之后同一行装三个工具的字段。
+> 用老入口保存会把**别家工具的字段静默清空** —— 例如 math-plan 存的
+> `grade`/`campus`/`extra` 会被 feedback 的一次「保存档案」抹掉。
+> 新入口靠「先读旧行再合并」解决，并有测试钉住
+> （`tests/students-unified.test.mjs` 的「合并③」组）。
+> 将来若要统一，应当让老入口也走 `upsertStudent()`，而不是各写一套。
+
+字段归属：公共列 = 姓名 / 年级 / 科目 / 老师 / 称呼 / 态度 / 校区 / 学管师 / 班级 / 性别；
+**工具专属字段进 `extra` jsonb**（paper → `cls`；math-plan → `phase/book/exam/score/target`），
+所以**以后加新工具不需要改表结构**。
+
+> ⚠️ 合并语义有一个必须知道的细节：`extra` 是 `not null`，
+> 所以「没有值」时是**省略这个键**（让数据库默认 `{}` 生效），**绝不能写 `null`**。
+> 写 null 会撞 23502 约束错误 —— 而且症状很迷惑：**新建**档案一律 500、**更新**已有档案却正常。
+> 见 `src/lib/feedback-db.ts` 的 `buildStudentRow()`。
+
+
 
 ## 二、网站上有哪些工具
 

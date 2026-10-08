@@ -63,6 +63,17 @@ export type StudentRow = {
   type: string | null;
   notes: string | null;
   updated_at: string;
+  // ---- 0014 新增的**统一学生档案**列（全站三个工具共用那一份档案） ----
+  // 全部可空：老行（0014 之前建的）这几列都是 null，读出来照样要能用。
+  // ⚠️ 新增列**一律不改老列的名字与含义** —— feedback.html 读的就是上面那几个。
+  grade: string | null;
+  gender: string | null;
+  campus: string | null;
+  manager: string | null;
+  class_name: string | null;
+  attitude: string | null;
+  /** 工具专属字段（jsonb）。约定见 0014 的列注释。0014 保证它 not null，这里仍按可空处理 */
+  extra: Record<string, unknown> | null;
 };
 
 export type HistoryRow = {
@@ -73,6 +84,14 @@ export type HistoryRow = {
   type_name: string | null;
   subject: string | null;
   created_at: string;
+  // ---- 0014 新增（跨工具共用一份记录表）----
+  /** 归属工具：feedback / paper。默认 feedback（老行自动归位） */
+  tool: string | null;
+  /** 考试名（paper-analysis 的 examName）；feedback 的 type_name 含义不同，两者并存 */
+  title: string | null;
+  /** 得分 / 满分：paper-analysis 才有，feedback 那边是 null */
+  score: number | null;
+  full_score: number | null;
 };
 
 /**
@@ -176,6 +195,24 @@ export function invalidateStaticTables() {
   clearCache(chaptersCache);
   clearCache(phrasesCache);
   bumpDataVersion();
+}
+
+/** 清掉「学生档案 + 历史」两个进程内缓存（**仅供 `/api/debug/clear-caches` 调用**）。
+ *
+ *  为什么需要它：缓存是**进程内**的，而测试 / 脚本有时会**绕过写接口**直接改库
+ *  （例如「直连 PostgREST 造一份带新列的档案」）。那时没有任何代码路径去清缓存，
+ *  于是会读到最长 25 秒的旧值 —— 症状非常像「功能坏了」，其实是缓存没清。
+ *
+ *  ⚠️ **这里刻意不做任何开关判断**：授权只认 `src/lib/debug-gate.ts` 那一处
+ *     （`ALLOW_DEBUG_CACHE_CLEAR=1` + `DEBUG_CACHE_TOKEN` ≥24 位 + 请求头一致，
+ *      缺一即 404）。两处各写一套开关迟早会漂移，而且审计时要看两个文件。
+ *     所以：**这个函数本身是"能被调就清"**，安全性完全由那一个门决定。
+ *
+ *  ⚠️ 它只清进程内缓存，不碰数据库、不改任何行。 */
+export function clearUserDataCachesForTest(): boolean {
+  clearCache(studentsCache);
+  clearCache(historyCache);
+  return true;
 }
 
 /** 清掉**整个**「学生档案」缓存（写完/删完档案后调用；本进程立即生效）
@@ -569,19 +606,29 @@ export async function getStudents(userId?: string): Promise<StudentRow[]> {
   return softFail("学生档案", () => cached(studentsCache, uid, loadStudents));
 }
 
-/** 实际查库（不含缓存） */
+/** 实际查库（不含缓存）
+ *
+ *  ⚠️ **只加列，不动老列**：`id, name, subject, salutation, teacher, type, notes, updated_at`
+ *     这 8 个是老工具（feedback.html）依赖的，名字与含义都不能变。
+ *     0014 之后追加的 7 列服务「统一学生档案」；老行里它们是 null，读出来照样能用。
+ *     `studentsByName()` 是**白名单构造**，所以这里多选列**不会**自动改变接口返回 ——
+ *     要暴露给前端必须在那个函数里显式加（见那里的注释）。
+ *
+ *  ⚠️ select 必须是**一个字面量字符串**：用 `"a" + "b"` 拼接会让 PostgREST 的类型推断
+ *     退化成 `GenericStringError`，编译期就报 TS2352（本轮踩过）。
+ *     要和 `StudentRow` 对齐就改这一处 + 上面的类型定义。 */
 async function loadStudents(): Promise<StudentRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_students")
-    .select("id, name, subject, salutation, teacher, type, notes, updated_at")
+    .select("id, name, subject, salutation, teacher, type, notes, updated_at, grade, gender, campus, manager, class_name, attitude, extra")
     .order("name", { ascending: true });
 
   if (error) {
     console.error("[feedback] 读取学生档案失败:", error.code, error.message);
     throw new Error(`读取学生档案失败: ${error.code} ${error.message}`);
   }
-  return (data ?? []) as StudentRow[];
+  return data ?? [];
 }
 
 /**
@@ -596,20 +643,224 @@ export async function getHistory(userId?: string): Promise<HistoryRow[]> {
   return softFail("反馈历史", () => cached(historyCache, uid, loadHistory));
 }
 
-/** 实际查库（不含缓存） */
+/** 实际查库（不含缓存）
+ *
+ *  ⚠️ 同 `loadStudents()`：**只加列，不动老列**，select 必须是单字面量字符串。
+ *     `historyByStudent()` 是白名单构造，所以多选列不会自动改变接口返回。 */
 async function loadHistory(): Promise<HistoryRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_history")
-    .select("id, student_name, text, date, type_name, subject, created_at")
+    .select("id, student_name, text, date, type_name, subject, created_at, tool, title, score, full_score")
     .order("created_at", { ascending: false });
 
   if (error) {
     console.error("[feedback] 读取历史失败:", error.code, error.message);
     throw new Error(`读取历史失败: ${error.code} ${error.message}`);
   }
-  return (data ?? []) as HistoryRow[];
+  return data ?? [];
 }
+
+// ============================================================
+// 统一学生档案：**写**路径（阶段2 第3步 /api/students 用）
+// ============================================================
+//
+// ⚠️ 与 feedback 现有写路径（`/api/feedback/data` 的 upsert）的区别，是本节的**设计核心**：
+//
+//   feedback 的写法是 `upsert(payload, {onConflict:"user_id,name"})` —— PostgREST 的 upsert
+//   是**整行覆盖**：payload 里没带的列会被写成 NULL。
+//   这在单一工具时代没问题；但 0014 之后同一行要装三个工具的字段，于是会出这种事：
+//
+//     math-plan 存了 {grade:"高三", campus:"燕郊", extra:{phase:"秋"}}
+//     → 老师在 feedback 里点一次「保存档案」（只发 subject/salutation/teacher/type/notes）
+//     → grade / campus / extra **被静默清空**
+//
+//   所以这里改成**合并语义**：先读旧行，只覆盖「本次真正传了的字段」，其余原样保留。
+//   `undefined` = 没传 = 保留；`null` = 明确要清空。
+//   注意「空串」**不等于**「要清空」——空串按原值写入。
+//
+// ⚠️ 本轮**不改** feedback 的写路径（它是正常工作的老代码，动它有回归风险）。
+//    将来若也要合并语义，应当让 `/api/feedback/data` 也走这两个函数，而不是各写一套。
+
+/** 可合并的列（= `loadStudents()` 选的列，去掉 id/updated_at）。
+ *  ⚠️ 加了新列必须同步这里，否则新列永远写不进去（且不会报错）。 */
+const STUDENT_MERGE_COLUMNS = [
+  "subject", "salutation", "teacher", "type", "notes",
+  "grade", "gender", "campus", "manager", "class_name", "attitude", "extra",
+] as const;
+
+export type StudentPatch = Partial<Record<(typeof STUDENT_MERGE_COLUMNS)[number], unknown>>;
+
+/** 从「用户传来的对象」里挑出合法列；没传的键**不进结果**（= 保留原值）。
+ *
+ *  ⚠️ 这是合并语义的关键：**只有出现过的键**才会进 patch。
+ *     值一律**原样**写入（含空串）—— 不做「空串转 null」，
+ *     免得把用户明确清空的意图与「没传」混为一谈。 */
+export function pickStudentPatch(input: Record<string, unknown>): StudentPatch {
+  const patch: StudentPatch = {};
+  for (const col of STUDENT_MERGE_COLUMNS) {
+    if (Object.prototype.hasOwnProperty.call(input, col)) {
+      patch[col] = input[col] === undefined ? null : input[col];
+    }
+  }
+  return patch;
+}
+
+/** 当前用户已有的档案（按姓名）——供合并写入前读取。
+ *  ⚠️ 走 `getStudents()`，所以缓存 key 天然带 user_id（隐私红线）。 */
+async function loadStudentsByName(uid: string): Promise<Map<string, StudentRow>> {
+  const rows = await getStudents(uid);
+  return new Map(rows.map((r) => [r.name, r]));
+}
+
+/** 只有出现过的键才覆盖；没出现过的一律沿用旧值（旧值没有就是 null）
+ *
+ *  ⚠️ `extra` 是 `not null default '{}'`（0014 的约束），**永远不能写 null** ——
+ *     显式传 null 会撞 23502「null value in column "extra" violates not-null constraint」。
+ *     本轮踩过：合并时「没有旧行 → 写 null」，于是**新建**档案一律 500，
+ *     而**更新**已有档案却正常（因为有旧值）——症状很像"随机失败"。
+ *     所以：没有值时**省略这个键**，让数据库默认值生效。
+ *
+ *  ⚠️ 反过来，其它列省略与写 null 等价（都可空），所以统一用 null 没问题。 */
+function buildStudentRow(name: string, existing: StudentRow | undefined, patch: StudentPatch): Record<string, unknown> {
+  const row: Record<string, unknown> = { name };
+  for (const col of STUDENT_MERGE_COLUMNS) {
+    if (Object.prototype.hasOwnProperty.call(patch, col)) {
+      // 本次明确传了：extra 传 null 也当作「没值」→ 省略（见上）
+      if (col === "extra" && patch.extra == null) continue;
+      row[col] = patch[col];
+    } else {
+      const old = existing ? existing[col] : undefined;
+      if (col === "extra" && old == null) continue;   // 省略 → 用数据库默认 '{}'
+      row[col] = old ?? null;
+    }
+  }
+  return row;
+}
+
+/** upsert 一份档案（**合并语义**）。返回写后的行。
+ *
+ *  ⚠️ 顺序：**先读旧行 → 合并 → 再写**。不先读就无法区分「没传」与「传了空」。
+ *  ⚠️ 写完必须 `invalidateStudents()`，否则最长 25 秒读到的还是旧值。 */
+export async function upsertStudent(
+  uid: string,
+  name: string,
+  patch: StudentPatch,
+): Promise<StudentRow> {
+  const supabase = await createClient();
+  const existing = (await loadStudentsByName(uid)).get(name);
+
+  const row = buildStudentRow(name, existing, patch);
+
+  const { data, error } = await supabase
+    .from("feedback_students")
+    .upsert(row, { onConflict: "user_id,name" })
+    .select("id, name, subject, salutation, teacher, type, notes, updated_at, grade, gender, campus, manager, class_name, attitude, extra")
+    .single();
+
+  if (error) {
+    console.error("[students] 保存档案失败:", error.code, error.message);
+    throw new Error(`保存档案失败: ${error.code} ${error.message}`);
+  }
+  invalidateStudents();
+  return data as StudentRow;
+}
+
+/** 按姓名删除档案（连同其历史）。返回是否成功。
+ *
+ *  ⚠️ 与 feedback 的 DELETE 分支行为一致（历史是按 `student_name` 删的，
+ *     历史表没有外键指向档案，所以要显式删两次）。 */
+export async function deleteStudentByName(name: string): Promise<void> {
+  const supabase = await createClient();
+  const { error: histError } = await supabase
+    .from("feedback_history")
+    .delete()
+    .eq("student_name", name);
+  const { error } = await supabase.from("feedback_students").delete().eq("name", name);
+
+  if (histError || error) {
+    console.error("[students] 删除档案失败:", histError?.code, error?.code);
+    throw new Error(`删除档案失败: ${histError?.code ?? error?.code}`);
+  }
+  // 两份缓存都动了
+  invalidateStudents();
+  invalidateHistory();
+}
+
+/** 一条历史记录的合并列（= `loadHistory()` 选的列，去掉 id/created_at） */
+const HISTORY_MERGE_COLUMNS = [
+  "student_name", "text", "date", "type_name", "subject", "tool", "title", "score", "full_score",
+] as const;
+
+export type HistoryPatch = Partial<Record<(typeof HISTORY_MERGE_COLUMNS)[number], unknown>>;
+
+/** 同上：只挑出现过的键 */
+export function pickHistoryPatch(input: Record<string, unknown>): HistoryPatch {
+  const patch: HistoryPatch = {};
+  for (const col of HISTORY_MERGE_COLUMNS) {
+    if (Object.prototype.hasOwnProperty.call(input, col)) {
+      patch[col] = input[col] === undefined ? null : input[col];
+    }
+  }
+  return patch;
+}
+
+/**
+ * 「考试记录」的导入（paper-analysis 迁移用）。
+ *
+ * 幂等设计（用户明确要求「多次调用结果一致」）：
+ *   1. 先按 `(user_id, student_name, tool, title, date)` 查已存在的记录；
+ *   2. 已存在 → **跳过**（不重复插入、不覆盖已有正文）；
+ *   3. 不存在 → 插入。
+ *   所以重复跑同一批数据，第二次会是 `inserted:0, skipped:N`，库里行数不变。
+ *
+ * ⚠️ 为什么用「业务键」判重而不是加唯一索引：
+ *    `feedback_history` 上**没有** (user_id,student_name,tool,title,date) 唯一约束，
+ *    而且历史里确实可能出现「同一天同一场考试存了两份不同正文」的合法情况
+ *    （老师存了两次、改了内容）。加唯一约束会**拒绝**这种数据。
+ *    所以判重放在应用层，作为**导入**这个动作的语义，而不是表的约束。
+ *
+ * ⚠️ 逐条插入（不是一次 bulk insert）：单次导入量是「几十条 × 一个老师」，
+ *    而且需要逐条判重。真到了几千条再考虑批量。
+ */
+export async function importHistory(
+  items: HistoryPatch[],
+): Promise<{ inserted: number; skipped: number }> {
+  const supabase = await createClient();
+  // 一次性把该用户已有的记录全取回来做判重（比逐条查库省很多往返）。
+  // ⚠️ **不要**在这里加 `.eq("tool", …)` 之类的过滤：判重键里已经含 tool，
+  //    过滤掉一部分反而会让「不同 tool 但同名同日期」的判断出错。
+  //    返回量 = 该用户自己的历史（几十~几百行），可接受。
+  const { data: existing, error: readError } = await supabase
+    .from("feedback_history")
+    .select("student_name, tool, title, date");
+  if (readError) {
+    console.error("[students] 导入前读取失败:", readError.code, readError.message);
+    throw new Error(`导入前读取失败: ${readError.code} ${readError.message}`);
+  }
+  const key = (i: { student_name?: unknown; tool?: unknown; title?: unknown; date?: unknown }) =>
+    [String(i.student_name ?? ""), String(i.tool ?? ""), String(i.title ?? ""), String(i.date ?? "")].join("\u0000");
+  const seen = new Set((existing ?? []).map(key));
+  // 同一批内部也要判重，否则「本批次里有两份一样的数据」会插两次
+  const batchSeen = new Set<string>();
+
+  let inserted = 0, skipped = 0;
+  for (const item of items) {
+    const k = key(item as Record<string, unknown>);
+    if (seen.has(k) || batchSeen.has(k)) { skipped++; continue; }
+    batchSeen.add(k);
+    const { error } = await supabase.from("feedback_history").insert(item);
+    if (error) {
+      console.error("[students] 导入插入失败:", error.code, error.message);
+      throw new Error(`导入插入失败: ${error.code} ${error.message}`);
+    }
+    inserted++;
+  }
+
+  if (inserted > 0) invalidateHistory();
+  return { inserted, skipped };
+}
+
 
 /** 把扁平的关键词行装配成前端需要的嵌套结构（按科目） */
 export function buildKeywordTree(rows: KeywordRow[]): KeywordTree {
@@ -661,11 +912,20 @@ export function assembleCategoryKeywords(
   return out;
 }
 
-/** 学生档案数组 → 前端使用的 { 姓名: {...} } 结构 */
+/** 学生档案数组 → 前端使用的 { 姓名: {...} } 结构
+ *
+ *  ⚠️ **这里是接口返回结构的唯一出口**（`loadStudents` 多选的列不会自动出现在响应里）。
+ *     规则（阶段2 红线1「逐字节兼容」）：
+ *       · 老字段**一个都不能少、名字与默认值都不能改** —— feedback.html 直接读它们：
+ *         `subject / salutation / teacher / type / notes / updated / id`；
+ *       · 新字段**只能追加**，而且必须给「老行（null）」一个安全默认值 ——
+ *         否则界面会显示 undefined。
+ *     对照组测试：`tests/students-unified.test.mjs`（老字段少一个就红）。 */
 export function studentsByName(rows: StudentRow[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const r of rows) {
     out[r.name] = {
+      // ---------- 老字段（0014 之前就有，禁止改动） ----------
       subject: r.subject ?? "",
       salutation: r.salutation ?? "家长",
       teacher: r.teacher ?? "",
@@ -673,6 +933,14 @@ export function studentsByName(rows: StudentRow[]): Record<string, unknown> {
       notes: r.notes ?? "",
       updated: (r.updated_at ?? "").slice(0, 10),
       id: r.id,
+      // ---------- 0014 追加：统一学生档案（老行是 null → 空串 / {}） ----------
+      grade: r.grade ?? "",
+      gender: r.gender ?? "",
+      campus: r.campus ?? "",
+      manager: r.manager ?? "",
+      class_name: r.class_name ?? "",
+      attitude: r.attitude ?? "",
+      extra: r.extra ?? {},
     };
   }
   return out;
@@ -689,18 +957,29 @@ export function formatDisplayDate(iso: string | null | undefined): string {
   return `${Number(m[2])}月${Number(m[3])}日`;
 }
 
-/** 历史数组 → 前端使用的 { 姓名: [{...}] } 结构 */
+/** 历史数组 → 前端使用的 { 姓名: [{...}] } 结构
+ *
+ *  ⚠️ 同 `studentsByName()`：老字段 `text / date / typeName / subject / saved / id`
+ *     名字与含义都不能动（feedback.html 读它们）；新字段只追加。
+ *     `date` 仍然是**显示用格式**（`formatDisplayDate` → 「10月7日」），
+ *     不要因为新增了 `tool/score` 就顺手把 date 换成 ISO —— 那会让老界面显示成原始串。 */
 export function historyByStudent(rows: HistoryRow[]): Record<string, unknown[]> {
   const out: Record<string, unknown[]> = {};
   for (const r of rows) {
     out[r.student_name] ??= [];
     out[r.student_name].push({
+      // ---------- 老字段（禁止改动） ----------
       text: r.text,
       date: formatDisplayDate(r.date),
       typeName: r.type_name ?? "",
       subject: r.subject ?? "",
       saved: r.created_at,
       id: r.id,
+      // ---------- 0014 追加：跨工具记录（老行 tool='feedback'，其余为 null） ----------
+      tool: r.tool ?? "feedback",
+      title: r.title ?? "",
+      score: r.score ?? null,
+      fullScore: r.full_score ?? null,
     });
   }
   return out;

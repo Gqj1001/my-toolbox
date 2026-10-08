@@ -1,0 +1,204 @@
+import { NextResponse, type NextRequest } from "next/server";
+import {
+  deleteStudentByName,
+  getHistory,
+  getStudents,
+  historyByStudent,
+  importHistory,
+  pickHistoryPatch,
+  pickStudentPatch,
+  studentsByName,
+  upsertStudent,
+} from "@/lib/feedback-db";
+import { parseDisplayDate } from "@/lib/date-input";
+import { getViewer } from "@/lib/viewer";
+
+/**
+ * 统一学生档案接口（阶段2 第3步）。
+ *
+ * 为什么要有它：三个工具（feedback / paper-analysis / math-plan）都要读写**同一份**
+ * 学生档案与考试记录。feedback 已经有 `/api/feedback/data`，但那个接口的写法是
+ * **整行覆盖**（PostgREST upsert，没带的列会被清成 NULL）—— 0014 之后同一行装了
+ * 三个工具的字段，整行覆盖会**静默清掉别家工具的字段**。所以新接口用**合并语义**：
+ *
+ *   POST 只覆盖「真正传了的字段」，没传的一律保留原值。
+ *   例：math-plan 存了 grade/campus/extra，被 feedback 保存一次后**不能丢**。
+ *
+ * 路由一览：
+ *   GET    /api/students                  列出当前用户的全部学生档案
+ *   GET    /api/students?name=张三         单查一个（返回 404 语义：ok:true, student:null）
+ *   GET    /api/students?withHistory=1    同时带上历史（按姓名分组）
+ *   POST   /api/students  { name, ... }                    upsert 一位（合并语义）
+ *   POST   /api/students  { op:"import", items:[…] }        批量导入考试记录（幂等）
+ *   DELETE /api/students?name=张三         删除档案（连同其历史）
+ *
+ * 隐私隔离：全部查询**不加 user_id 过滤**，靠 RLS（`user_id = auth.uid()`）隔离；
+ *   进程内缓存的 key 里带 user_id（见 feedback-db 的 getStudents/getHistory 注释）。
+ *   这一点有测试钉住：`tests/students-unified.test.mjs` 的跨账号隔离组。
+ */
+
+/** 与 `/api/feedback/data` 一致的守卫：未登录 401、封禁 403 */
+async function requireUser() {
+  const viewer = await getViewer();
+  if (!viewer.user) return { ok: false as const, status: 401, message: "请先登录。" };
+  if (viewer.membership.status === "banned") {
+    return { ok: false as const, status: 403, message: "账号已被封禁。" };
+  }
+  return { ok: true as const, userId: viewer.user.id };
+}
+
+/** 统一错误出口：不把数据库细节暴露给前端，但**服务端日志**要留全 */
+function dbError(scope: string, e: unknown) {
+  const message = e instanceof Error ? e.message : String(e);
+  console.error(`[students] ${scope} 失败:`, message);
+  return NextResponse.json({ ok: false, error: "操作失败，请稍后重试。" }, { status: 500 });
+}
+
+export async function GET(request: NextRequest) {
+  const guard = await requireUser();
+  if (!guard.ok) {
+    return NextResponse.json({ ok: false, error: guard.message }, { status: guard.status });
+  }
+
+  const sp = request.nextUrl.searchParams;
+  const name = sp.get("name");
+  const withHistory = sp.get("withHistory") === "1";
+
+  try {
+    const rows = await getStudents(guard.userId);
+    // 复用 feedback 的装配函数：**同一份返回结构**，三个工具与将来的统一首页只认这一种形状。
+    // （不要在别处再写一套 {姓名: {...}} 的拼装，那种"第二个来源"是这个项目踩过的坑。）
+    const all = studentsByName(rows);
+
+    const payload: Record<string, unknown> = {
+      ok: true,
+      students: name ? (name in all ? { [name]: all[name] } : {}) : all,
+      count: Object.keys(all).length,
+    };
+
+    if (withHistory) {
+      const histRows = await getHistory(guard.userId);
+      payload.history = historyByStudent(histRows);
+    }
+    if (name) {
+      payload.student = name in all ? all[name] : null;
+    }
+    return NextResponse.json(payload);
+  } catch (e) {
+    return dbError("读取档案", e);
+  }
+}
+
+/** 把一条外来记录规整成可写入的行（日期走与 feedback 同一个解析器） */
+function normalizeHistoryItem(raw: Record<string, unknown>) {
+  const patch = pickHistoryPatch(raw);
+  // tool 必填（0014 的约束只允许 feedback / paper）；缺省按 paper 处理，
+  // 因为这个导入口的现实用途就是「paper-analysis 本机数据搬上来」。
+  const tool = typeof patch.tool === "string" && patch.tool ? patch.tool : "paper";
+  // ⚠️ 复用 feedback 的同一个解析器（src/lib/date-input.ts）：
+  //    paper 的 examDate 是「2026年10月7日」这种给人看的文本，直接写 date 列会被 PG 拒绝。
+  const date = parseDisplayDate(patch.date);
+  return {
+    student_name: patch.student_name,
+    text: patch.text,
+    date,
+    type_name: patch.type_name ?? null,
+    subject: patch.subject ?? null,
+    tool,
+    title: patch.title ?? null,
+    score: patch.score ?? null,
+    full_score: patch.full_score ?? null,
+  };
+}
+
+export async function POST(request: NextRequest) {
+  const guard = await requireUser();
+  if (!guard.ok) {
+    return NextResponse.json({ ok: false, error: guard.message }, { status: guard.status });
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ ok: false, error: "请求体不是合法 JSON。" }, { status: 400 });
+  }
+
+  // ---------------- 批量导入考试记录（幂等） ----------------
+  if (body.op === "import") {
+    const items = Array.isArray(body.items) ? body.items : null;
+    if (!items) {
+      return NextResponse.json({ ok: false, error: "缺少 items 数组。" }, { status: 400 });
+    }
+    if (items.length > 2000) {
+      return NextResponse.json({ ok: false, error: "单次导入最多 2000 条。" }, { status: 400 });
+    }
+    const normalized = [];
+    // 日期解析不出来的条数**必须如实报回去**（用户明确要求：不静默丢数据）
+    let dateUnparsed = 0;
+    for (const raw of items) {
+      if (!raw || typeof raw !== "object") continue;
+      const item = normalizeHistoryItem(raw as Record<string, unknown>);
+      if (!item.student_name || !item.text) continue;
+      if (item.date === null && (raw as Record<string, unknown>).date) dateUnparsed++;
+      normalized.push(item);
+    }
+
+    try {
+      const result = await importHistory(normalized);
+      return NextResponse.json({
+        ok: true,
+        ...result,
+        received: items.length,
+        accepted: normalized.length,
+        // ⚠️ 前端必须把这个数展示给用户（「有 N 条日期没能识别」），不能吞掉
+        dateUnparsed,
+      });
+    } catch (e) {
+      return dbError("导入记录", e);
+    }
+  }
+
+  // ---------------- upsert 一位学生档案（合并语义） ----------------
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) {
+    return NextResponse.json({ ok: false, error: "缺少学生姓名。" }, { status: 400 });
+  }
+  if (name.length > 100) {
+    return NextResponse.json({ ok: false, error: "学生姓名过长。" }, { status: 400 });
+  }
+
+  const patch = pickStudentPatch(body);
+  // extra 必须是 JSON 对象（0014 有 CHECK 约束，先在这里挡一下给出中文提示）
+  if ("extra" in patch) {
+    const ex = patch.extra;
+    if (ex !== null && (typeof ex !== "object" || Array.isArray(ex))) {
+      return NextResponse.json({ ok: false, error: "extra 必须是 JSON 对象。" }, { status: 400 });
+    }
+  }
+
+  try {
+    const row = await upsertStudent(guard.userId, name, patch);
+    // 返回结构与本接口的 GET 一致（同一个装配函数），前端只认一种形状
+    return NextResponse.json({ ok: true, student: studentsByName([row])[name] });
+  } catch (e) {
+    return dbError("保存档案", e);
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const guard = await requireUser();
+  if (!guard.ok) {
+    return NextResponse.json({ ok: false, error: guard.message }, { status: guard.status });
+  }
+  const name = request.nextUrl.searchParams.get("name");
+  if (!name) {
+    return NextResponse.json({ ok: false, error: "缺少 name 参数。" }, { status: 400 });
+  }
+  try {
+    await deleteStudentByName(name);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return dbError("删除档案", e);
+  }
+}

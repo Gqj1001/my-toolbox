@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { parseDisplayDate } from "@/lib/date-input";
 import {
   assembleCategoryKeywords,
   getCategories,
@@ -235,40 +236,10 @@ export async function GET(request: NextRequest) {
 
 /**
  * 把前端输入的显示型日期转成 date 列可接受的 ISO 格式。
- * 前端默认填入的是「10月3日」这种给人看的文本，直接写入 date 列会被 PostgreSQL 拒绝。
- * 支持：10月3日 / 10-3 / 10/3 / 2026-10-03；无法解析时返回 null（该列可为空）。
+ *
+ * ⚠️ 函数本体已搬到 `@/lib/date-input`（阶段2 第2步）：paper-analysis 也要写同一个
+ *    `feedback_history.date`，两处各写一份迟早会漂移。这里只留 import，调用点不变。
  */
-function parseDisplayDate(input: unknown): string | null {
-  const raw = String(input ?? "").trim();
-  if (!raw) return null;
-
-  // 已是 ISO
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-
-  const year = new Date().getFullYear();
-  const cn = raw.match(/^(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/);
-  if (cn) {
-    const m = Number(cn[1]);
-    const d = Number(cn[2]);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${year}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    }
-    return null;
-  }
-
-  const sep = raw.match(/^(\d{1,2})[-/.](\d{1,2})$/);
-  if (sep) {
-    const m = Number(sep[1]);
-    const d = Number(sep[2]);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${year}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    }
-    return null;
-  }
-
-  // 其它格式（如「周三」）不写入日期列，避免整条记录写入失败
-  return null;
-}
 
 export async function POST(request: NextRequest) {
   const guard = await requireUser();

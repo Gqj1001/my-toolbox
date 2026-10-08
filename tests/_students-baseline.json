@@ -1,0 +1,37 @@
+{
+  "status": 200,
+  "studentRaw": {
+    "subject": "math",
+    "salutation": "妈妈",
+    "teacher": "郭庆杰",
+    "type": "regular",
+    "notes": "老字段 notes（含换行\n与符号 &<>\"）",
+    "updated": "2026-10-08",
+    "id": 42
+  },
+  "historyRaw": {
+    "text": "对照组历史正文（含换行\n与符号 &<>\"）",
+    "date": "10月7日",
+    "typeName": "",
+    "subject": "math",
+    "saved": "2026-10-08T19:55:00.275629+00:00",
+    "id": 9
+  },
+  "studentOld": {
+    "subject": "math",
+    "salutation": "妈妈",
+    "teacher": "郭庆杰",
+    "type": "regular",
+    "notes": "老字段 notes（含换行\n与符号 &<>\"）",
+    "updated": "2026-10-08",
+    "id": 42
+  },
+  "historyOld": {
+    "text": "对照组历史正文（含换行\n与符号 &<>\"）",
+    "date": "10月7日",
+    "typeName": "",
+    "subject": "math",
+    "saved": "2026-10-08T19:55:00.275629+00:00",
+    "id": 9
+  }
+}
