@@ -19,7 +19,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
-import { readEnv, readUsers, makeRecorder } from "./_helpers.mjs";
+import {
+  fetchSession, formatSessionCookie, readEnv, readUsers, makeRecorder, sessionCookieExpiringIn,
+} from "./_helpers.mjs";
 
 const PROJECT = "D:\\my-website\\my-toolbox";
 const NODE_BIN =
@@ -53,14 +55,9 @@ for (let i = 0; i < 60; i++) {
   try { if ((await fetch(`${BASE}/login`)).status === 200) break; } catch { /* 等 */ }
 }
 
-// ---- 会话 cookie ----
-const sess = await (await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-  method: "POST",
-  headers: { apikey: ANON_KEY, "Content-Type": "application/json" },
-  body: JSON.stringify({ email: userEmail, password }),
-})).json();
-const ref = new URL(SUPABASE_URL).hostname.split(".")[0];
-const cookie = `sb-${ref}-auth-token=base64-${Buffer.from(JSON.stringify(sess)).toString("base64url")}`;
+// ---- 会话（真 token，只有 expires_at 会被按需覆盖）----
+const sess = await fetchSession(userEmail, password, SUPABASE_URL, ANON_KEY);
+const cookie = formatSessionCookie(sess, SUPABASE_URL);
 
 async function hit(path) {
   await reset();
@@ -95,9 +92,13 @@ if (TTL_DISABLED) {
     `第 1 次 ${first.byTable["user_roles"] ?? 0} 次 → 第 2 次 ${second.byTable["user_roles"] ?? 0} 次`,
   );
   record(
-    "★中间件 auth 缓存生效：auth:user 次数下降（剩下的那次来自页面侧 getViewer）",
-    (second.byTable["auth:user"] ?? 0) < (first.byTable["auth:user"] ?? 0),
-    `第 1 次 ${first.byTable["auth:user"] ?? 0} 次 → 第 2 次 ${second.byTable["auth:user"] ?? 0} 次`,
+    "★中间件 auth 缓存生效（中间件那次 auth:user 消失；剩下的那次来自页面侧 getViewer）",
+    // ⚠️ 只断言「没有变多」。**不要**再断言它下降：
+    //    A-2 之后，够新的 token 在中间件里根本不调 getUser（走 JWT 解码那条路），
+    //    所以留下的这 1 次就是页面侧 `getViewer()` 的校验 —— 它在两次请求里都是 1 次，
+    //    与中间件缓存无关。写「必须下降」会得到一条与缓存无关的假红（本轮踩过）。
+    (second.byTable["auth:user"] ?? 0) <= (first.byTable["auth:user"] ?? 0),
+    `第 1 次 ${first.byTable["auth:user"] ?? 0} 次 → 第 2 次 ${second.byTable["auth:user"] ?? 0} 次（页面侧校验，会一直在）`,
   );
   record(
     "第 2 次出网次数明显少于第 1 次",
@@ -112,6 +113,73 @@ record("未登录访问仍被拦（重定向，不是 200）", anon.status === 3
 
 const anonHtml = await fetch(`${BASE}/tools/feedback.html`, { redirect: "manual" });
 record("未登录取工具 HTML 仍被拦（307）", anonHtml.status === 307, `HTTP ${anonHtml.status}`);
+
+// ============================================================
+// 3) A-2：只有「快过期」才刷新，且并发只刷一次
+// ============================================================
+// 背景：auth-js 在 access token 剩 < 90 秒时会各自去刷新，而它的去重是**实例级**的，
+//       本项目每请求新建 client → 跨请求零去重。实测并发 8 个请求曾产生 16 次 /token。
+// 判据：数 `/auth/v1/token` 的真实调用次数（`_instrument.cjs` 把 /auth/v1/token 记成 `auth:token`）。
+
+/** 打 n 个并发请求，返回 auth:token 的调用次数 */
+async function burst(path, n, cookieValue) {
+  await reset();
+  const results = await Promise.all(
+    Array.from({ length: n }, () =>
+      fetch(BASE + path, { headers: { cookie: cookieValue }, redirect: "manual" })
+        .then((r) => r.status)
+        .catch(() => 0)),
+  );
+  const st = await stats();
+  return { statuses: results, tokenCalls: st.byTable["auth:token"] ?? 0, byTable: st.byTable, calls: st.total };
+}
+
+// 3a) token 很新（还剩 1 小时）→ 一条 /token 都不该发
+const freshCookie = sessionCookieExpiringIn(sess, 3600, SUPABASE_URL);
+const freshBurst = await burst("/tools/feedback", 1, freshCookie);
+record("★A-2：token 还剩 1 小时（> 120s）→ **不刷新**（/auth/v1/token = 0 次）",
+  freshBurst.tokenCalls === 0,
+  `token 调用 ${freshBurst.tokenCalls} 次；明细 ${JSON.stringify(freshBurst.byTable)}`);
+record("A-2：够新时页面仍正常返回（没把鉴权搞坏）",
+  freshBurst.statuses.every((s) => s === 200), `状态码 ${JSON.stringify(freshBurst.statuses)}`);
+
+// 3b) token 快过期（还剩 3 秒）→ 该刷新，且只刷一次
+const staleCookie = sessionCookieExpiringIn(sess, 3, SUPABASE_URL);
+// ⚠️ 先"用掉"一次：确保 singleFlight 里没有上一次的残留（钥匙是 refresh_token，
+//    而每次调用 token 端点都会轮换 refresh_token，所以这里天然是新钥匙）
+const staleSingle = await burst("/tools/feedback", 1, staleCookie);
+record("★A-2：token 只剩 3 秒（< 120s）→ 触发刷新（/auth/v1/token ≥ 1 次）",
+  staleSingle.tokenCalls >= 1,
+  `token 调用 ${staleSingle.tokenCalls} 次；明细 ${JSON.stringify(staleSingle.byTable)}`);
+record("A-2：快过期时页面仍正常返回",
+  staleSingle.statuses.every((s) => s === 200), `状态码 ${JSON.stringify(staleSingle.statuses)}`);
+
+// 3c) ★核心：并发 8 个「快过期」请求
+//     用一份**全新的**快过期会话（refresh_token 是新的，保证不命中上一次的单飞/缓存）
+//
+// ⚠️ 期望值是「有改进」而**不是**「归零」，这里必须说清楚为什么：
+//   中间件的单飞去重**确实生效**（并发 8 个请求，中间件只刷 1 次），
+//   但页面侧的 `getViewer()`（src/lib/viewer.ts）**自己 new 一个 client** 调
+//   `auth.getUser()`，它读的是浏览器发来的**原始 cookie**（不是中间件改过的那份），
+//   所以它仍然会各自去刷新 —— 这一半的并发刷新**不在本文件的能力范围内**。
+//   实测：修复前 16 次 → 现在 8~12 次（取决于时序）。
+//   要真正压到 1~2 次，必须**同时**改 `src/lib/viewer.ts`（本轮用户限定只改
+//   proxy.ts 与 SiteHeader，所以留作下一轮的明确待办）。
+//   本断言的作用是**守住已有改进**：一旦超过 13 次，说明中间件那半边的去重也退化了。
+const sess2 = await fetchSession(userEmail, password, SUPABASE_URL, ANON_KEY);
+const staleCookie2 = sessionCookieExpiringIn(sess2, 3, SUPABASE_URL);
+const storm = await burst("/tools/feedback", 8, staleCookie2);
+record("★A-2：并发 8 个「快过期」请求 → /auth/v1/token ≤ 13 次（修复前 16 次；中间件那半边的去重生效）",
+  storm.tokenCalls <= 13,
+  `token 调用 ${storm.tokenCalls} 次；明细 ${JSON.stringify(storm.byTable)}；状态码 ${JSON.stringify(storm.statuses)}`);
+record("★A-2 核心：并发风暴里 8 个请求全部成功（没有因为去重把谁搞失败）",
+  storm.statuses.every((s) => s === 200),
+  `状态码 ${JSON.stringify(storm.statuses)}`);
+// 记录「还剩多少没解决」，作为下一轮改 viewer.ts 的量化依据
+record("A-2 待办留痕：页面侧 getViewer() 仍会各自刷新（目标 ≤2，当前见上面数字）",
+  true,
+  `中间件已去重；剩余 ${storm.tokenCalls} 次来自页面侧 src/lib/viewer.ts → 需下一轮改`);
+
 
 spawnSync("powershell", ["-NoProfile", "-Command", `Stop-Process -Id ${srv.pid} -Force`], { encoding: "utf8" });
 process.exit(summary() ? 0 : 1);

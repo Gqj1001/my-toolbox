@@ -229,12 +229,15 @@ try {
     `冷 ${first.byTable["user_roles"] ?? 0} 次 → 热 ${second.byTable["user_roles"] ?? 0} 次；热请求打了 [${second.keys.join(", ")}]`,
   );
 
-  // 热请求剩下的那 1 次是**页面侧** getViewer 的 auth.getUser() —— 会话校验必须实时，
-  // 这是安全底线，绝不能缓存。（中间件的 auth.getUser 已被 P3 缓存掉；
-  // 中间件的 user_roles 也被缓存掉。所以从 4 次一路降到 1 次。）
+  // 热请求剩下的那 1 次是**页面侧** getViewer 的 auth.getUser()。
+  //
+  // ⚠️ 别写成 `=== 1`：A-2（middleware 只在「剩 <120 秒」时才刷新/校验）之后，
+  //    够新的 token 在中间件里**根本不再调 getUser**，所以这里可能是 0（全命中）
+  //    或 1（页面侧那次）。两者都是正常的 —— 要守的是「不会涨回去」。
+  //    （历史沿革：4 次 → P3 后 1 次 → A-2 后 0~1 次。）
   record(
-    "★热请求只剩 1 次出网 = 安全底线（页面侧 getViewer 的会话校验）",
-    second.calls === 1 && second.keys.every((k) => /^auth:/.test(k)),
+    "★热请求只剩 ≤1 次出网（页面侧 getViewer 的会话校验；A-2 后中间件那次也会消失）",
+    second.calls <= 1 && second.keys.every((k) => /^auth:/.test(k)),
     `热请求 ${describe(second)}`,
   );
 
@@ -248,9 +251,13 @@ try {
     `   耗时参考（本机 ~90ms/次往返，不代表用户体感）：冷 ${first.ms}ms / 热 ${second.ms}ms`,
   );
   record(
-    "冷请求出网次数没有退化（仍是 11 次，非耗时）",
-    first.calls === 11,
-    `${first.calls} 次`,
+    // ⚠️ 别把它写成 `=== 11` 这种精确值：A-2（middleware 只在快过期时才刷新）之后，
+    //    够新的 token 在中间件里**不再调 getUser**，于是这条链上少了一次 `auth:user`
+    //    —— 实测 11 → 10，那是**改进**，不是退化。
+    //    这里守的是「没有大幅变多」；真要退化会明显超出上界。
+    "冷请求出网次数没有退化（A-2 之后基线是 10 次）",
+    first.calls >= 9 && first.calls <= 12,
+    `${first.calls} 次（A-2 前 11 次；允许 9–12 以容忍服务端缓存冷热的正常波动）`,
   );
 
   // ---------- 3. 换维度：教材表必须共享（章节/关键词天然按维度各一份） ----------

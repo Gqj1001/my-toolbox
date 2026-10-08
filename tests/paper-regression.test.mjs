@@ -115,7 +115,17 @@ await goto("/tools/feedback", 10000);
   rec("iframe src 正确", String(s.src).includes("/tools/feedback.html"), String(s.src));
   rec("feedback 工具元素就位", s.hasStage === true && s.hasSubject === true, "");
   rec("feedback 云端模式正常", /云端|联网/.test(String(s.badge)), String(s.badge));
-  rec("feedback 已载入云端数据", /已载入云端数据/.test(String(s.hint)), String(s.hint).slice(0, 60));
+  // ⚠️ 不能只认「✓ 已载入云端数据」这一种措辞：
+  //    客户端缓存（IndexedDB）命中时，`loadCloudScoped` 会把提示写成
+  //    「✓ 已载入云端数据…（本机缓存，已核对最新数据）」或
+  //    「（此前显示的是本机缓存，服务端已更新，画面已刷新）」；
+  //    核对还没回来时则是「⚡ 已用本机缓存立即显示…」。
+  //    三种都是**正常**的云端态。只认第一种会让这条断言依赖
+  //    「这台机器上恰好没有缓存」，随运行顺序随机变红（本轮实测踩到）。
+  //    真正要守的是「已经不是本机版了」，所以下面按这个口径断言。
+  rec("feedback 已进入云端态（不是「本机版」）",
+    /已载入云端数据|已用本机缓存|本机缓存/.test(String(s.hint)) && !/本机版/.test(String(s.hint)),
+    String(s.hint).slice(0, 80));
 }
 
 // ---------- 其他工具页 ----------

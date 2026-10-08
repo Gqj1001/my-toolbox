@@ -102,6 +102,49 @@ export async function startBrowser(port, profile) {
   return { cdp, sessionId, edge };
 }
 
+/* ==========================================================================
+   伪造会话 cookie（**仅供测试**）
+   --------------------------------------------------------------------------
+   为什么需要：`src/proxy.ts` 的 A-2 逻辑会用 cookie 里的 `expires_at` 判断
+   「要不要去刷新 token」。而真实登录拿到的会话是**1 小时有效**的 —— 也就是说
+   它永远走「够新、不刷新」那条路，**测不到刷新路径**。
+   所以测试需要能构造「还剩 N 秒过期」的会话 cookie。
+
+   ⚠️ 只改 `expires_at` 这个**调度用**的时间戳，access_token / refresh_token
+      仍是 Auth 服务签发的**真** token —— 所以刷新是真的会发生、也真的会被计数。
+   ========================================================================== */
+
+/** 与 @supabase/ssr 一致：`base64-<base64url(JSON)>`，超过 3180 字符时切成 `.0`/`.1`… */
+export function formatSessionCookie(session, supabaseUrl) {
+  const ref = new URL(supabaseUrl).hostname.split(".")[0];
+  const name = `sb-${ref}-auth-token`;
+  const value = "base64-" + Buffer.from(JSON.stringify(session)).toString("base64url");
+  const chunks = [];
+  for (let i = 0; i * 3180 < value.length; i++) chunks.push(value.slice(i * 3180, (i + 1) * 3180));
+  return chunks.map((c, i) => `${name}${chunks.length > 1 ? "." + i : ""}=${c}`).join("; ");
+}
+
+/** 拿一份真会话（邮箱密码换 token 端点） */
+export async function fetchSession(email, password, supabaseUrl, anonKey) {
+  const r = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: anonKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const s = await r.json();
+  if (!s?.access_token) throw new Error("登录取会话失败: " + JSON.stringify(s).slice(0, 200));
+  return s;
+}
+
+/** 真会话 + 覆盖 `expires_at` → 可用的 cookie 字符串。
+ *  `sec` 为负数表示「已经过期」。 */
+export function sessionCookieExpiringIn(session, sec, supabaseUrl) {
+  return formatSessionCookie(
+    { ...session, expires_at: Math.floor(Date.now() / 1000) + sec },
+    supabaseUrl,
+  );
+}
+
 /** 建一套页面操作工具 */
 export function makePageApi(cdp, sessionId) {
   const ev = async (expr) => {

@@ -68,7 +68,34 @@ function decodeBase64Url(s: string): string {
   return Buffer.from(b64, "base64").toString("binary");
 }
 
-function readAccessToken(request: NextRequest): string | null {
+/** Cookie 里的会话（**只用于「要不要刷新」的判断与缓存 key，绝不参与身份判定**） */
+type CookieSession = {
+  accessToken: string;
+  /** 秒级时间戳（@supabase/ssr 把整个 session JSON 存在 cookie 里，含这个字段） */
+  expiresAt: number;
+  refreshToken: string | null;
+};
+
+/** 把 `sb-<ref>-auth-token` 的分片拼起来、解码、解析成 CookieSession。
+ *  取不到 / 解不出就返回 null（**宁可多查一次，也不猜**）。 */
+function parseSessionCookieValue(joined: string): CookieSession | null {
+  if (!joined) return null;
+  const raw = joined.startsWith("base64-") ? joined.slice(7) : joined;
+  const session = JSON.parse(decodeBase64Url(raw)) as {
+    access_token?: unknown;
+    refresh_token?: unknown;
+    expires_at?: unknown;
+  };
+  if (typeof session.access_token !== "string" || !session.access_token) return null;
+  return {
+    accessToken: session.access_token,
+    expiresAt: typeof session.expires_at === "number" ? session.expires_at : 0,
+    refreshToken: typeof session.refresh_token === "string" ? session.refresh_token : null,
+  };
+}
+
+/** 从请求 Cookie 里读出会话 */
+function readSession(request: NextRequest): CookieSession | null {
   try {
     const ref = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").hostname.split(".")[0];
     const storageKey = `sb-${ref}${AUTH_COOKIE_SUFFIX}`;
@@ -81,16 +108,72 @@ function readAccessToken(request: NextRequest): string | null {
         if (Number.isInteger(idx)) chunks[idx] = c.value;
       }
     }
-    const joined = chunks.filter((x) => typeof x === "string").join("");
-    if (!joined) return null;
-    const raw = joined.startsWith("base64-") ? joined.slice(7) : joined;
-    const session = JSON.parse(decodeBase64Url(raw)) as { access_token?: unknown };
-    return typeof session.access_token === "string" && session.access_token
-      ? session.access_token
-      : null;
+    return parseSessionCookieValue(chunks.filter((x) => typeof x === "string").join(""));
   } catch {
     return null;
   }
+}
+
+/** 从**响应** Cookie 里读出会话 —— 刷新后的新会话是 auth-js 写进 response 的 Set-Cookie，
+ *  而不是请求里那份（请求里的还是旧的、快过期的那个）。用来把新 token 也放进 authCache。 */
+function readSessionFromResponse(response: NextResponse): CookieSession | null {
+  try {
+    const ref = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").hostname.split(".")[0];
+    const storageKey = `sb-${ref}${AUTH_COOKIE_SUFFIX}`;
+    const chunks: string[] = [];
+    for (const c of response.cookies.getAll()) {
+      if (c.name === storageKey) chunks.push(c.value);
+      else if (c.name.startsWith(`${storageKey}.`)) {
+        const idx = Number(c.name.slice(storageKey.length + 1));
+        if (Number.isInteger(idx)) chunks[idx] = c.value;
+      }
+    }
+    return parseSessionCookieValue(chunks.filter((x) => typeof x === "string").join(""));
+  } catch {
+    return null;
+  }
+}
+
+/** 只**解码**（不验签）JWT 的 payload。验签是 Auth 服务的事，这里只取 `exp` / `sub` 做调度判断。 */
+function decodeJwtPayload(token: string): { sub?: string; email?: string; exp?: number } | null {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const json = decodeBase64Url(part);
+    return JSON.parse(json) as { sub?: string; email?: string; exp?: number };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 刷新单飞：同一瞬间、**同一个 refresh_token** 的并发请求只真正发一次 `/token`。
+ *
+ * 为什么必需（这是本文件最重要的一个修正）：
+ *   `auth.getUser()` 在 access token 剩 < 90 秒（auth-js 的 `EXPIRY_MARGIN_MS`）时会
+ *   去刷新。而 auth-js 自己的去重（`refreshingDeferred` / `_acquireLock`）**都是实例级内存** ——
+ *   本项目每个请求都新建一个 GoTrueClient，所以**跨请求零去重**。
+ *   实测：伪造「还剩 3 秒」的会话、并发 8 个请求 → **16 次 `/auth/v1/token`**
+ *   （每请求 2 次：中间件 1 + 页面侧 getViewer 1）。
+ *   同一个 refresh token 被并发使用会触发 Supabase 的「检测泄露 → 撤销会话」，
+ *   用户体感就是「每次都要登录」。
+ *
+ * ⚠️ 它是**进程内**的（与本文件其它缓存一样，每个服务端实例各一份）。
+ *    多实例时最坏仍有 2 次；配合「刷新成功后把新 token 写回 authCache」足够落在
+ *    reuse interval（线上 30 秒）之内。
+ * ⚠️ 只去重**同一把钥匙**：refresh_token 变了（真的轮换了）就是新的一次刷新，不该被合并。
+ */
+const refreshInflight = new Map<string, Promise<CachedUser | null>>();
+
+function singleFlight(key: string, fn: () => Promise<CachedUser | null>): Promise<CachedUser | null> {
+  const flying = refreshInflight.get(key);
+  if (flying) return flying;
+  const run = fn().finally(() => {
+    // 只清「还是自己这一条」的，避免把别人新发起的顶掉
+    if (refreshInflight.get(key) === run) refreshInflight.delete(key);
+  });
+  refreshInflight.set(key, run);
+  return run;
 }
 
 function matchesPath(pathname: string, paths: string[]) {
@@ -161,20 +244,74 @@ export default async function proxy(request: NextRequest) {
   // 必须尽早调用：触发 Token 刷新，并把新会话写入上面的 response。
   // 使用 getUser() 而不是 getSession()，因为它会向 Auth 服务校验 Token。
   //
-  // 缓存：key = 存下来的 access token。命中则**跳过这次外网往返**。
-  // （token 变了 key 就变，所以不需要额外的失效逻辑；见文件上方长注释。）
-  const token = readAccessToken(request);
-  const cachedAuth = token ? authCache.get(token) : undefined;
+  // ============================================================
+  // A-2：只有「快过期」时才真的刷新，且并发只刷一次
+  // ============================================================
+  //
+  // 背景（实测）：auth-js 在 access token 剩 < `EXPIRY_MARGIN_MS`（= 90 秒）时就会去刷新，
+  //   而它的去重是**实例级**的 —— 本项目每个请求新建一个 client，所以跨请求零去重。
+  //   实测「还剩 3 秒 + 并发 8 个请求」→ **16 次 /auth/v1/token**
+  //   → 触发 Supabase「同一个 refresh token 被重复使用 = 泄露」→ 撤销会话
+  //   → 用户体感「每次都要登录」。
+  //
+  // 现在分两条路：
+  //   ① token 还够新（`expires_at` 距今 > FRESH_MARGIN_MS）→ **完全不问 Auth 服务**：
+  //      身份取自 cookie 里上次被 Auth 服务校验过的会话（`sub` / `email`），
+  //      顺带写入 authCache。0 次外网 → 也就不可能触发刷新。
+  //   ② 即将过期 / 取不到会话 / 上面没判定出来 → 交给 auth-js 的 `getUser()`
+  //      （它在这个分支里才会真的刷新），并用 `singleFlight` 让同一波并发只发一次 `/token`。
+  //
+  // ⚠️ 安全取舍（用户已确认接受，2026-10）：
+  //    分支① 不再逐请求向 Auth 服务确认「token 是否被吊销」，改为**每个 token 生命周期确认一次**
+  //    （token 1 小时一轮换，进入 120 秒窗口时必然走到分支②）。
+  //    封禁**不受影响** —— 它走下面的 `user_roles` 查询，与这里无关。
+  //    代价是「改密码 / 主动吊销」最多延迟到该 token 过期才生效（≤1 小时）。
+  //
+  // ⚠️ 刻意**不做** JWT 验签：验签是 Auth 服务的事。这里只解码 payload 取 `sub`/`email`/`exp`
+  //    作为**调度**依据；真正的校验在分支②的 `getUser()` 里发生。
+  const FRESH_MARGIN_MS = 120_000;
+  const session = readSession(request);
 
-  let user: CachedUser | null;
-  if (cachedAuth !== undefined) {
-    user = cachedAuth.value;
-  } else {
-    const {
-      data: { user: fetched },
-    } = await supabase.auth.getUser();
-    user = fetched ? { id: fetched.id, email: fetched.email ?? undefined } : null;
-    if (token) authCache.set(token, user);
+  let user: CachedUser | null = null;
+  let handledByFreshPath = false;
+
+  if (session && session.expiresAt * 1000 - Date.now() > FRESH_MARGIN_MS) {
+    const cachedAuth = authCache.get(session.accessToken);
+    if (cachedAuth !== undefined) {
+      user = cachedAuth.value;
+      handledByFreshPath = true;
+    } else {
+      const payload = decodeJwtPayload(session.accessToken);
+      if (payload?.sub) {
+        user = { id: payload.sub, email: payload.email };
+        authCache.set(session.accessToken, user);
+        handledByFreshPath = true;
+      }
+      // 解不出来（异常 token）→ handledByFreshPath 保持 false → 落到下面让 Auth 服务判定
+    }
+  }
+
+  if (!handledByFreshPath) {
+    const run = async (): Promise<CachedUser | null> => {
+      const {
+        data: { user: fetched },
+      } = await supabase.auth.getUser();
+      const u = fetched ? { id: fetched.id, email: fetched.email ?? undefined } : null;
+      // 把**轮换后的新 token** 也写进 authCache：同一波并发里，后续请求即使 key 变了
+      // 也能立刻命中，而不是各刷一次。
+      //
+      // ⚠️ 这里**做不到**「让同一次请求的页面渲染也免于刷新」：
+      //    页面侧的 `getViewer()`（src/lib/viewer.ts）自己 new 一个 client 调
+      //    `getUser()`，它读的是**浏览器发来的原始 cookie**（不是中间件改过的那份），
+      //    所以它仍然会各自去刷新。实测：8 个并发请求里，中间件靠单飞只刷 1 次，
+      //    但页面侧又刷了 8 次。**要根治必须同时改 viewer.ts**（见交接文档）。
+      const minted = readSessionFromResponse(response);
+      if (minted?.accessToken) authCache.set(minted.accessToken, u);
+      return u;
+    };
+    // 单飞的钥匙用 refresh_token：要防的正是「同一个 refresh token 被并发使用」
+    const key = session?.refreshToken ?? session?.accessToken ?? null;
+    user = key ? await singleFlight(key, run) : await run();
   }
 
   const { pathname, search } = request.nextUrl;

@@ -39,7 +39,12 @@ export default async function SiteHeader({ email, role, current }: SiteHeaderPro
             工具列表
           </Link>
           {isAdmin ? (
-            <Link href="/admin" className={linkClass("/admin")}>
+            // prefetch={false}：减少「危险窗口」内的并发请求数，同时省掉多余的 RSC 预取。
+            // 打开一个页面会并行预取十几个链接（/tools、/admin、/upgrade、每张工具卡片），
+            // 每一条都要重跑中间件；实测 13 条预取。这两个目标不是高频点击对象，
+            // 预取它们收益低、却贡献了其中 4 条。
+            // ⚠️ 只关这两个：/dashboard、/tools 与工具卡片是高频目标，预取有价值，保持默认。
+            <Link href="/admin" prefetch={false} className={linkClass("/admin")}>
               管理后台
             </Link>
           ) : null}
@@ -67,6 +72,7 @@ export default async function SiteHeader({ email, role, current }: SiteHeaderPro
           {!membership.isVip ? (
             <Link
               href="/upgrade"
+              prefetch={false}
               className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-medium text-white transition hover:bg-amber-600"
             >
               开通会员
