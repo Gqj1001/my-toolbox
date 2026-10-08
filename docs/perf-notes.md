@@ -663,7 +663,7 @@ init()
    （本轮先写错了一版：`cacheIsFresh` 用了 `Date.now()-fetchedAt < CLIENT_TTL_MS`，
    时间越久反而越「新鲜」，提示永远不出现）。
 
-### 实测（`tests/feedback-client-cache.test.mjs`，49/49 通过）
+### 实测（`tests/feedback-client-cache.test.mjs`，51/51 通过）
 
 | 场景 | 结果 |
 |---|---|
@@ -718,7 +718,7 @@ init()
   tests\feedback-client-cache.test.mjs
 ```
 
-期望：`49/49 passed`。判断有没有退化，看这几条：
+期望：`51/51 passed`。判断有没有退化，看这几条：
 
 - **二次访问首屏 > 500ms** → 缓存没生效（key 拼错、`CACHEABLE_KEYS` 漏了字段、
   或者有人把 `initCloud` 里的读缓存那段删了）。
@@ -738,6 +738,136 @@ init()
 
 关掉后行为立刻回到 P4 那套「骨架屏 → 一次请求 → 一次渲染」。
 `_cacheDisabled` 就是在读这两个开关。
+
+---
+
+## 六之六、A-2：中间件刷新策略（已完成一半）—— 治「每次都要登录」
+
+> 起因：用户反馈「**每次进网站都要登录**」。查下来根因**不是** session 存不住
+> （cookie 有效期 1 年、关浏览器再开仍登录、access token 会自动续期），
+> 而是 **Supabase 的「检测泄露 → 撤销会话」被并发刷新误触发**。
+> 用户已把 reuse interval 从 10 秒调到 **30 秒**；本节是代码侧的那一半。
+
+### 根因（实测数据 + 源码行号）
+
+1. **`auth.getUser()` 会在 token 快过期时自己去刷新**，阈值是 auth-js 的
+   `EXPIRY_MARGIN_MS = AUTO_REFRESH_TICK_THRESHOLD(3) × AUTO_REFRESH_TICK_DURATION_MS(30s) = 90 秒`
+   （`@supabase/auth-js/dist/main/lib/constants.js`）。
+   也就是说：**每个小时的最后一分半钟**里，每个调用 `getUser()` 的请求都想刷新。
+
+2. **auth-js 的去重是「实例级」的，跨请求完全无效**。
+   `_callRefreshToken` 用 `this.refreshingDeferred` 单飞（`GoTrueClient.js:4196-4199`），
+   `_acquireLock` 用的也是 `this.lock`（默认 `navigatorLock` 是**浏览器**多标签锁，
+   服务端为 `null` → 退化成实例内的 `pendingInLock`）。
+   而本项目**每个请求都新建一个 `GoTrueClient`**（`createServerClient`），
+   所以并发的 N 个请求 = N 个互不知情的刷新。
+
+3. **实测（伪造「还剩 3 秒」的会话 + 并发 8 个请求）→ 16 次 `/auth/v1/token`**
+   （每请求 2 次：中间件 1 + 页面侧 `getViewer` 1）。
+   同一个 refresh token 被并发使用 → 触发撤销 → 下一个请求 `getUser()` 失败
+   → 中间件 302 到 `/login` → **用户体感「每次都要登录」**。
+
+> 为什么它表现得像「随机」：只在**刚好那 90 秒内有并发请求**时才发生。
+> 一次页面加载有 **13 条 RSC 预取**（`/tools`、`/admin`、`/upgrade`、每张工具卡片）
+> 全部并行打中间件 —— 平时被 30 秒进程内缓存接住，一旦 token 进入窗口就全部冲向刷新。
+
+### 已有防御为什么挡不住
+
+| 防御 | 为什么无效 |
+|---|---|
+| 中间件 `authCache`（key = access token，30 秒） | key **就是** token；刷新时恰好全部 miss，而 token 变化本身就意味着「刚刷过」 |
+| `MIDDLEWARE_CACHE_TTL` 调大 | 同上，改 TTL 不改变「刷新瞬间全 miss」 |
+| 调大 reuse interval | 只是让容忍的重复次数变多；**风暴越大越可能穿透**，且它是相对「首次使用」的绝对窗口 |
+
+### A-2 实现（`src/proxy.ts`）
+
+```
+读 cookie 里的 expires_at / refresh_token（readSession）
+├─ expires_at 距今 > 120 秒（FRESH_MARGIN_MS）
+│    → **完全不调 getUser**：身份取自上次被 Auth 服务校验过的会话
+│      （只**解码** JWT 取 sub/email，**不验签** —— 验签是 Auth 服务的事），
+│      并写入 authCache。**0 次外网 → 也就不可能触发刷新。**
+└─ 快过期 / 取不到会话 / JWT 解不出来
+     → 交给 auth-js 的 getUser（它在这个分支才会真刷新）
+     → 用 `singleFlight`（key = **refresh_token**）让同一波并发只发一次 /token
+     → 刷新成功后把**轮换后的新 token** 写回 authCache
+```
+
+- **`FRESH_MARGIN_MS = 120_000`**：必须 **≥ 库内部的 90 秒**，否则库会抢在我们前面刷新，
+  这个判断就白做了。留 30 秒余量；也不能太大（会拉长「过期未刷新」的窗口）。
+- 单飞是**进程内**的（与本文件其它缓存一样，每个服务端实例各一份）。多实例时最坏 2 次，
+  配合「写回 authCache」足够落在 30 秒 reuse interval 内。
+
+### ⚠️ 安全取舍（用户明确确认接受）
+
+- 分支① 不再**逐请求**向 Auth 服务确认「token 是否被吊销」，改为
+  **每个 token 生命周期确认一次**（token 1 小时一轮换，进入 120 秒窗口时必然走分支②）。
+  代价：**改密码 / 主动吊销最多延迟到该 token 过期才生效（≤1 小时）**。
+- **封禁不受影响** —— 它走下面的 `user_roles` 查询（独立一条链，仍有自己的缓存与主动失效）。
+- 明确**不做**的：中间件本地校验 `exp` 后完全不刷新（= 更强的 A-1 方案，
+  会彻底失去「确认吊销」，用户已否决）。
+
+### 实测结果
+
+| 场景 | 修复前 | 现在 |
+|---|---|---|
+| token 还剩 1 小时 | — | **0 次刷新** ✅ |
+| token 只剩 3 秒（单请求） | 1 次 | **1 次** ✅ |
+| **并发 8 个「快过期」请求** | **16 次** | **8–12 次** ⚠️ |
+
+### ⚠️ 已知残留（**待办，本轮未做**）
+
+**并发刷新只压掉了中间件那一半。剩下的来自页面侧的 `getViewer()`。**
+
+- `src/lib/viewer.ts:96` 的 `loadViewer()` **自己 new 一个 Supabase client** 调
+  `auth.getUser()`。它读的是**浏览器发来的原始 cookie**，不是中间件改过的那份，
+  所以它也会各自去刷新 —— 8 个并发请求就再刷 8 次。
+- **证据**：临时把页面侧改成直接打 `/auth/v1/user`（绕开 auth-js 的会话加载）后，
+  `/auth/v1/token` **归零** → 证明剩下的刷新全部来自 viewer.ts。
+- **试过但无效的一条路**（记录免得后人重复踩）：在中间件里
+  `supabase.auth.setSession({access_token, refresh_token})`。实测**能**把新会话写进
+  `next/headers` 的 cookie jar（页面侧 `cookies()` 确实读到了新的 `expires_at`），
+  **但页面侧仍然刷新**；而且 `setSession` 自己还会多打一次 `/token`。
+  已回退，`proxy.ts` 里只保留「写回 authCache」这一条有效动作。
+
+### viewer.ts 改造方案概要（**下一轮待办**）
+
+1. 把 `proxy.ts` 里「够新就不刷」的判断抽成一个小模块，例如
+   `src/lib/session-freshness.ts`：
+   - `readSessionFromCookies(cookieStore)` → `{ accessToken, expiresAt, refreshToken }`
+   - `isFresh(expiresAt, marginMs)` → boolean
+   - `userFromJwt(accessToken)` → `{ id, email } | null`（只解码）
+2. `loadViewer()` 改用它：**够新 → 不调 `getUser`**，直接用 cookie 里那份
+   （已经是被 Auth 服务校验过、且中间件也确认过的会话）；快过期才调 `getUser`。
+3. 中间件侧保持现状（或也改用同一个模块，去掉重复代码）。
+4. **目标**：并发 8 个请求的 `/auth/v1/token` 从 **8–12 次压到 1–2 次**。
+5. **测试**：扩 `tests/middleware-cache.test.mjs`（该文件已经有「伪造会话 cookie」的
+   helper `sessionCookieExpiringIn()`，直接用），断言并发 8 个 ≤ 2 次。
+6. **注意**：`viewer.ts` 是 `server-only` 的，抽出来的模块**不要**带 `server-only`
+   （中间件可能跑在 Edge runtime，见 `three-state-cache.ts` 的同类说明）。
+
+### 复测方法
+
+```powershell
+# 先 pnpm build，然后（它自己起 next start，别和其它真服务套件同时跑）：
+& "C:\Users\郭庆杰\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe" `
+  tests\middleware-cache.test.mjs
+```
+
+期望：**13/13**。关注这三条：
+- `token 还剩 1 小时（> 120s）→ 不刷新（/auth/v1/token = 0 次）`
+- `token 只剩 3 秒（< 120s）→ 触发刷新（= 1 次）`
+- `并发 8 个「快过期」请求 → ≤ 13 次（修复前 16 次）`
+
+若第一条红了 → 说明「够新就不刷」那条分支被破坏了（最常见原因：有人把
+`FRESH_MARGIN_MS` 改到小于 90 秒，于是库抢先刷新）。
+
+### 预取（同一轮的小改动）
+
+`SiteHeader` 里**只给 `/admin` 与 `/upgrade`** 加了 `prefetch={false}`。
+理由：一次页面加载有 13 条 RSC 预取，这两个不是高频点击目标却占其中 4 条；
+减少它们等于减少「危险窗口内的并发数」。
+**`/dashboard`、`/tools` 与每张工具卡片保持默认预取**（高频目标，预取有价值）。
 
 ---
 
