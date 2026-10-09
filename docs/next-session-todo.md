@@ -1,6 +1,6 @@
 # 下个会话待办
 
-> 生成时间：2026-10（本轮收尾时）。
+> 更新时间：2026-10（本轮收尾）。**已完成的条目已删除**，这里只剩还没做的。
 > 配套阅读：`docs/project-overview.md`（现状总入口）、`docs/dsh-work-guide.md`（配合方式）、
 > `docs/perf-notes.md`（性能完整记录）。
 >
@@ -8,40 +8,37 @@
 
 ---
 
-## ~~1. viewer.ts 改造~~ ✅ **已完成（2026-10 本轮）**
+## 1. 阶段 4：math-plan 接入统一学生 API（半天，纯新增）
 
-**结论先行：原方案是错的，照它改会让情况变糟（实测 8 次 → 14 次）。**
+**注意**：**math-plan 没有 localStorage 要迁** —— 它现在什么都不存（刷新即丢）。
+所以这是**纯新功能**，没有历史数据、没有新旧冲突，比阶段 3（paper，已完成）简单。
 
-原判断是「A-2 只压掉了中间件那一半，剩下 8 次来自页面侧 `getViewer()`」。
-**真凶是 auth-js 自己**：`GoTrueClient.__loadSession()` 在 token 剩 < 90 秒时会去刷新，
-而 `_refreshAccessToken()` **内部还带指数退避重试**；`autoRefreshToken: false` **挡不住它**。
-实测 8 个并发请求最多炸成 **24 次** `/auth/v1/token`。
+### 要做
 
-做法（见 `docs/perf-notes.md` **六之七**）：新增 `src/lib/session-freshness.ts`，
-**绕开 auth-js 管理会话** —— 直连 `/auth/v1/user` 校验、直连 `/auth/v1/token` 刷新，
-并让 auth-js **读不到**快过期的会话（`hideStaleSessionFromAuthJs`）。
+1. 「**选学生带出信息**」：从 `/api/students` 拉档案列表，选一个自动填
+   `f-name / f-grade / f-teach / f-campus` 等。
+2. 「**保存档案到服务器**」：把「学生是谁」的那几个字段存进 `/api/students`。
+   - ⚠️ 只存**学生身份字段**（name/grade/campus/teacher + `extra` 里的
+     `phase/book/exam`）；**不要**把「这一次方案的参数」（分数、目标分、课时、
+     薄弱模块、已完成模块）塞进档案 —— 那些属于「方案」不属于「学生」。
+   - 工具专属字段进 `extra`（0014 的设计），**不要改表结构**。
+   - ⚠️ 写入用**合并语义**的 upsert（POST 只发变化的字段）—— 见 paper 的做法：
+     四种写入集中到几个入口，**调用点不要自己 fetch**。
+3. 边界同上：只改数据读写，不动 UI 结构。
+4. **照着 paper 那套抄**：`public/tools/paper-analysis/js/app.js` 里的
+   `CLOUD_STORE` + `persistStudent / removeStudent / persistHistory / removeHistory`
+   就是现成模板（阶段 3 已完成，有 27 项测试护航）。
 
-| 场景 | 修复前 | 收口后 |
-|---|---|---|
-| token 还剩 1 小时 | 0 次 | **0 次** ✅ |
-| token 只剩 3 秒（单请求） | 1 次 | **1 次** ✅ |
-| **并发 8 个「快过期」请求** | **16 次** | **1 次** ✅ |
+### 测试
 
-「留痕」断言已删除，换成真断言 `≤ 2 次`。
-
-> ⚠️ **两条给后人的警告**（都实测踩过）：
-> 1. **别把 Cookie 的「写」（`setAll`）也一并去掉** —— 登录/注册/登出都靠它写会话。
->    本轮先写成空实现，结果**登录直接失效**（`admin-grant90` 10/18、`feedback-client-cache` 2/4 抓出来）。
-> 2. **别用 `supabase.auth.getUser()` 换掉直接校验**：本机实测 **1 次 vs 18 次**。
-> 3. **`readSessionFromCookies` 必须同时认两种 cookie 形状**：正式的 `base64-<base64url>`
->    与松散格式（URL 编码的 JSON 明文 —— `tests/paper-analysis.test.mjs` 的 `signInCookie()`
->    就是后者）。只认 base64 会让那套件从 56/56 掉到 12/21。
+扩 `tests/students-unified.test.mjs` 的合并语义组，补一条
+「math-plan 写进 `extra` 的字段，被 feedback 保存一次后仍在」（那条已经有类似的，扩一下即可）。
 
 ---
 
 ## 2. vision-scores 启用态测试（半天）
 
-**为什么**：答题卡识别的**路由与前端都完整**（我逐项查过，见下），
+**为什么**：答题卡识别的**路由与前端都完整**（逐项查过，见下），
 但**「启用之后」那条路径从来没有被执行过** —— 现有测试只覆盖两条降级路径。
 **你配好 `AI_VISION_MODEL` 打开开关那一刻，是这条路径第一次真正跑起来。**
 
@@ -53,8 +50,8 @@
 | 入参 / 出参 | `{image:"data:image/...", questions:[...], model?}` → `{ok:true, scores:[{no,got}]}` |
 | thinking 护栏 | ✅ **只有模型名含 `deepseek` 才带** `thinking:{type:"disabled"}`；另有 `AI_VISION_SUPPORTS_THINKING=0` 紧急开关 |
 | 错误处理 | 401 / 403(非会员) / 403(封禁) / 503(未配模型，给明确提示) / 413 / 400 / 502 / 超时；思考吃光预算会重试一次 |
-| 图片位置 | ✅ 只放 **user** 消息（官方要求：放 system/assistant 会 400）—— 我核对过官方文档 |
-| 前端 `photoRun()` | ✅ `public/tools/paper-analysis/js/app.js` 约 860 行；按钮 `index.html:129`；API 路径正确 |
+| 图片位置 | ✅ 只放 **user** 消息（官方要求：放 system/assistant 会 400）—— 核对过官方文档 |
+| 前端 `photoRun()` | ✅ `public/tools/paper-analysis/js/app.js`；按钮 `index.html:129`；API 路径正确 |
 | `mode` 路由暴露 `visionModel` | ✅ `src/app/api/paper-analysis/mode/route.ts:41`（**这是启用的关键依赖，通的**） |
 
 ### 要补的测试
@@ -75,65 +72,42 @@
 
 ---
 
-## ~~3. 阶段 3：paper-analysis 接入统一学生 API~~ ✅ **已完成（2026-10）**
+## 3. ⚠️ 悬着的问题：feedback.html「下载 10 秒」（需要 HAR）
 
-**做法**（`public/tools/paper-analysis/js/app.js`）：
-- 新增 `CLOUD_STORE`（`loadAll / saveStudent / deleteStudent / deleteHistory / importHistory`），
-  只在**云端模式**（`NEXT_HOST`）启用；本机版 / 自建 `server.js` 的部署**行为不变**。
-- 四种写入集中到 `persistStudent / removeStudent / persistHistory / removeHistory`
-  四个入口，调用点不再自己 fetch（避免「同一件事两个来源」）。
-- 档案字段映射：本工具的 `cls` ↔ 表的 `class_name`，并同时写进 `extra.cls`。
-- 历史映射：`tool='paper'` / `title=examName` / `score` / `full_score=full`。
-- 首次进入：**弹窗问用户**（上传 / 以后再说 / 别再问），上传后**保留 localStorage**；
-  只在「本机有数据 + 账号里还是空的」时才弹。
-- 导入幂等；**日期解析不出来的条数如实报出来**（`dateUnparsed`）。
+**用户报的现象**：`feedback.html` 42.8 KB，Content download 花了 **10.31 秒**
+（等待服务器响应只有 504ms）。
 
-**日期归一化**：做了 **(a) 扩展解析器**（用户拍板的方案）——
-`parseDisplayDate()` 新增「`2026年10月7日` → `2026-10-07`」分支（用它自己的年份）。
-这是**有意改变行为**，`tests/date-input.test.mjs` 里那份老实现副本**保持原样**，
-新增一组「有意分歧」断言把差异钉住。
+**已经查到的（2026-10）**：
+- **不是 A-2 引入的**：A-2 提交（`6ccfcc3`）与它的父提交在本地**输出逐字一致**。
+- **服务端正常**：线上实测 `feedback.html` 首字节 **145ms**、总 **247ms**，
+  `Cache-Control: public`（没被改过）。171,933 字节未压缩 ≈ 用户看到的 42.8 KB。
+- 42.8 KB ÷ 10.31 秒 ≈ **4 KB/s** —— 这个量级像是**链路**问题，不是服务器。
+- 顺带发现：`/api/feedback/data` **冷启动 5.4 秒**（第二次 408ms）—— 独立问题，与本条无关。
 
-**顺带补的接口**：`DELETE /api/students?id=<historyId>` —— 原来只有
-`/api/feedback/data` 支持删单条历史，统一接口这边缺（paper 的「删一条」需要它）。
-
-**测试**：新增 `tests/paper-analysis-students.test.mjs`（**27 项**，全绿）：
-档案往返、合并语义（只发 grade 时 `class_name`/`extra` 不能被清）、
-历史导入幂等、`tool/title/score/full_score` 映射、日期归一化、
-`dateUnparsed` 如实报告、跨账号隔离、`DELETE ?id=` 不被 25 秒缓存"复活"、`DELETE ?name=` 连带历史。
+**下一步**：要用户给一份 **HAR**（F12 → Network → 右键 → Save all as HAR），
+才能判断是 CDN、运营商还是别的。**没有 HAR 不要再猜。**
 
 ---
 
-## 4. 阶段 4：math-plan 接入统一学生 API（半天，纯新增）
+## 4. `/tools` 改个人中心 + `/dashboard` 改 redirect（半天）
 
-**注意**：**math-plan 没有 localStorage 要迁** —— 它现在什么都不存（刷新即丢）。
-所以这是**纯新功能**，没有历史数据、没有新旧冲突，比阶段 3 简单。
-
-### 要做
-
-1. 「**选学生带出信息**」：从 `/api/students` 拉档案列表，选一个自动填
-   `f-name / f-grade / f-teach / f-campus` 等。
-2. 「**保存档案到服务器**」：把「学生是谁」的那几个字段存进 `/api/students`。
-   - ⚠️ 只存**学生身份字段**（name/grade/campus/teacher + `extra` 里的
-     `phase/book/exam`）；**不要**把「这一次方案的参数」（分数、目标分、课时、
-     薄弱模块、已完成模块）塞进档案 —— 那些属于「方案」不属于「学生」。
-   - 工具专属字段进 `extra`（0014 的设计），**不要改表结构**。
-3. 边界同上：只改数据读写，不动 UI 结构。
-
-### 测试
-
-扩 `tests/students-unified.test.mjs` 的合并语义组，补一条
-「math-plan 写进 `extra` 的字段，被 feedback 保存一次后仍在」（那条已经有类似的，扩一下即可）。
+两页 99% 重复（都渲染同一个 tool-grid）。`/tools` 挂上会员状态卡 + 退出登录，
+`/dashboard` 改成自动跳转。
 
 ---
 
-## 5. 待办清单里还没做的（原清单的其余项）
+## 5. 全学科扩展（等触发条件）
 
-按用户自己的《my-toolbox 项目待办清单》，以下仍未做：
+从**物理**试水（与数学最接近），跑通后把「科目配置」抽出来，再横向复制到其他学科。
+详细清单见 `docs/other-subjects-plan.md`。
+**触发条件**：有物理老师主动要，或数学用稳 2–3 周。依赖：每科要 10–15 份学科网报告。
+
+---
+
+## 6. 其余待办（原清单里还没做的）
 
 | # | 项 | 备注 |
 |---|---|---|
-| 1 | **`/tools` 改个人中心 + `/dashboard` 改 redirect** | 两页 99% 重复（都渲染同一个 tool-grid）。半天 |
-| 4 | **全学科扩展** | 依赖：每科要 10–15 份学科网报告。推荐从**物理**试水。触发条件：有物理老师主动要，或数学用稳 2–3 周 |
 | 7 | 空壳工具清理 | `json-formatter` / `password-generator` 已下线（`0012`），但代码文件还在 `public/tools/` 里。触发条件：确认不再需要 |
 | 8 | few-shot 效果评估 | 触发条件：累计用 AI 润色 20–30 次后 |
 | 9 | 深度优化 AI 润色（调温度/prompt） | 可选 |
@@ -144,11 +118,12 @@
 
 ---
 
-## 6. 已知问题（记录，修不修都行）
+## 7. 已知问题（记录，修不修都行）
 
 1. **非法 ISO 日期会被原样写库 → 500**（`2026-13-45` 这种）。
-   详见 `docs/perf-notes.md`「七、已知问题」。本轮**按用户要求未修**。
+   详见 `docs/perf-notes.md`「七、已知问题」。**按用户要求未修**。
    修的时候 `tests/date-input.test.mjs` 的老实现副本会红 —— 那是预期的。
+   （注：`2026年10月7日` 那类**不是**这个问题，阶段 3 已支持。）
 2. **`tools` 表的建表语句不在仓库里**（只有种子数据），
    会员那三列（`plan`/`status`/`expires_at`）的加列语句也不在。
    **不要试图用仓库的 SQL 重建数据库。**
@@ -157,10 +132,14 @@
 4. **`tests/feedback-data-cache.test.mjs` 与 `tests/math-plan-ai-vip-path.test.mjs`
    会杀 3000 端口**，别和其它真服务套件并行跑。
 5. **`tests/step7-ui.test.mjs` 隔离弱点**：按关键词查全表，会被上次运行遗留数据污染。
+6. **Edge 调试端口会被「幽灵监听者」占住**（2026-10 踩过一次）：
+   `Get-NetTCPConnection` 列得出 9490 在监听、PID 却是个**不存在的进程**，
+   新起的 Edge 绑不上 → 真浏览器套件统一报 `无法连接 Edge 调试端口`。
+   **重启机器**即可（换端口也行）。不是代码问题。
 
 ---
 
-## 7. 环境备忘（新会话不用再问用户）
+## 8. 环境备忘（新会话不用再问用户）
 
 | 项 | 值 |
 |---|---|
@@ -169,26 +148,23 @@
 | 线上 | `https://010034.xyz` |
 | 测试账号 | `roleb`=VIP（`userEmail`）、`rolea`=免费/管理员（`adminEmail`） |
 | 跑测试 | `C:\Users\郭庆杰\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe tests\<套件>`；**先 `next build`** |
-| 推送 | 先 `git push origin main`；若 `github.com:443` 不通，用 `node scripts\push-via-api.mjs` |
+| 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs` |
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 本轮实测）**：
+**全套回归现状（2026-10 本轮实测，23 个套件全绿）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   ai-thinking-mode 11/11
-middleware-cache 13/13     step7-api 39/39           paper-analysis 56/56
+math-plan-ai-apply 20/20   middleware-cache 13/13    verify-checklist 18/18
+step7-api 39/39            step7-ui 36/36            paper-analysis 56/56
 paper-regression 18/18     paper-score-edit 59/59    paper-score-report 15/15
+paper-score-ui 36/36       paper-preset 18/18        paper-analysis-students 27/27
 feedback-data-cache 26/26  feedback-client-cache 51/51
-students-unified 54/54     date-input 9/9            admin-grant90 18/18
+students-unified 56/56     date-input 11/11          admin-grant90 18/18
 math-plan-ai-sections 26/26  math-plan-ai-vip-path 17/17
-math-plan-export-ui 18/18  paper-score-ui 35/35
+math-plan-export-ui 18/18
 ```
 
-> ⚠️ **两个真浏览器套件本轮没跑成**：`math-plan-ai-apply`（20/20）与 `verify-checklist`（18/18）
-> 都停在 `无法连接 Edge 调试端口`。**不是代码问题** —— 在**未改动的基线**上跑同样报这个错。
-> 原因是本机调试端口 **9490** 上残留了两个「幽灵监听者」（指向已死的 PID，
-> `Get-NetTCPConnection` 正常列出、但连不上），新起的 Edge 绑不上这个端口。
-> 处理办法：**重启一次机器**（或换端口）后再跑这两个套件即可。
-> 其余 19 个套件全部全绿。
-
+> ✅ `math-plan-ai-apply` 与 `verify-checklist` 本轮**重启机器后已补跑通过**，
+> 之前那次失败是 Edge 调试端口的幽灵监听者（见「已知问题」第 6 条），不是代码问题。
