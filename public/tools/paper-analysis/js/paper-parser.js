@@ -299,18 +299,38 @@
 
   /** 由题型分布 + 总分推算每种题型的每行分值
    *  学科网报告只给「题号+难度系数+知识点」，不含分值，必须另行补齐。
-   *  策略：① 指定/自动匹配到题量完全一致的卷面预设 → 用预设的每题分值
-   *        ② 否则按各题型常见单题分值估算（客观题固定、解答题吸收余额），
-   *           并给出告警提醒老师在界面上核对
+   *
+   *  策略：
+   *    ① 指定了卷面结构（下拉 `examPreset`）→ **按它铺满每一道题**。
+   *       · 该题型有 `per` 数组（逐题常用分值）就**逐个用** —— 这就是「小题分自动分好」；
+   *       · 没有数组就按 `[题量, 每题分值]` 的平均值铺（老行为，兼容）。
+   *       ⚠️ **题量对不上也照样铺**（2026-10 改）：以前要求题型+题量**完全相等**，
+   *          否则整个预设被丢掉、退回"常见单题分值估算" —— 老师选了下拉却毫无反应。
+   *          实际卷子（尤其解答题道数）年年有出入，所以改成「按预设铺、多退少补」，
+   *          并给出提示让老师核对。
+   *    ② 没指定 → 自动匹配（仍要求题量完全一致，避免瞎猜）；
+   *       匹配不到就按各题型常见单题分值估算，解答题吸收余额。
+   *
    *  dist 的语义：[题量, 每题分值, （可选）该题型块总分]
+   *  per  的语义：该题型**逐题**常用分值数组（可省略；省略则用"每题分值"铺平均值）
    */
   const TYPE_PRESETS = [
-    { name:'新高考 I/II 卷',   total:150, dist:{ '单选题':[8,5],           '多选题':[3,6],        '填空题':[3,5], '解答题':[5,15.4,77] } },
-    { name:'北京卷',           total:150, dist:{ '单选题':[10,4],                                  '填空题':[5,5], '解答题':[6,14.17,85] } },
-    { name:'北京卷（19题）',   total:150, dist:{ '单选题':[8,4],           '多选题':[3,6],        '填空题':[3,5], '解答题':[6,14.17,85] } },
-    { name:'全国甲/乙卷',      total:150, dist:{ '单选题':[12,5],                                  '填空题':[4,5], '解答题':[6,11.67,70] } },
-    { name:'天津卷',           total:150, dist:{ '单选题':[9,5],                                   '填空题':[6,5], '解答题':[5,15,75] } },
-    { name:'上海卷',           total:150, dist:{                                  '填空题':[12,4], '单选题':[4,5], '解答题':[5,14.6,73] } }
+    { name:'新高考 I/II 卷',   total:150, dist:{ '单选题':[8,5],           '多选题':[3,6],        '填空题':[3,5], '解答题':[5,15.4,77] },
+      // 新高考解答题（17–21 题，共 77 分）
+      per:{ '解答题':[13,15,15,17,17] } },
+    { name:'北京卷',           total:150, dist:{ '单选题':[10,4],                                  '填空题':[5,5], '解答题':[6,14.17,85] },
+      // 北京卷解答题（16–21 题，共 85 分）。⚠️ **逐年会变**，这里是常用的一套；
+      // 老师按当年真题改一两道即可（改完合计会提示"与预设不一致"，是温和提示不是阻止）。
+      per:{ '解答题':[13,15,15,15,14,13] } },
+    { name:'北京卷（19题）',   total:150, dist:{ '单选题':[8,4],           '多选题':[3,6],        '填空题':[3,5], '解答题':[6,14.17,85] },
+      per:{ '解答题':[13,15,15,15,14,13] } },
+    { name:'全国甲/乙卷',      total:150, dist:{ '单选题':[12,5],                                  '填空题':[4,5], '解答题':[6,11.67,70] },
+      // 全国卷解答题（17–22 题，共 70 分）
+      per:{ '解答题':[10,12,12,12,12,12] } },
+    { name:'天津卷',           total:150, dist:{ '单选题':[9,5],                                   '填空题':[6,5], '解答题':[5,15,75] },
+      per:{ '解答题':[14,15,15,15,16] } },
+    { name:'上海卷',           total:150, dist:{                                  '填空题':[12,4], '单选题':[4,5], '解答题':[5,14.6,73] },
+      per:{ '解答题':[14,14,15,15,15] } }
   ];
   /** 各题型的常见单题分值（用于没有匹配预设时的估算） */
   const DEFAULT_PER = { '单选题':5, '多选题':6, '填空题':5, '判断题':4, '解答题':12 };
@@ -321,6 +341,67 @@
     if(!d) return null;
     const [n, per, blockTotal] = d;
     return { count:n, per, total: (blockTotal != null ? blockTotal : Math.round(per * n)) };
+  }
+
+  /**
+   * 把某题型的**逐题分值**铺成 `n` 道（n = 实际题量）。
+   *
+   * 规则：
+   *   · 预设给了 `per` 数组 → 逐个用；题量比数组多 → 后面几道用该题型**平均分**补齐；
+   *     题量比数组少 → 取前 n 个（多出来的选项自然丢弃）。
+   *   · 没给数组 → 全用「每题分值」的平均值（= 老行为）。
+   *
+   * ⚠️ 返回的是**逐题真实分值**，不再是一个平均值铺满 —— 这是"小题分自动分好"的关键。
+   */
+  function spreadForType(preset, type, n){
+    const info = presetPerOf(preset, type);
+    if(!info || n <= 0) return [];
+    const arr = Array.isArray(preset.per && preset.per[type]) ? preset.per[type].slice() : null;
+    if(!arr || !arr.length){
+      return Array.from({length:n}, () => info.per);
+    }
+    // 题量比预设多 → 多出来的用平均值补齐（比"重复最后一个值"更不容易离谱）
+    const fill = Math.round((info.total / info.count) * 100) / 100;
+    const out = [];
+    for(let i = 0; i < n; i++) out.push(i < arr.length ? arr[i] : fill);
+    return out;
+  }
+
+  /** 把一串分值**按比例缩放**到总和 = target，并保证"逐项之和严格等于 target"。
+   *
+   *  为什么不用「每项各自 round」：那会留尾差（13×1.02=13.26→13，6 项加起来就少了 1.56），
+   *  而合计列用的是逐项之和 —— 老师会看到"合计对不上预设"。所以用最大余数法把尾差分配掉。
+   *
+   *  ⚠️ **target 已经等于当前总和时直接原样返回**。否则会把 `[4,4,…,4]` 这种
+   *     干净值改写成 `[4,4,…,3.99]` —— 纯属自找麻烦，而且老师会以为程序算错了。
+   *     浮点误差（149.99999999）也算"相等"，容差 0.005（比一分小一个量级）。 */
+  function scaleSpreadTo(arr, target){
+    const n = arr.length;
+    if(!n) return { spread:[], total:0 };
+    const sum = arr.reduce((a, x) => a + x, 0);
+    const roundedSum = Math.round(sum * 100) / 100;
+    if(Math.abs(target - roundedSum) < 0.005){
+      return { spread: arr.slice(), total: roundedSum };
+    }
+    if(!(sum > 0)) return { spread:arr.slice(), total: roundedSum };
+    const k = target / sum;
+    const scaled = arr.map(x => x * k);
+    const floors = scaled.map(x => Math.floor(x * 100) / 100);
+    let rest = Math.round((target - floors.reduce((a, x) => a + x, 0)) * 100) / 100;
+    // 把余数按"小数部分从大到小"一分一分地补（步长 0.01）
+    const idx = scaled.map((x, i) => ({ i, frac: x - Math.floor(x * 100) / 100 }))
+                      .sort((a, b) => b.frac - a.frac);
+    let guard = 0;
+    while(rest > 0.0001 && guard < 10000){
+      for(const { i } of idx){
+        if(rest <= 0.0001) break;
+        floors[i] = Math.round((floors[i] + 0.01) * 100) / 100;
+        rest = Math.round((rest - 0.01) * 100) / 100;
+      }
+      guard++;
+    }
+    const total = Math.round(floors.reduce((a, x) => a + x, 0) * 100) / 100;
+    return { spread: floors, total };
   }
 
   /**
@@ -337,49 +418,86 @@
     (typeDist || []).forEach(t => { cnt[t.type] = (cnt[t.type] || 0) + t.count; });
     const types = order.filter(t => cnt[t]);
 
-    // ---- ① 预设精确匹配（题量与题型完全一致）----
+    // ---- ① 选预设：**显式指定优先，题量不符也照样铺**；没指定才做"完全匹配"的自动判断 ----
     let preset = null;
-    if (presetName) preset = TYPE_PRESETS.find(p => p.name === presetName) || null;
-    if (!preset) {
+    let presetMismatch = false;
+    if (presetName) {
+      preset = TYPE_PRESETS.find(p => p.name === presetName) || null;
+      if (preset) {
+        // 只要「该题型在 preset 里有定义、且题型本身认得」就铺；
+        // 题量不同不再作废（2026-10 改），但要提示老师核对。
+        presetMismatch = !types.every(t => preset.dist[t] && preset.dist[t][0] === cnt[t]);
+        if (!types.some(t => preset.dist[t])) {
+          // 连一个题型都对不上（比如选了北京卷但卷子里没有解答题）→ 真的没法用
+          warnings.push(`指定的结构「${preset.name}」与这份卷子的题型对不上，已改用常见单题分值估算`);
+          preset = null;
+          presetMismatch = false;
+        }
+      }
+    } else {
       preset = TYPE_PRESETS.find(p => {
         const keys = Object.keys(p.dist);
         if (keys.length !== types.length) return false;
         return types.every(t => p.dist[t] && p.dist[t][0] === cnt[t]);
       }) || null;
     }
-    if (presetName && preset && !types.every(t => preset.dist[t] && preset.dist[t][0] === cnt[t])) {
-      warnings.push(`指定的结构「${preset.name}」与实际题量不符，已改用常见单题分值估算`);
-      preset = null;
-    }
 
     const perType = {};
     if (preset) {
+      if (presetMismatch) {
+        warnings.push(`已按「${preset.name}」的分值铺好，但题量与预设不同，请核对下方逐题分值`);
+      }
       types.forEach(type => {
         const info = presetPerOf(preset, type);
-        if(!info) return;
+        if(!info) {
+          // 该题型不在这个预设里（比如北京卷没有多选题）→ 用常见单题分值兜底，别留空
+          const per = DEFAULT_PER[type] || 5;
+          perType[type] = { per, count: cnt[type], total: Math.round(per * cnt[type]),
+                            spread: Array.from({length: cnt[type]}, () => per) };
+          return;
+        }
+        // ★ 逐题分值（这就是"小题分自动分好"）：有 per 数组就逐个用，否则用平均值铺
+        const spread = spreadForType(preset, type, cnt[type]);
+        const spreadSum = Math.round(spread.reduce((a, x) => a + x, 0) * 100) / 100;
+        // 题量与预设一致时，块总分**就用预设写明的那个值**（`info.total`）。
+        // ⚠️ 别用"逐题之和"：预设给的是 `14.17 × 6 = 85.02`，而块总分写的是 85
+        //    （85/6 本来就除不尽）。差 0.02 会让全卷合计变成 150.02，
+        //    进而触发一次**没有必要的全卷缩放**，把干净的分值全改花。
+        const totalForType = (cnt[type] === info.count)
+          ? Math.round(info.total * 100) / 100
+          : spreadSum;
         perType[type] = {
-          per: info.per,
+          per: Math.round((totalForType / cnt[type]) * 100) / 100,
           count: cnt[type],
-          total: info.total,
-          spread: Array.from({length: cnt[type]}, () => info.per)
+          total: totalForType,
+          spread,
         };
       });
-      // 若卷面总分不是 150（预设按 150 定），按比例缩放并补齐尾差
-      let sum = types.reduce((a,t)=> a + perType[t].total, 0);
+      // 若卷面总分不是 150（预设按 150 定），按比例缩放**每一道题**并保住逐项之和
+      let sum = types.reduce((a,t)=> a + (perType[t] ? perType[t].total : 0), 0);
       if(sum !== total && sum > 0){
         const k = total / sum;
         types.forEach(t => {
           const it = perType[t];
-          it.per = Math.round(it.per * k * 100) / 100;
-          it.total = Math.round(it.per * it.count);
-          it.spread = Array.from({length: it.count}, () => it.per);
+          if(!it) return;
+          // 逐题按 k 缩放（保留相对差异），再用最大余数法把尾差分配掉。
+          // ⚠️ 只有"真的需要缩放"时才动它 —— 否则会把干净的整数值改写成 3.99。
+          const targetTotal = Math.round(it.total * k * 100) / 100;
+          if(Math.abs(targetTotal - it.total) < 0.005) return;
+          const scaled = scaleSpreadTo(it.spread, targetTotal);
+          it.spread = scaled.spread;
+          it.total = scaled.total;
+          it.per = Math.round((it.total / it.count) * 100) / 100;
         });
-        sum = types.reduce((a,t)=> a + perType[t].total, 0);
+        sum = types.reduce((a,t)=> a + (perType[t] ? perType[t].total : 0), 0);
         if(sum !== total){
-          const key = cnt['解答题'] ? '解答题' : types[types.length-1];
-          perType[key].total += (total - sum);
-          perType[key].per = Math.round(perType[key].total / perType[key].count * 100) / 100;
-          perType[key].spread = Array.from({length: perType[key].count}, () => perType[key].per);
+          // 极少数情况仍有尾差 → 补进解答题（没有解答题就补最后一个题型），并同步逐题
+          const key = (cnt['解答题'] && perType['解答题']) ? '解答题' : types[types.length-1];
+          const it = perType[key];
+          const fixed = scaleSpreadTo(it.spread, Math.round((it.total + (total - sum)) * 100) / 100);
+          it.spread = fixed.spread;
+          it.total = fixed.total;
+          it.per = Math.round((it.total / it.count) * 100) / 100;
         }
       }
     } else {
@@ -389,7 +507,11 @@
       objTypes.forEach(t => {
         const per = DEFAULT_PER[t] || 5;
         const tot = per * cnt[t];
-        perType[t] = { per, count: cnt[t], total: tot };
+        // ⚠️ 这里**必须**也给 spread（逐题分值）。少给的话，
+        //    app.js 的 applySpreadChange / typeDetailHtml 会读到 undefined → 逐题编辑直接崩。
+        //    （2026-10 修：以前这个分支没有 spread，只有「选中卷面结构」那条路才有。）
+        perType[t] = { per, count: cnt[t], total: tot,
+                       spread: Array.from({length: cnt[t]}, () => per) };
         fixed += tot;
       });
       if (cnt['解答题']) {

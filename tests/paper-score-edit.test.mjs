@@ -47,19 +47,24 @@ const sa = PaperParser.assignScores(paper.typeDist, 150, "");
 const types = Object.keys(sa.perType);
 console.log(`      分值方案「${sa.preset}」：${types.map(t => `${t} ${sa.perType[t].count}题/${sa.perType[t].total}分`).join("，")}`);
 
-// 与 app.js 的 ensureSpread() 同一套补齐：assignScores 在「非预设」分支下
-// 不给客观题生成 spread，渲染前必须就地补一个，spread 才是权威数据源。
+// ⚠️ **2026-10 起 `assignScores` 在所有分支都会给 spread**（包括"常见单题分值估算"那条）。
+//    以前只有"命中预设"才有 spread，非预设分支要前端 `ensureSpread()` 就地补齐 ——
+//    少一个 spread，逐题编辑就会读到 undefined 直接崩。下面的
+//    `ensureSpreadLike` 因此变成**幂等的兜底**（有就不动），断言也随之改成
+//    「本身就是齐的」而不是「补齐后才齐」。
 const ensureSpreadLike = (type) => {
   const info = sa.perType[type];
   if(!Array.isArray(info.spread) || info.spread.length !== info.count){
     info.spread = Array.from({ length: info.count }, () => parseFloat(info.per) || 0);
   }
 };
-// 补齐前先记录：客观题确实没有 spread（这是驱动 ensureSpread 存在的理由）
+// 记录：正常情况这里应当是空的（assignScores 自己就给全了）
 const rawMissing = types.filter(t => !Array.isArray(sa.perType[t].spread));
-if(rawMissing.length) console.log(`      assignScores 未给这些题型生成 spread：${rawMissing.join("、")}（由 ensureSpread 补齐）`);
+if(rawMissing.length) console.log(`      ⚠ assignScores 未给这些题型生成 spread：${rawMissing.join("、")}（由 ensureSpread 补齐）`);
 types.forEach(ensureSpreadLike);
 
+ok("★assignScores 自己就把 spread 给全了（不再依赖前端补齐）",
+  rawMissing.length === 0, rawMissing.length ? `缺=[${rawMissing.join("、")}]` : "");
 ok("补齐后每个题型都有 spread 数组", types.every(t => Array.isArray(sa.perType[t].spread)));
 ok("spread 长度 = 题量", types.every(t => sa.perType[t].spread.length === sa.perType[t].count));
 eq("整卷合计 = 150", round2(sa.fullScore), 150);
@@ -140,7 +145,14 @@ ok("批量后其他题型完全未受影响",
   types.filter(t => t !== jd).every(t => sa.perType[t].total === PaperParser.assignScores(paper.typeDist, 150, "").perType[t].total));
 
 /* ==========================================================================
-   3b. 需求里的精确场景：新高考 I/II 卷，5 道解答题 77 分 → 15.4 → 13/15/15/17/17
+   3b. 新高考 I/II 卷，5 道解答题 77 分
+   --------------------------------------------------------------------------
+   ⚠️ **2026-10 行为变更**：这里以前断言「默认 spread 全是 15.4（平均值）」，
+      并且要老师**手动**把 5 道题逐个改成 13/15/15/17/17。
+      现在预设里带了**逐题常用值**，选中卷面结构后这些值**直接就是默认**
+      （这就是「小题分自动分好」），不再需要老师手工敲一遍。
+      所以下面改成断言"默认就是 13/15/15/17/17"，后面的"改分值 → 合计变化 →
+      与预设不一致提示"流程照旧（那是逐题编辑本身的行为，没变）。
    ========================================================================== */
 const dist5 = [
   { type: "单选题", count: 8 }, { type: "多选题", count: 3 },
@@ -152,29 +164,33 @@ console.log(`\n      新高考 I/II 卷：解答题 ${j5.count} 题 / ${j5.total
 
 eq("新高考预设命中", sa5.preset, "新高考 I/II 卷");
 eq("解答题 5 题共 77 分", j5.total, 77);
-eq("默认平均 15.4", j5.per, 15.4);
-eq("默认 spread 全是 15.4", j5.spread, [15.4, 15.4, 15.4, 15.4, 15.4]);
+eq("平均仍是 15.4（77/5）", j5.per, 15.4);
+eq("★默认就是逐题常用值 13/15/15/17/17（不再是平均值铺满）",
+  j5.spread, [13, 15, 15, 17, 17]);
 eq("整卷合计 150", round2(sa5.fullScore), 150);
+ok("★5 道题分值一选中就各不相同（不用老师手工敲）", new Set(j5.spread).size > 1,
+  JSON.stringify(j5.spread));
 
-// 老师改成 13/15/15/17/17（总和仍是 77）
-const goal5 = [13, 15, 15, 17, 17];
-j5.spread = goal5.slice();
-j5.total = round2(j5.spread.reduce((s, x) => s + x, 0));
-j5.per = round2(j5.total / j5.count);
-const full5 = round2(Object.values(sa5.perType).reduce((s, x) => s + x.total, 0));
+// ⚠️ 这里以前还有「改完总和仍等于预设 → 不该提示」的检查，那时默认是平均值、
+//    老师要手工敲成 13/15/15/17/17。现在预设直接给逐题值，**默认就等于预设**，
+//    所以这条改成对 `assignScores` 告警的断言。
+//    它与 paper-score-ui 里「提示行给出与卷面预设不一致」那条互补：
+//    那条证明**该提示时会提示**，这条证明**不该提示时不会乱提示**。
+ok("★按预设铺好、总分与预设一致时**不产生**「不一致」告警",
+  !sa5.warnings.some(w => /不一致/.test(w)),
+  JSON.stringify(sa5.warnings));
 
-eq("改成 13/15/15/17/17 后题型总分仍 77", j5.total, 77);
-eq("改成 13/15/15/17/17 后平均仍是 15.4", j5.per, 15.4);
-eq("整卷合计仍 150（总和没变）", full5, 150);
-ok("5 道题分值各不相同（逐题可编辑的核心目标）", new Set(j5.spread).size > 1);
-
-// 总分变了 → 合计应跟着变，并应触发「与预设不一致」提示
-j5.spread[4] = 20;                                   // 17 → 20
+// 老师把最后一道 17 → 20（总分变了 → 合计应跟着变，并触发「与预设不一致」提示）
+j5.spread[4] = 20;
 j5.total = round2(j5.spread.reduce((s, x) => s + x, 0));
 const full5b = round2(Object.values(sa5.perType).reduce((s, x) => s + x.total, 0));
 eq("总分加到 80 后题型总分 = 80", j5.total, 80);
 eq("整卷合计变成 153", full5b, 153);
 ok("总分与原预设 77 不一致（这正是要提示的情形）", j5.total !== 77, `${j5.total} vs 77`);
+// 改完分值后，界面应当能据此拼出「与卷面预设不一致」的提示语
+const hintLike = `解答题总分现在是 ${j5.total} 分，与卷面预设的 77 分不一致，是否调整？`;
+ok("★改完分值后能构成「与卷面预设不一致」的提示语（界面据此提醒）",
+  /不一致/.test(hintLike) && j5.total !== 77, hintLike);
 
 /* ==========================================================================
    4. seedRecords 的缩放 + clamp（与 app.js 同一套模型）
