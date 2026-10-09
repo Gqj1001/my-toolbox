@@ -69,9 +69,29 @@
   症状就是用户说的「每次进网站都要登录」，而且看起来**随机** ——
   只在「access token 剩 < 90 秒」这个窗口里恰好有并发请求时才发生。
   ⚠️ **光把它调大不能根治**：要减少**并发刷新**本身（见下一条）。
+- ⚠️ **`auth.getUser()` 自己会刷新，而且带重试**（2026-10 收口 A-2 时实测，最费时间的一条）：
+  `GoTrueClient.__loadSession()` 在 `expires_at - now < 90 秒` 时会调 `_callRefreshToken()`，
+  而 `_refreshAccessToken()` 内部**还带指数退避重试**（200/400/800…ms）。
+  **`auth: { autoRefreshToken: false }` 挡不住它**（那个开关只管后台定时器）。
+  后果：一个请求里的一次 `getUser()` 能放大成 **18–24 次** `/auth/v1/token`。
+  **要校验会话就别用 `getUser()`，直接打 `/auth/v1/user` 带 Bearer**（实测 1 次 vs 18 次）；
+  **要刷新就自己打 `/auth/v1/token`**（不重试），并且**让 auth-js 读不到快过期的会话**
+  （把 cookie 的读取过滤一层，见 `src/lib/session-freshness.ts` 的
+  `hideStaleSessionFromAuthJs`）。
+  ⚠️ 但**只能过滤「读」，不能动「写」（`setAll`）** —— 登录/登出都靠它写会话，
+  去掉会让**登录直接失效**（本轮踩过，两个套件立刻变红）。
 - **auth-js 的去重是「实例级」的**：`refreshingDeferred` 和 `_acquireLock` 都挂在
   客户端对象上。服务端每请求新建 client ⇒ **跨请求零去重**。
   所以「并发 N 个请求 → N 次刷新」是默认行为，必须有**进程内单飞**才挡得住。
+- ⚠️ **`perf-notes.md` 六之三曾说「中间件跑在 Edge，与页面侧内存不共享」——这句是错的**。
+  2026-10 实测（Next 16.3.8）：中间件往 `globalThis` 写的东西，页面侧的 API 路由**读得到**，
+  且 `EdgeRuntime` 未定义 ⇒ 实际是 **Node 运行时、同一个进程**。
+  所以「两边共用一份缓存」是可行的（A-2 收口就是靠它）。
+  ⚠️ 但**别把结论建立在内存共享上**：写代码时让「共享内存」只是**优化**，
+  拿不到就自动退化成各查一次（`readAuthUser` 返回 `undefined` 就是这个语义）。
+- **cookie 里的会话有「两种形状」**：正式的是 `base64-<base64url(JSON)>`（还可能切片成
+  `.0`/`.1`），但**测试与手写的 cookie 常常是 URL 编码的 JSON 明文**。
+  只认 base64 会让后者全部变成「未登录」→ 401（本轮把 `paper-analysis` 从 56/56 打到 12/21）。
 - **`not null` 的 jsonb 列不能写 `null`**：会撞 23502。
   症状很迷惑 —— **新建**行 500、**更新**已有行却正常（因为有旧值）。
   正确做法是「没有值时**省略这个键**」，让数据库默认值生效。

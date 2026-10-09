@@ -813,38 +813,132 @@ init()
 |---|---|---|
 | token 还剩 1 小时 | — | **0 次刷新** ✅ |
 | token 只剩 3 秒（单请求） | 1 次 | **1 次** ✅ |
-| **并发 8 个「快过期」请求** | **16 次** | **8–12 次** ⚠️ |
+| **并发 8 个「快过期」请求** | **16 次** | **1 次** ✅（本轮收口，见「六之七」） |
 
-### ⚠️ 已知残留（**待办，本轮未做**）
+---
 
-**并发刷新只压掉了中间件那一半。剩下的来自页面侧的 `getViewer()`。**
+## 六之七、A-2 后半场：`viewer.ts` 收口（已完成）—— 「每次都要登录」的**真凶**
+
+> 起因：`viewer.ts` 改造是交接文档里的**头号待办**。原判断是「A-2 只压掉了中间件那一半，
+> 剩下 8 次来自页面侧的 `getViewer()`」。**这个判断只对了一半**：页面侧确实是 8 次，
+> 但真正的根因比这更麻烦，而且**光按原方案改 `viewer.ts` 会把情况变得更糟**（实测 8 → 14 次）。
+
+### 先纠正两个被写进文档的「事实」（都被实测推翻）
+
+| 旧说法 | 实测结果 |
+|---|---|
+| 「中间件跑在 Edge，与页面侧内存不共享」（六之三、`viewer.ts` 旧注释） | **错的**。Next 16.3.8 下中间件与页面侧是**同一个进程的同一份模块内存**（中间件往 `globalThis` 写的东西，页面侧的 API 路由读得到；且 `EdgeRuntime` 未定义 ⇒ 实际是 Node 运行时）。插入临时探针验证过。 |
+| 「并发 8 个请求 = 8–12 次 `/token`」 | 基线精确复现是 **8 次**（16 次是 A-2 之前）。但**改法不对**会**涨到 14–24 次**。 |
+
+### 真正的根因：`auth-js` 会因为「读到快过期的会话」自己去刷新，而且带重试
+
+`@supabase/auth-js` 2.117.2 的 `GoTrueClient.__loadSession()`（源码 2537-2544 行）：
+
+```js
+const hasExpired = expires_at * 1000 - Date.now() < EXPIRY_MARGIN_MS;  // 90 秒
+if (!hasExpired) return 已经有效的会话;
+const { data, error } = await this._callRefreshToken(refresh_token);   // ← 自己刷新
+```
+
+而 `_refreshAccessToken()` 内部**还带指数退避重试**（`retryable`，200/400/800…ms，上限 30 秒）。
+`_recoverAndRefresh()`（client 初始化时）走的是同一套判断。
+
+**三条结论，全部是实测：**
+1. **`auth: { autoRefreshToken: false }` 挡不住它** —— 那个开关只管后台定时器。
+2. 所以「只要请求经过一个 `createServerClient`，而 cookie 里的会话快过期，就会炸出一串 `/token`」。
+3. 实测放大倍数：8 个并发请求 → **24 次**；16 次是全站加起来。
+
+⇒ 这解释了「每次进网站都要登录」**为什么看起来随机**：只在 token 进入最后 90 秒时发生，
+而且是**并发越集中越严重**；更糟的是重试过程里某次 `getUser()` 会返回 `null`，
+中间件就把人送去登录页。
+
+### 做法：绕开 auth-js 管理会话，只用于「查库」
+
+新增 `src/lib/session-freshness.ts`（**中间件与页面侧共用同一份**），把三件事都直连实现：
+
+| 动作 | 实现 | 为什么不用 auth-js |
+|---|---|---|
+| 判断「够不够新」 | `isFreshSession()`：剩余 > `FRESH_MARGIN_MS`(120 秒) | — |
+| **校验**身份 | `validateTokenWithAuthService()`：直接 `GET /auth/v1/user` 带 Bearer | `getUser()` 会顺手刷新（见上）；这条就是 2026-10 已经验证过的「绕开会话加载」方案 |
+| **刷新** | `refreshSessionWithAuthService()`：直接 `POST /auth/v1/token?grant_type=refresh_token`，**不重试** | `refreshSession()` 同样带重试风暴 |
+| 写回新会话 | `persistRefreshedSession()`：用 `@supabase/ssr` **公开导出**的 `createChunks` + `stringToBase64URL` + `DEFAULT_COOKIE_OPTIONS` 复刻它的编码（`base64-` 前缀、3180 分片、清理旧分片） | `applyServerStorage` **没有导出**，深层 import 会在升级时静默失效 |
+| 去重 | `authRefreshOnce()`（key = refresh token，TTL 内复用结果）+ `authSingleFlight()` | 只靠单飞**不够**：并发请求是**错峰**到达的，实测仍 8 次 |
+| 让 auth-js 彻底闭嘴 | `hideStaleSessionFromAuthJs()`：把「快过期」的会话从 `getAll()` 里过滤掉 | 这是**最终生效的那一刀** |
+
+**最后一条是关键**：只要 auth-js 还能**读到**快过期的会话，它就会刷新。
+所以干脆让它读不到 —— 刷新由中间件单独做一次，做完写回 Cookie，
+下一个请求 auth-js 读到的就是新鲜会话，`getUser()` / RLS 查询都照常。
+
+> ⚠️ **只过滤「读」，绝不改「写」**：`setAll` 必须原样保留 ——
+> 登录 / 注册 / 登出都靠它把会话写进 Cookie。
+> 本轮先写成「页面侧不写会话」的空实现，结果**登录直接失效**，
+> 被 `admin-grant90`（10/18）与 `feedback-client-cache`（2/4）抓出来。已回退。
+
+### 实测对比（同一份会话，`tests/middleware-cache.test.mjs`）
+
+| 场景 | 修复前 | 收口后 |
+|---|---|---|
+| token 还剩 1 小时 | 0 次 | **0 次** ✅ |
+| token 只剩 3 秒（单请求） | 1 次 | **1 次** ✅ |
+| **并发 8 个「快过期」请求** | **16 次**（收口前 8 次） | **1 次** ✅ |
+| 单请求的全部出网 | 5 次 | **5 次**（`token`1 + `user`1 + `user_roles`2 + `tools`1） |
+
+> ⚠️ 复测时**每个场景要用一份新的会话**。共用同一份会话时后面几个场景会命中
+> 「同一把 refresh token 只刷一次」的结果缓存，量到 **0 次** —— 那是**对的**，
+> 但会让人误以为「没测到东西」。
+
+### ⚠️ 这条链上最容易改错的三处
+
+1. **别给 `viewer.ts` 加回自己刷新**。页面侧（Server Component）**写不了 Cookie**，
+   在这儿刷新等于白刷（新 token 落不了盘，下个请求还得再刷）—— 那正是旧实现放大刷新次数的原因。
+2. **别把「快过期」的会话继续喂给 auth-js**（即别删掉 `hideStaleSessionFromAuthJs`）。
+   删了立刻回到 24 次刷新，而且**不会有任何报错**，只是用户又开始被踢去登录页。
+3. **别用 `supabase.auth.getUser()` 换掉 `validateTokenWithAuthService()`**。
+   本机实测：直接校验 **1 次**，`getUser()` **18 次**。
+
+### 安全口径（与 A-2 一致，用户已确认）
+
+- 分支① 仍是「每个 token 生命周期向 Auth 服务确认一次」，不是逐请求确认；
+  代价：改密码 / 主动吊销最多延迟到该 token 过期（≤1 小时）。
+- 封禁不受影响（走 `user_roles`，独立一条链）。
+- `validateTokenWithAuthService` 的失败方向**必须是关闭**：网络失败与 401 一律返回 `null`
+  （不能写成「网络抖动 → 当成已登录」）。
+
+---
+
+## 六之八、旧记录：A-2 残留分析（**已被六之七取代，保留作对照**）
+
+**原判断**：并发刷新只压掉了中间件那一半，剩下的来自页面侧的 `getViewer()`。
 
 - `src/lib/viewer.ts:96` 的 `loadViewer()` **自己 new 一个 Supabase client** 调
   `auth.getUser()`。它读的是**浏览器发来的原始 cookie**，不是中间件改过的那份，
   所以它也会各自去刷新 —— 8 个并发请求就再刷 8 次。
 - **证据**：临时把页面侧改成直接打 `/auth/v1/user`（绕开 auth-js 的会话加载）后，
-  `/auth/v1/token` **归零** → 证明剩下的刷新全部来自 viewer.ts。
+  `/auth/v1/token` **归零** → 证明剩下的刷新确实和页面侧的会话加载有关。
 - **试过但无效的一条路**（记录免得后人重复踩）：在中间件里
   `supabase.auth.setSession({access_token, refresh_token})`。实测**能**把新会话写进
   `next/headers` 的 cookie jar（页面侧 `cookies()` 确实读到了新的 `expires_at`），
   **但页面侧仍然刷新**；而且 `setSession` 自己还会多打一次 `/token`。
-  已回退，`proxy.ts` 里只保留「写回 authCache」这一条有效动作。
+  已回退。
 
-### viewer.ts 改造方案概要（**下一轮待办**）
+> ⚠️ **别照着这段去改**：按它「只改 viewer.ts 复用中间件结果」的写法改完，
+> 实测并发刷新从 8 次**涨到 14 次**。真正的做法见六之七。
+
+
+### viewer.ts 改造方案概要（**已按六之七完成，此处保留当时的方案**）
 
 1. 把 `proxy.ts` 里「够新就不刷」的判断抽成一个小模块，例如
    `src/lib/session-freshness.ts`：
    - `readSessionFromCookies(cookieStore)` → `{ accessToken, expiresAt, refreshToken }`
    - `isFresh(expiresAt, marginMs)` → boolean
    - `userFromJwt(accessToken)` → `{ id, email } | null`（只解码）
-2. `loadViewer()` 改用它：**够新 → 不调 `getUser`**，直接用 cookie 里那份
-   （已经是被 Auth 服务校验过、且中间件也确认过的会话）；快过期才调 `getUser`。
-3. 中间件侧保持现状（或也改用同一个模块，去掉重复代码）。
-4. **目标**：并发 8 个请求的 `/auth/v1/token` 从 **8–12 次压到 1–2 次**。
-5. **测试**：扩 `tests/middleware-cache.test.mjs`（该文件已经有「伪造会话 cookie」的
-   helper `sessionCookieExpiringIn()`，直接用），断言并发 8 个 ≤ 2 次。
-6. **注意**：`viewer.ts` 是 `server-only` 的，抽出来的模块**不要**带 `server-only`
-   （中间件可能跑在 Edge runtime，见 `three-state-cache.ts` 的同类说明）。
+2. `loadViewer()` 改用它：**够新 → 不调 `getUser`**，直接用 cookie 里那份；
+   快过期才去问 Auth 服务（**实际实现改为直接校验、不刷新**，见六之七）。
+3. 中间件侧也改用同一个模块，去掉重复代码。✅
+4. **目标**：并发 8 个请求的 `/auth/v1/token` 从 8–12 次压到 1–2 次。✅ **实测 1 次**
+5. **测试**：扩 `tests/middleware-cache.test.mjs`，断言并发 8 个 ≤ 2 次。✅
+6. **注意**：`viewer.ts` 是 `server-only` 的，抽出来的模块**不要**带 `server-only`。
+   ✅（不过实测中间件在 Next 16.3.8 下跑的是 Node 运行时，这条不再是硬约束）
 
 ### 复测方法
 
@@ -857,10 +951,12 @@ init()
 期望：**13/13**。关注这三条：
 - `token 还剩 1 小时（> 120s）→ 不刷新（/auth/v1/token = 0 次）`
 - `token 只剩 3 秒（< 120s）→ 触发刷新（= 1 次）`
-- `并发 8 个「快过期」请求 → ≤ 13 次（修复前 16 次）`
+- `并发 8 个「快过期」请求 → ≤ 2 次（修复前 16 次）` ← **2026-10 收口后已收紧到 2**
 
 若第一条红了 → 说明「够新就不刷」那条分支被破坏了（最常见原因：有人把
 `FRESH_MARGIN_MS` 改到小于 90 秒，于是库抢先刷新）。
+若**第三条**红了 → 优先查 `hideStaleSessionFromAuthJs()` 是否还在生效
+（它是最终挡住 auth-js 自动刷新的那一层，删掉不会有任何报错，只会静默涨回 24 次）。
 
 ### 预取（同一轮的小改动）
 

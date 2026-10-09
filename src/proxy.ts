@@ -1,6 +1,20 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { createThreeStateCache, readCacheTtlMs } from "@/lib/three-state-cache";
+import {
+  authRefreshOnce,
+  authSingleFlight,
+  hideStaleSessionFromAuthJs,
+  isFreshSession,
+  persistRefreshedSession,
+  readSessionFromCookies,
+  refreshSessionWithAuthService,
+  rememberAuthUser,
+  userFromJwt,
+  validateTokenWithAuthService,
+  type CookieSession,
+  type SourceUser,
+} from "@/lib/session-freshness";
 
 /** 无需登录即可访问的路径前缀 */
 const PUBLIC_PATHS = ["/login", "/signup", "/auth"];
@@ -33,147 +47,26 @@ const ADMIN_PATHS = ["/admin"];
 //
 // ⚠️ 安全取舍（用户已确认接受）：token 被吊销 / 改密码导致会话失效时，
 //    最多延迟一个 TTL（默认 30 秒）才被这里察觉。
-//    **做不到主动清缓存**：中间件与 API 路由/Server Action 不是同一个执行环境
-//    （Edge vs Node 内存不共享），在 logout 路由里 clear 这里的内存是无效的。
+//    **做不到主动清缓存**：发起刷新的中间件与读取缓存的页面侧未必在同一时刻执行，
+//    在 logout 路由里 clear 这里的内存也可能是无效的。
 //
-// ⚠️ token **只用作缓存 key**，绝不参与身份判定 —— 缓存里存的 user 仍然来自
-//    被 Auth 服务校验过的 `getUser()` 返回值，**不是**用 `getSession()` 读 cookie 冒充校验。
+// ⚠️ token **只用作缓存 key**，绝不参与身份判定 —— 认证缓存里存的用户来自
+//    `getUser()` 的返回值或**已验证够新**的 token，**不是**用 `getSession()` 冒充校验。
+//
+// ⚠️ 认证缓存与刷新单飞**已经搬进 `src/lib/session-freshness.ts`**，与页面侧
+//    （`src/lib/viewer.ts`）**共用同一份**：实测中间件与页面侧是同一个进程的同一份内存，
+//    所以「中间件刚校验过谁」页面侧可以**直接复用**，不必再各付一次校验与刷新。
+//    这正是 A-2 后半场要压掉的那 8 次并发刷新。
 const TTL_MS = readCacheTtlMs(process.env.MIDDLEWARE_CACHE_TTL);
 
-/** 认证结果缓存：key = access token；值 = 最小用户信息（只保留代码实际用到的字段） */
-type CachedUser = { id: string; email?: string };
-const authCache = createThreeStateCache<CachedUser>(TTL_MS, 500);
 /** 角色/封禁缓存：key = user id；值 = { role, status } */
 const roleCache = createThreeStateCache<{ role: string | null; status: string | null }>(TTL_MS, 500);
 
-/**
- * 从请求 Cookie 里取出会话的 access token（仅用作缓存 key）。
- *
- * `@supabase/ssr` 把会话存成 `sb-<ref>-auth-token`，值可能是
- * `base64-<base64url 的 JSON>`，超过 3180 字符时切成 `.0`/`.1`… 分片。
- * 该包 0.12.7 没有公开这项读取工具（只导出了 `clearAuthCookiesAtScopes`），
- * 所以这里自己拼一次。**取不到就返回 null → 不缓存**（宁可多查一次，也不猜）。
- */
-const AUTH_COOKIE_SUFFIX = "-auth-token";
-
-/**
- * base64url → 字符串。**优先用 Web 标准的 atob**，避免依赖 Node 专有的 Buffer
- * （中间件可能跑在 Edge runtime 上；万一两者都不可用，调用方会 catch 住并放弃缓存 ——
- * 也就是退化成「每次都查」，功能不受影响）。
- */
-function decodeBase64Url(s: string): string {
-  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
-  if (typeof atob === "function") return atob(padded);
-  return Buffer.from(b64, "base64").toString("binary");
-}
-
-/** Cookie 里的会话（**只用于「要不要刷新」的判断与缓存 key，绝不参与身份判定**） */
-type CookieSession = {
-  accessToken: string;
-  /** 秒级时间戳（@supabase/ssr 把整个 session JSON 存在 cookie 里，含这个字段） */
-  expiresAt: number;
-  refreshToken: string | null;
-};
-
-/** 把 `sb-<ref>-auth-token` 的分片拼起来、解码、解析成 CookieSession。
- *  取不到 / 解不出就返回 null（**宁可多查一次，也不猜**）。 */
-function parseSessionCookieValue(joined: string): CookieSession | null {
-  if (!joined) return null;
-  const raw = joined.startsWith("base64-") ? joined.slice(7) : joined;
-  const session = JSON.parse(decodeBase64Url(raw)) as {
-    access_token?: unknown;
-    refresh_token?: unknown;
-    expires_at?: unknown;
-  };
-  if (typeof session.access_token !== "string" || !session.access_token) return null;
-  return {
-    accessToken: session.access_token,
-    expiresAt: typeof session.expires_at === "number" ? session.expires_at : 0,
-    refreshToken: typeof session.refresh_token === "string" ? session.refresh_token : null,
-  };
-}
-
-/** 从请求 Cookie 里读出会话 */
-function readSession(request: NextRequest): CookieSession | null {
-  try {
-    const ref = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").hostname.split(".")[0];
-    const storageKey = `sb-${ref}${AUTH_COOKIE_SUFFIX}`;
-    const chunks: string[] = [];
-    for (const c of request.cookies.getAll()) {
-      if (c.name === storageKey) {
-        chunks.push(c.value);
-      } else if (c.name.startsWith(`${storageKey}.`)) {
-        const idx = Number(c.name.slice(storageKey.length + 1));
-        if (Number.isInteger(idx)) chunks[idx] = c.value;
-      }
-    }
-    return parseSessionCookieValue(chunks.filter((x) => typeof x === "string").join(""));
-  } catch {
-    return null;
-  }
-}
-
 /** 从**响应** Cookie 里读出会话 —— 刷新后的新会话是 auth-js 写进 response 的 Set-Cookie，
- *  而不是请求里那份（请求里的还是旧的、快过期的那个）。用来把新 token 也放进 authCache。 */
+ *  而不是请求里那份（请求里的还是旧的、快过期的那个）。
+ *  用来把**轮换后的新 token** 也写进共享认证缓存，让同一波并发里后续请求直接命中。 */
 function readSessionFromResponse(response: NextResponse): CookieSession | null {
-  try {
-    const ref = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").hostname.split(".")[0];
-    const storageKey = `sb-${ref}${AUTH_COOKIE_SUFFIX}`;
-    const chunks: string[] = [];
-    for (const c of response.cookies.getAll()) {
-      if (c.name === storageKey) chunks.push(c.value);
-      else if (c.name.startsWith(`${storageKey}.`)) {
-        const idx = Number(c.name.slice(storageKey.length + 1));
-        if (Number.isInteger(idx)) chunks[idx] = c.value;
-      }
-    }
-    return parseSessionCookieValue(chunks.filter((x) => typeof x === "string").join(""));
-  } catch {
-    return null;
-  }
-}
-
-/** 只**解码**（不验签）JWT 的 payload。验签是 Auth 服务的事，这里只取 `exp` / `sub` 做调度判断。 */
-function decodeJwtPayload(token: string): { sub?: string; email?: string; exp?: number } | null {
-  try {
-    const part = token.split(".")[1];
-    if (!part) return null;
-    const json = decodeBase64Url(part);
-    return JSON.parse(json) as { sub?: string; email?: string; exp?: number };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 刷新单飞：同一瞬间、**同一个 refresh_token** 的并发请求只真正发一次 `/token`。
- *
- * 为什么必需（这是本文件最重要的一个修正）：
- *   `auth.getUser()` 在 access token 剩 < 90 秒（auth-js 的 `EXPIRY_MARGIN_MS`）时会
- *   去刷新。而 auth-js 自己的去重（`refreshingDeferred` / `_acquireLock`）**都是实例级内存** ——
- *   本项目每个请求都新建一个 GoTrueClient，所以**跨请求零去重**。
- *   实测：伪造「还剩 3 秒」的会话、并发 8 个请求 → **16 次 `/auth/v1/token`**
- *   （每请求 2 次：中间件 1 + 页面侧 getViewer 1）。
- *   同一个 refresh token 被并发使用会触发 Supabase 的「检测泄露 → 撤销会话」，
- *   用户体感就是「每次都要登录」。
- *
- * ⚠️ 它是**进程内**的（与本文件其它缓存一样，每个服务端实例各一份）。
- *    多实例时最坏仍有 2 次；配合「刷新成功后把新 token 写回 authCache」足够落在
- *    reuse interval（线上 30 秒）之内。
- * ⚠️ 只去重**同一把钥匙**：refresh_token 变了（真的轮换了）就是新的一次刷新，不该被合并。
- */
-const refreshInflight = new Map<string, Promise<CachedUser | null>>();
-
-function singleFlight(key: string, fn: () => Promise<CachedUser | null>): Promise<CachedUser | null> {
-  const flying = refreshInflight.get(key);
-  if (flying) return flying;
-  const run = fn().finally(() => {
-    // 只清「还是自己这一条」的，避免把别人新发起的顶掉
-    if (refreshInflight.get(key) === run) refreshInflight.delete(key);
-  });
-  refreshInflight.set(key, run);
-  return run;
+  return readSessionFromCookies(response.cookies);
 }
 
 function matchesPath(pathname: string, paths: string[]) {
@@ -216,10 +109,76 @@ export default async function proxy(request: NextRequest) {
     );
   }
 
+  // ============================================================
+  // A-2：只有「快过期 / 已过期」时才刷新，且同一把 refresh token 只刷一次
+  // ============================================================
+  //
+  // 背景（实测）：只要 auth-js **读到**一个 `expires_at` 进入最后 90 秒的会话，
+  //   它就会自己去刷新 —— 走的是 `__loadSession()` 与 `_recoverAndRefresh()`，
+  //   **`autoRefreshToken: false` 挡不住这两条路径**。而 `_refreshAccessToken()`
+  //   内部还带**指数退避重试**（200/400/800…ms）。于是「每个请求新建一个 client」
+  //   的写法会炸成一串 `/auth/v1/token`：实测并发 8 个请求最多 **24 次**。
+  //   同一把 refresh token 被重复使用，正是 Supabase 判定「token 泄露 → 撤销会话」
+  //   的依据 —— 用户体感就是「每次进网站都要登录」。
+  //
+  // 所以这里**完全绕开 auth-js 做身份与刷新**（`src/lib/session-freshness.ts` 直连
+  // `/auth/v1/user` 与 `/auth/v1/token`），并且：
+  //   ① token 还够新（剩余 > `FRESH_MARGIN_MS`）→ **0 次外网**：只解码 JWT 取 sub/email
+  //      （不验签，验签是 Auth 服务的事）→ 不可能触发刷新；
+  //   ② 进入最后 120 秒 / 已过期 → **自己做一次刷新**，单飞 + 结果缓存保证一波并发只刷一次，
+  //      并把轮换后的新会话写回响应 Cookie（浏览器与页面侧都拿到新的）。
+  //
+  // 上面那个 `createServerClient` 因此**排在刷新之后**创建：那时 `request.cookies`
+  // 已经是新 token，它读到的会话是新鲜的，不会再去刷新。
+  //
+  // ⚠️ 安全取舍（用户已确认接受，2026-10）：
+  //    分支① 不再逐请求向 Auth 服务确认「token 是否被吊销」，改为**每个 token 生命周期确认一次**
+  //    （token 1 小时一轮换，进入 120 秒窗口时必然走到分支②）。
+  //    封禁**不受影响** —— 它走下面的 `user_roles` 查询，与这里无关。
+  //    代价是「改密码 / 主动吊销」最多延迟到该 token 过期才生效（≤1 小时）。
+  const session = readSessionFromCookies(request.cookies);
+
+  let user: SourceUser | null = null;
+
+  if (isFreshSession(session) && session) {
+    // ① 够新 → 只解码，不问 Auth 服务（0 次外网 ⇒ 也就不可能触发刷新）。
+    user = userFromJwt(session.accessToken);
+  }
+
+  if (!user && session?.refreshToken) {
+    // ② 快过期 / 已过期 → 自己做一次刷新。单飞 + 结果缓存：一波并发只真刷一次。
+    user = await authRefreshOnce(session.refreshToken, async () => {
+      const refreshed = await refreshSessionWithAuthService(session.refreshToken as string);
+      if (!refreshed) return null;
+      await persistRefreshedSession(response, refreshed);
+      return validateTokenWithAuthService(refreshed.access_token);
+    });
+    if (user) {
+      // 让**本次请求**的页面侧（getViewer）直接复用这个已校验结果，不再重复校验。
+      rememberAuthUser(session.accessToken, user);
+      const minted = readSessionFromResponse(response);
+      if (minted?.accessToken) rememberAuthUser(minted.accessToken, user);
+    }
+  } else if (!user && session?.accessToken) {
+    // ③ 有 token 但没有 refresh token（少见）→ 只能**直接校验**，不做刷新。
+    user = await authSingleFlight(session.accessToken, () =>
+      validateTokenWithAuthService(session.accessToken as string),
+    );
+    if (user) rememberAuthUser(session.accessToken, user);
+  }
+
+  // ⚠️ **必须在身份/刷新处理之后**才创建这个 client：
+  //    它读的是 `request.cookies`，而刷新会把新 token 同步进去；
+  //    读到的会话是新鲜的，auth-js 才不会自己去刷新（少这一层实测多 1 次刷新）。
   const supabase = createServerClient(url, anonKey, {
+    // 这个 client 只用来查 `user_roles`（RLS 用请求里的 token 做鉴权）。
+    // **不要**拿它调 `auth.getUser()` / `refreshSession()`，原因见上面那段说明。
+    auth: { autoRefreshToken: false },
     cookies: {
+      // 兜底：万一仍有「快过期」的会话（例如并发下页面侧先跑到），对它藏起来，
+      // 让 auth-js 彻底没有机会自己发起刷新。**只过滤「读」**，写路径原样保留。
       getAll() {
-        return request.cookies.getAll();
+        return hideStaleSessionFromAuthJs(request.cookies).getAll();
       },
       setAll(cookiesToSet, headers) {
         // 先同步到本次请求，让后续的 Server Component 也能读到新 Token
@@ -240,79 +199,6 @@ export default async function proxy(request: NextRequest) {
       },
     },
   });
-
-  // 必须尽早调用：触发 Token 刷新，并把新会话写入上面的 response。
-  // 使用 getUser() 而不是 getSession()，因为它会向 Auth 服务校验 Token。
-  //
-  // ============================================================
-  // A-2：只有「快过期」时才真的刷新，且并发只刷一次
-  // ============================================================
-  //
-  // 背景（实测）：auth-js 在 access token 剩 < `EXPIRY_MARGIN_MS`（= 90 秒）时就会去刷新，
-  //   而它的去重是**实例级**的 —— 本项目每个请求新建一个 client，所以跨请求零去重。
-  //   实测「还剩 3 秒 + 并发 8 个请求」→ **16 次 /auth/v1/token**
-  //   → 触发 Supabase「同一个 refresh token 被重复使用 = 泄露」→ 撤销会话
-  //   → 用户体感「每次都要登录」。
-  //
-  // 现在分两条路：
-  //   ① token 还够新（`expires_at` 距今 > FRESH_MARGIN_MS）→ **完全不问 Auth 服务**：
-  //      身份取自 cookie 里上次被 Auth 服务校验过的会话（`sub` / `email`），
-  //      顺带写入 authCache。0 次外网 → 也就不可能触发刷新。
-  //   ② 即将过期 / 取不到会话 / 上面没判定出来 → 交给 auth-js 的 `getUser()`
-  //      （它在这个分支里才会真的刷新），并用 `singleFlight` 让同一波并发只发一次 `/token`。
-  //
-  // ⚠️ 安全取舍（用户已确认接受，2026-10）：
-  //    分支① 不再逐请求向 Auth 服务确认「token 是否被吊销」，改为**每个 token 生命周期确认一次**
-  //    （token 1 小时一轮换，进入 120 秒窗口时必然走到分支②）。
-  //    封禁**不受影响** —— 它走下面的 `user_roles` 查询，与这里无关。
-  //    代价是「改密码 / 主动吊销」最多延迟到该 token 过期才生效（≤1 小时）。
-  //
-  // ⚠️ 刻意**不做** JWT 验签：验签是 Auth 服务的事。这里只解码 payload 取 `sub`/`email`/`exp`
-  //    作为**调度**依据；真正的校验在分支②的 `getUser()` 里发生。
-  const FRESH_MARGIN_MS = 120_000;
-  const session = readSession(request);
-
-  let user: CachedUser | null = null;
-  let handledByFreshPath = false;
-
-  if (session && session.expiresAt * 1000 - Date.now() > FRESH_MARGIN_MS) {
-    const cachedAuth = authCache.get(session.accessToken);
-    if (cachedAuth !== undefined) {
-      user = cachedAuth.value;
-      handledByFreshPath = true;
-    } else {
-      const payload = decodeJwtPayload(session.accessToken);
-      if (payload?.sub) {
-        user = { id: payload.sub, email: payload.email };
-        authCache.set(session.accessToken, user);
-        handledByFreshPath = true;
-      }
-      // 解不出来（异常 token）→ handledByFreshPath 保持 false → 落到下面让 Auth 服务判定
-    }
-  }
-
-  if (!handledByFreshPath) {
-    const run = async (): Promise<CachedUser | null> => {
-      const {
-        data: { user: fetched },
-      } = await supabase.auth.getUser();
-      const u = fetched ? { id: fetched.id, email: fetched.email ?? undefined } : null;
-      // 把**轮换后的新 token** 也写进 authCache：同一波并发里，后续请求即使 key 变了
-      // 也能立刻命中，而不是各刷一次。
-      //
-      // ⚠️ 这里**做不到**「让同一次请求的页面渲染也免于刷新」：
-      //    页面侧的 `getViewer()`（src/lib/viewer.ts）自己 new 一个 client 调
-      //    `getUser()`，它读的是**浏览器发来的原始 cookie**（不是中间件改过的那份），
-      //    所以它仍然会各自去刷新。实测：8 个并发请求里，中间件靠单飞只刷 1 次，
-      //    但页面侧又刷了 8 次。**要根治必须同时改 viewer.ts**（见交接文档）。
-      const minted = readSessionFromResponse(response);
-      if (minted?.accessToken) authCache.set(minted.accessToken, u);
-      return u;
-    };
-    // 单飞的钥匙用 refresh_token：要防的正是「同一个 refresh token 被并发使用」
-    const key = session?.refreshToken ?? session?.accessToken ?? null;
-    user = key ? await singleFlight(key, run) : await run();
-  }
 
   const { pathname, search } = request.nextUrl;
 

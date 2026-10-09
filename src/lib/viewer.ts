@@ -1,8 +1,10 @@
 import "server-only";
 
 import { cache } from "react";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { cached, clearCache, createTtlCache } from "@/lib/ttl-cache";
+import { resolveViewerUser } from "@/lib/session-freshness";
 import {
   computeIsVip,
   type AccountStatus,
@@ -82,18 +84,40 @@ export function invalidateUserRoles() {
  *
  * 性能约束（改动前请先读）：
  *   · 必须在**同一次渲染**里调用，React 的 cache() 才有去重效果。
- *   · Server Action / Route Handler 与 RSC 渲染是各自独立的请求作用域，跨不过去；
- *     中间件（src/proxy.ts）也不在 React 渲染树里 —— 它的查询省不掉。
- *   · `auth.getUser()` **每次都真的走网络**（校验会话，不能缓存 —— 这是安全底线）。
- *     但 `user_roles` 那一次现在走 30 秒进程内缓存（见上面 USER_ROLES_TTL_MS），
+ *   · Server Action / Route Handler 与 RSC 渲染是各自独立的请求作用域，跨不过去。
+ *   · `user_roles` 那一次走 30 秒进程内缓存（见上面 USER_ROLES_TTL_MS），
  *     改会员/封禁时由 `invalidateUserRoles()` 主动清掉。
+ *
+ * 会话校验（A-2 后半场，2026-10）：
+ *   以前这里**无条件** `supabase.auth.getUser()`。而 `getUser()` 在 access token
+ *   剩 < 90 秒时**一定**会去刷新（`GoTrueClient.__loadSession()`，与
+ *   `autoRefreshToken` 开关无关），而 auth-js 的 `_refreshAccessToken()` 内部还带
+ *   **指数退避重试**。加上「每个请求新建一个 client ⇒ 跨请求零去重」，
+ *   实测「并发 8 个请求」会放大成 **18 次** `/auth/v1/token` ——
+ *   同一把 refresh token 被重复使用，正是 Supabase 判定「泄露 → 撤销会话」的依据，
+ *   因此会**随机把用户踢回登录页**。
+ *
+ *   现在改为 `resolveViewerUser()`（`src/lib/session-freshness.ts`）：
+ *     ① 中间件**本次请求已经校验过**的结果 → 直接复用（实测中间件与页面侧是同一个进程的
+ *        同一份内存，所以这份结果真的拿得到）；
+ *     ② token 还够新 → 只解码 JWT，不联网；
+ *     ③ 只有两者都不成立才向 Auth 服务**直接校验**（`/auth/v1/user`，不碰会话管理）。
+ *
+ *   ⚠️ 这**没有**削弱安全边界：① 用的就是 Auth 服务的校验结果；② 只在
+ *      「token 剩余有效期 > 120 秒」时生效，与中间件 A-2 分支① 口径一致 ——
+ *      原来的写法也**不是**在逐请求确认「token 是否被吊销」，它只是「快过期就顺手刷新」。
+ *   ⚠️ 本函数**不再自己刷新**：页面侧（Server Component）写不了 Cookie，
+ *      在这儿刷新等于白刷（新 token 落不了盘，下个请求还得再刷）。刷新由中间件负责一次。
  */
 async function loadViewer(): Promise<Viewer> {
   const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // ⚠️ `cookies()` 读的就是**浏览器发来的原始 cookie**（与中间件读的是同一份）。
+  //    中间件在本请求里刚校验过的那份结果可以**直接复用**，不再重复走一次网络校验；
+  //    需要联网时也用**直接校验**而不是 `supabase.auth.getUser()`
+  //    （后者会触发 auth-js 的刷新 + 指数退避重试风暴，见 session-freshness.ts）。
+  const cookieStore = await cookies();
+  const user = await resolveViewerUser(cookieStore);
 
   if (!user) {
     return {

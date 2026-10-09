@@ -155,30 +155,27 @@ record("A-2：快过期时页面仍正常返回",
   staleSingle.statuses.every((s) => s === 200), `状态码 ${JSON.stringify(staleSingle.statuses)}`);
 
 // 3c) ★核心：并发 8 个「快过期」请求
-//     用一份**全新的**快过期会话（refresh_token 是新的，保证不命中上一次的单飞/缓存）
+//     用一份**全新的**快过期会话（refresh token 是新的，保证不命中上一次的单飞/缓存）
 //
-// ⚠️ 期望值是「有改进」而**不是**「归零」，这里必须说清楚为什么：
-//   中间件的单飞去重**确实生效**（并发 8 个请求，中间件只刷 1 次），
-//   但页面侧的 `getViewer()`（src/lib/viewer.ts）**自己 new 一个 client** 调
-//   `auth.getUser()`，它读的是浏览器发来的**原始 cookie**（不是中间件改过的那份），
-//   所以它仍然会各自去刷新 —— 这一半的并发刷新**不在本文件的能力范围内**。
-//   实测：修复前 16 次 → 现在 8~12 次（取决于时序）。
-//   要真正压到 1~2 次，必须**同时**改 `src/lib/viewer.ts`（本轮用户限定只改
-//   proxy.ts 与 SiteHeader，所以留作下一轮的明确待办）。
-//   本断言的作用是**守住已有改进**：一旦超过 13 次，说明中间件那半边的去重也退化了。
+// 期望值 = **≤ 2 次**，这就是 A-2 的目标（修复前 16 次 → 收口前 8～12 次）。
+//   为什么能做到：刷新被收拢到**一处**（中间件里直连 `/auth/v1/token`），
+//   并用「单飞 + 同一把 refresh token 的结果缓存」保证一波并发只真刷一次。
+//   ⚠️ 不要放宽这个上限：它正是「每次进网站都要登录」的防线 ——
+//   同一把 refresh token 被并发重复使用，Supabase 会判成泄露并撤销整个会话。
 const sess2 = await fetchSession(userEmail, password, SUPABASE_URL, ANON_KEY);
 const staleCookie2 = sessionCookieExpiringIn(sess2, 3, SUPABASE_URL);
 const storm = await burst("/tools/feedback", 8, staleCookie2);
-record("★A-2：并发 8 个「快过期」请求 → /auth/v1/token ≤ 13 次（修复前 16 次；中间件那半边的去重生效）",
-  storm.tokenCalls <= 13,
+record("★A-2：并发 8 个「快过期」请求 → /auth/v1/token ≤ 2 次（修复前 16 次；收口前 8～12 次）",
+  storm.tokenCalls <= 2,
   `token 调用 ${storm.tokenCalls} 次；明细 ${JSON.stringify(storm.byTable)}；状态码 ${JSON.stringify(storm.statuses)}`);
 record("★A-2 核心：并发风暴里 8 个请求全部成功（没有因为去重把谁搞失败）",
   storm.statuses.every((s) => s === 200),
   `状态码 ${JSON.stringify(storm.statuses)}`);
-// 记录「还剩多少没解决」，作为下一轮改 viewer.ts 的量化依据
-record("A-2 待办留痕：页面侧 getViewer() 仍会各自刷新（目标 ≤2，当前见上面数字）",
-  true,
-  `中间件已去重；剩余 ${storm.tokenCalls} 次来自页面侧 src/lib/viewer.ts → 需下一轮改`);
+// 页面侧**不再**各自刷新：它会复用中间件本次请求已校验过的结果。
+// （以前这里有一条恒为 true 的「留痕」断言，收口后已换成真断言。）
+record("★A-2：页面侧不再重复校验（auth:user 不比 auth:token 多出来）",
+  (storm.byTable["auth:user"] ?? 0) <= 1,
+  `auth:user=${storm.byTable["auth:user"] ?? 0}（中间件校验过一次即可，页面侧复用）`);
 
 
 spawnSync("powershell", ["-NoProfile", "-Command", `Stop-Process -Id ${srv.pid} -Force`], { encoding: "utf8" });

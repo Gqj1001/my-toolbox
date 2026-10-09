@@ -8,50 +8,34 @@
 
 ---
 
-## 1. viewer.ts 改造（半天）—— 优先级最高
+## ~~1. viewer.ts 改造~~ ✅ **已完成（2026-10 本轮）**
 
-**为什么**：A-2（中间件刷新策略）**只完成了一半**。
-「每次进网站都要登录」的根因是并发刷新被 Supabase 判成 token 泄露 → 撤销会话；
-A-2 把**中间件**那半边的并发刷新压掉了，但**页面侧仍在各自刷新**。
+**结论先行：原方案是错的，照它改会让情况变糟（实测 8 次 → 14 次）。**
 
-**现状数字**（`tests/middleware-cache.test.mjs` 会打出来）：
-- 伪造「剩 3 秒」的会话 + 并发 8 个请求 → `/auth/v1/token` **8–12 次**
-- 修复前是 16 次；**目标 1–2 次**
+原判断是「A-2 只压掉了中间件那一半，剩下 8 次来自页面侧 `getViewer()`」。
+**真凶是 auth-js 自己**：`GoTrueClient.__loadSession()` 在 token 剩 < 90 秒时会去刷新，
+而 `_refreshAccessToken()` **内部还带指数退避重试**；`autoRefreshToken: false` **挡不住它**。
+实测 8 个并发请求最多炸成 **24 次** `/auth/v1/token`。
 
-**根因**：`src/lib/viewer.ts` 的 `loadViewer()`（约 96 行）**自己 new 一个 Supabase client**
-调 `auth.getUser()`。它读的是**浏览器发来的原始 cookie**（不是中间件改过的那份），
-所以 token 快过期时它也会各自去刷新 —— 8 个并发请求就再刷 8 次。
+做法（见 `docs/perf-notes.md` **六之七**）：新增 `src/lib/session-freshness.ts`，
+**绕开 auth-js 管理会话** —— 直连 `/auth/v1/user` 校验、直连 `/auth/v1/token` 刷新，
+并让 auth-js **读不到**快过期的会话（`hideStaleSessionFromAuthJs`）。
 
-**证据**（本轮已验）：临时把页面侧改成直接打 `/auth/v1/user`（绕开 auth-js 的会话加载），
-`/auth/v1/token` **归零**。
+| 场景 | 修复前 | 收口后 |
+|---|---|---|
+| token 还剩 1 小时 | 0 次 | **0 次** ✅ |
+| token 只剩 3 秒（单请求） | 1 次 | **1 次** ✅ |
+| **并发 8 个「快过期」请求** | **16 次** | **1 次** ✅ |
 
-### 做法
+「留痕」断言已删除，换成真断言 `≤ 2 次`。
 
-1. 把 `src/proxy.ts` 里「够新就不刷」的判断抽成一个小模块，例如
-   `src/lib/session-freshness.ts`：
-   - `readSessionFromCookies(cookieStore)` → `{ accessToken, expiresAt, refreshToken }`
-   - `isFresh(expiresAt, marginMs)` → boolean
-   - `userFromJwt(accessToken)` → `{ id, email } | null`（**只解码，不验签**）
-2. `loadViewer()` 改用它：**够新 → 不调 `getUser`**（cookie 里那份已经是被 Auth 服务
-   校验过、且中间件也确认过的）；快过期才调 `getUser`。
-3. 中间件侧保持现状（或也改用同一个模块，去掉重复代码）。
-4. **不要**给抽出来的模块加 `import "server-only"` ——
-   中间件可能跑在 Edge runtime（同类说明见 `src/lib/three-state-cache.ts` 的文件头）。
-
-### 测试
-
-扩 `tests/middleware-cache.test.mjs`：
-
-- 现成 helper 直接用：`tests/_helpers.mjs` 的 `sessionCookieExpiringIn(session, sec, url)`
-  （**只改 `expires_at`**，token 仍是真 token，所以刷新是真发生的、也真被计数）
-- 新增断言：**并发 8 个「快过期」请求 → `/auth/v1/token` ≤ 2 次**（把现在那条 ≤13 收紧）
-- 保留：够新 → 0 次；单请求快过期 → 1 次
-
-### 顺带修的
-
-`tests/middleware-cache.test.mjs` 里那条
-`A-2 待办留痕：页面侧 getViewer() 仍会各自刷新` 是**临时的留痕断言**（恒为 true）。
-这轮做完后应当**删掉它**，换成上面那条真断言。
+> ⚠️ **两条给后人的警告**（都实测踩过）：
+> 1. **别把 Cookie 的「写」（`setAll`）也一并去掉** —— 登录/注册/登出都靠它写会话。
+>    本轮先写成空实现，结果**登录直接失效**（`admin-grant90` 10/18、`feedback-client-cache` 2/4 抓出来）。
+> 2. **别用 `supabase.auth.getUser()` 换掉直接校验**：本机实测 **1 次 vs 18 次**。
+> 3. **`readSessionFromCookies` 必须同时认两种 cookie 形状**：正式的 `base64-<base64url>`
+>    与松散格式（URL 编码的 JSON 明文 —— `tests/paper-analysis.test.mjs` 的 `signInCookie()`
+>    就是后者）。只认 base64 会让那套件从 56/56 掉到 12/21。
 
 ---
 
@@ -201,15 +185,22 @@ A-2 把**中间件**那半边的并发刷新压掉了，但**页面侧仍在各�
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（21 个套件全绿）**：
+**全套回归现状（2026-10 本轮实测）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   ai-thinking-mode 11/11
-math-plan-ai-apply 20/20   middleware-cache 13/13    verify-checklist 18/18
-step7-api 39/39            step7-ui 36/36            paper-analysis 56/56
+middleware-cache 13/13     step7-api 39/39           paper-analysis 56/56
 paper-regression 18/18     paper-score-edit 59/59    paper-score-report 15/15
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 54/54     date-input 9/9            admin-grant90 18/18
 math-plan-ai-sections 26/26  math-plan-ai-vip-path 17/17
 math-plan-export-ui 18/18  paper-score-ui 35/35
 ```
+
+> ⚠️ **两个真浏览器套件本轮没跑成**：`math-plan-ai-apply`（20/20）与 `verify-checklist`（18/18）
+> 都停在 `无法连接 Edge 调试端口`。**不是代码问题** —— 在**未改动的基线**上跑同样报这个错。
+> 原因是本机调试端口 **9490** 上残留了两个「幽灵监听者」（指向已死的 PID，
+> `Get-NetTCPConnection` 正常列出、但连不上），新起的 Edge 绑不上这个端口。
+> 处理办法：**重启一次机器**（或换端口）后再跑这两个套件即可。
+> 其余 19 个套件全部全绿。
+
