@@ -179,8 +179,13 @@ function adoptPaperText(txt, sourceLabel){
   renderQuestionList();
   renderScoreList();
   saveJSON(K_PAPER, { text: txt, meta: collectPaperMeta() });
-  switchStep('cScore');
-  toast('解析成功，共 ' + r.questions.length + ' 题');
+  // ⚠️ **刻意不跳转到「② 录入成绩」**（2026-10 的行为变更，用户要求）。
+  //    原因：老师导入试卷后紧接着要核对**卷面结构**（决定每题分值），而
+  //    「卷面总分 / 卷面结构下拉 / 分值分配表」全在**① 试卷页**上（见 index.html）。
+  //    以前这里 switchStep('cScore') 会把人直接踢到录入页，老师必须再点回来才能改分值。
+  //    北京卷这类「同一题号每年分值不同」的卷子尤其需要先改分值再录分。
+  //    改成停在试卷页 + 一句提示，老师改完自己点「② 录入成绩」。
+  toast('解析成功，共 ' + r.questions.length + ' 题 —— 请先核对下方「分值分配」，改完点「② 录入成绩」');
   return true;
 }
 

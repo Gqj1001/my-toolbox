@@ -84,6 +84,32 @@ try {
   record("分值分配表已渲染主行", rows.length > 0, `${rows.length} 个题型`);
   if (!rows.length) throw new Error("分值表未渲染，后续断言无意义");
 
+  // ---------- 先确保停在「① 导入试卷」这一页（2026-10 起解析后不再自动跳走）----------
+  // ⚠️ 这一段**必须有**：分值分配表（#scoreTable）在 #cPaper 里，而 #cPaper 是
+  //    `.col{display:none}`；如果面板是隐藏的，`getBoundingClientRect()` 一律返回 0，
+  //    下面「收起后不占高度」「收起后没有输入框可见」这些断言就会**必然通过、什么都没验证**。
+  //    （本套件以前就是这样空过的：解析后会自动跳到 cScore，而 cScore 里没有这张表。）
+  await inTool(`
+    const btn = doc.querySelector('.steps button[data-col="cPaper"]');
+    if (btn) btn.click();
+    return 'ok';
+  `);
+  await sleepMs(500);
+  const visible = await inTool(`
+    const col = doc.getElementById('cPaper');
+    const tbl = doc.getElementById('scoreTable');
+    const r = tbl ? tbl.getBoundingClientRect() : null;
+    return {
+      activeStep: (doc.querySelector('.steps button.on')||{}).dataset?.col ?? '(none)',
+      colDisplay: col ? getComputedStyle(col).display : null,
+      tableW: r ? Math.round(r.width) : 0,
+      tableH: r ? Math.round(r.height) : 0,
+    };
+  `);
+  record("★分值分配表所在的试卷页是**可见**的（否则下面的尺寸断言全是空过）",
+    visible.colDisplay !== "none" && visible.tableW > 0 && visible.tableH > 0,
+    `步骤=${visible.activeStep} display=${visible.colDisplay} 表尺寸=${visible.tableW}×${visible.tableH}`);
+
   console.log("      " + rows.map((r) => `${r.type} ${r.count}题 ${r.per} ${r.total}分`).join(" | "));
 
   const jdRow = rows.find((r) => r.type.includes("解答题"));
