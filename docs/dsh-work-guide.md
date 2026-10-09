@@ -133,10 +133,24 @@
 
 > ⚠️ **有些套件会杀掉 3000 端口**
 > （`feedback-data-cache.test.mjs`、`feedback-client-cache.test.mjs`、
-> `students-unified.test.mjs`、`admin-grant90.test.mjs`、`middleware-cache.test.mjs` 等
-> 会自己起 `next start`）。
+> `students-unified.test.mjs`、`admin-grant90.test.mjs`、`middleware-cache.test.mjs`、
+> `math-plan-students.test.mjs`（阶段4 新增）等会自己起 `next start`）。
 > **它们不能并行跑**，要一个一个来；需要外部服务器的套件（`step7-api`、`step7-ui`、
 > `verify-checklist`、`paper-regression` 等）则要先自己起好 3000。
+
+> ⚠️⚠️ **2026-10 本轮实测过一次「假红」，务必记住**：两个 runner **同时**用 3000 时，
+> `ai-thinking-mode` 直接变成 **0/11** —— 它起服务时带了假 `AI_KEY`，
+> 而请求被**别人的**服务回答了，回来 503「服务端未配置 AI Key」。
+> 结论：**看到端口类失败（503 / 连不上 / 一半 PASS 一半怪错误），先怀疑"是不是有别人占着 3000"，
+> 再怀疑代码。** 一次只跑一个 runner。
+>
+> 需要外部服务的 6 套 + 自带服务的 1 套已经固化成脚本，照顺序跑就行（它会先把 3000 等空）：
+>
+> ```powershell
+> & "<bundled node>" tests\_run-ui-suites.mjs
+> ```
+>
+> 它会实时回显、逐套落日志到 `.tmp-planning-samples/ui-suite-logs\`，并在末尾汇总哪几套不干净。
 
 ## 用户会做的操作
 用户可以自己：

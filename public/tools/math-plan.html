@@ -218,6 +218,13 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
       <h3>① 学生与考区 <span class="badge">第 1 句</span></h3>
       <div class="body">
         <div class="row"><label>学生</label><input type="text" id="f-name" placeholder="可留空"></div>
+        <!-- 阶段4：统一学生档案（/api/students）。点名字一键带出档案，点💾把「学生是谁」存到账号。
+             ⚠️ 只存身份字段（姓名/年级/校区/教师 + extra 里的 phase/book/exam）。
+                分数、目标分、课时、薄弱模块属于「这一次方案」，**不进档案**。 -->
+        <div class="row wide" id="stuRow" style="display:none">
+          <label>学生档案　<span class="hint" style="display:inline">点名字一键带出；「保存档案」只存学生身份，不存这一次的分数与课时</span></label>
+          <div class="pills" id="stuChips"></div>
+        </div>
         <div class="row"><label>年级</label>
           <select id="f-grade">
             <option value="高一">高一</option>
@@ -347,7 +354,9 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
       <button id="btnReset">恢复默认</button>
     </div>
     <p class="hint" style="margin-top:10px">
-      所有计算都在本机浏览器完成，不上传任何数据。生成后可用「编辑模式」直接改字，<b>改完请先导出</b>——
+      方案的计算全部在本机浏览器完成。点「💾 保存档案」会把<b>学生身份</b>（姓名 / 年级 / 校区 / 教师 /
+      学段 / 教材 / 考区）存到你的账号，换台电脑也能带出来；<b>分数、目标分、课时、薄弱模块这些
+      「这一次方案」的内容不会上传</b>。生成后可用「编辑模式」直接改字，<b>改完请先导出</b>——
       重新生成或切换预设会覆盖手改内容。
     </p>
   </aside>
@@ -1486,6 +1495,241 @@ document.addEventListener("click", e=>{
 });
 
 /* =========================================================================
+   八之三、阶段4：统一学生档案（/api/students）
+   -------------------------------------------------------------------------
+   为什么要有这一层：本工具原来**什么都不存**（刷新即丢），三个工具各存各的。
+   0014 迁移之后全站共用 `feedback_students`，接口是 `/api/students`。
+
+   ⚠️ **写入必须用合并语义的 upsert**（POST 只发变化的字段）：
+      0014 之后同一行装了三个工具的字段，feedback 那条老路径是**整行覆盖**，
+      会把别家工具的字段静默清空。`/api/students` 就是为合并语义做的。
+
+   ⚠️ **只存「学生是谁」**：name / grade / campus / teacher + extra 里的
+      phase / book / exam。分数、目标分、课时、薄弱模块属于「这一次方案」，
+      **不进档案** —— 否则换个学生做方案，会把上一位的分数写成他的。
+
+   ⚠️ **extra 是「整块替换」不是「按键合并」**：合并语义只保护顶层列。
+      所以 persistStudent() 会**先读旧档案**，把旧 extra 展开再盖上本工具的三个键，
+      否则 math-plan 一存就会把 paper 的 extra.cls 清掉（跨工具互踩）。
+
+   ⚠️ 只在**本站部署**（NEXT_HOST）启用：直接双击 HTML / 放到别的服务器上跑，
+      行为与接入前完全一致（那边没有 /api/students）。见 CLOUD_STORE.enabled。
+   ========================================================================= */
+const NEXT_HOST = (location.protocol === "http:" || location.protocol === "https:")
+  && /^\/tools\/math-plan(\.html)?$/.test(location.pathname);
+
+/** 本工具在 extra 里拥有的键（**白名单**：别的工具的键一律不许碰） */
+const EXTRA_KEYS = ["phase", "book", "exam"];
+
+const CLOUD_STORE = {
+  enabled: false,        // bootCloud() 里确认是本站部署后才打开
+
+  /** 读取全部档案 */
+  async loadAll(){
+    const r = await fetch("/api/students", { credentials:"same-origin" });
+    if(!r.ok) throw new Error("接口 /api/students 返回 " + r.status);
+    const d = await r.json();
+    if(!d || !d.ok) throw new Error((d && d.error) || "读取失败");
+    return d.students || {};
+  },
+
+  /** 删除一位学生的档案（连带历史 —— 服务端就是这样做的） */
+  async deleteStudent(name){
+    const r = await fetch("/api/students?name=" + encodeURIComponent(name),
+      { method:"DELETE", credentials:"same-origin" });
+    if(!r.ok) throw new Error("删除接口返回 " + r.status);
+    return r.json();
+  },
+};
+
+/* ⚠️ **保存档案只有一条路**（persistStudent，见下）。
+   这里刻意**不**在 CLOUD_STORE 里再放一个 saveStudent —— 那是「同一件事有两个来源」，
+   本项目反复踩过的坑；两份实现迟早有一份忘了合并 extra。 */
+
+/** POST JSON 到 /api/students（失败时把服务端的中文提示带出来给用户看） */
+async function apiPost(body){
+  const r = await fetch("/api/students", {
+    method:"POST", credentials:"same-origin",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(body),
+  });
+  let d = null;
+  try{ d = await r.json(); }catch(e){ /* 可能没有响应体 */ }
+  if(!r.ok || !d || !d.ok) throw new Error((d && d.error) || ("接口返回 " + r.status));
+  return d;
+}
+
+/** 当前表单里「学生是谁」的那几个字段（**不含**任何方案参数）
+ *  ⚠️ 这里就是「只有身份字段」这条红线的**唯一落点**：往这里加分数 / 课时，
+ *     就等于把这一次的方案参数写进学生档案。 */
+function readStudentIdentity(){
+  return {
+    grade: $("#f-grade").value,
+    campus: $("#f-campus").value.trim(),
+    teacher: $("#f-teach").value.trim(),
+    phase: $("#f-phase").value,
+    book: $("#f-book").value,
+    exam: examSelectToKey($("#f-exam").value),
+  };
+}
+
+/** 表单里的考区下拉 → 存进档案的短码
+ *  ⚠️ 存**短码**（bj / nh1 / custom），不存下拉里那句话。
+ *     理由有两条：① 档案里的 exam 本来就只是个标识，短码最稳；
+ *     ② 那句话随时可能改文案（「其它 / 自定」这种改一次档案就认不出来了），短码不会。
+ *     顺带：`examKeyToSelect()` 与它是一对，改了这里必须同步改那个。 */
+function examSelectToKey(v){
+  const key = String(v || "");
+  return Object.prototype.hasOwnProperty.call(EXAMS, key) ? key : "custom";
+}
+function examKeyToSelect(key){
+  return Object.prototype.hasOwnProperty.call(EXAMS, String(key || "")) ? String(key) : "custom";
+}
+
+/** 服务器档案行 → 本工具内部形状 */
+function studentFromCloud(row){
+  const ex = (row && typeof row.extra === "object" && row.extra) ? row.extra : {};
+  return {
+    grade: row.grade || "",
+    campus: row.campus || "",
+    teacher: row.teacher || "",
+    phase: ex.phase || "",
+    book: ex.book || "",
+    exam: ex.exam || "",
+    updated: row.updated || "",
+  };
+}
+
+/** 已保存的学生（姓名 → 档案）。**只从服务器来**，本工具不另存一份到本机。 */
+let CLOUD_STUDENTS = {};
+
+/**
+ * 保存/更新一位学生的档案 —— **本工具唯一的写档案入口**。
+ *
+ * ⚠️ 调用点只调它，**不要自己 fetch**：那会造成「同一件事有两个来源」，
+ *    正是本项目反复踩过的坑。
+ * ⚠️ 这里负责**保住别的工具的 extra 键**：先读回旧行 → 展开旧 extra → 再盖本工具的三个键。
+ */
+async function persistStudent(name, s){
+  if(!CLOUD_STORE.enabled) return null;
+  const before = await CLOUD_STORE.loadAll();
+  const oldExtra = (before && before[name] && typeof before[name].extra === "object" && before[name].extra)
+    ? before[name].extra : {};
+  // ⚠️ 关键的一步：**先展开旧 extra**，再盖上本工具自己的三个键。
+  //    少了它，math-plan 存一次档案就会把 paper 的 extra.cls 整块替换掉
+  //    （`extra` 是 jsonb，传了就是整块替换 —— 合并语义只保护顶层列）。
+  const extra = Object.assign({}, oldExtra);
+  for(const k of EXTRA_KEYS){
+    // 有值才写；本工具这次没填的键**保持原样**（不清空、也不删）
+    if(s[k]) extra[k] = s[k];
+  }
+  const body = { name };
+  if(s.grade) body.grade = s.grade;
+  if(s.campus) body.campus = s.campus;
+  if(s.teacher) body.teacher = s.teacher;
+  if(Object.keys(extra).length) body.extra = extra;
+  return apiPost(body);
+}
+
+/** 删除一位学生的档案（连带其在别的工具里的历史 —— 服务端就是这样做的） */
+async function removeStudent(name){
+  if(CLOUD_STORE.enabled) await CLOUD_STORE.deleteStudent(name);
+  delete CLOUD_STUDENTS[name];
+}
+
+/** 重画「已保存学生」那一排小圆片 */
+function renderStuRow(){
+  const row = $("#stuRow"), box = $("#stuChips");
+  if(!row || !box) return;
+  if(!CLOUD_STORE.enabled){ row.style.display = "none"; return; }
+  const names = Object.keys(CLOUD_STUDENTS);
+  row.style.display = "";
+  box.innerHTML = names.length
+    ? names.map(n=>`<span class="pill" role="button" tabindex="0" data-stu="${esc(n)}" title="点一下带出「${esc(n)}」的信息">${esc(n)}<span data-del="${esc(n)}" style="opacity:.55;margin-left:6px">×</span></span>`).join("")
+    : `<span class="hint">还没有档案。填好姓名与年级/校区/教师后，点下面「保存档案」。</span>`;
+  box.innerHTML += `<span class="pill" role="button" tabindex="0" id="btnSaveStu"
+      style="border-style:dashed" title="把「学生是谁」存到账号（不存这一次的分数与课时）">💾 保存档案</span>`;
+
+  $$("#stuChips [data-stu]").forEach(el=>{
+    const go = ()=>{ if(el.dataset.stu) pickStudent(el.dataset.stu); };
+    el.addEventListener("click", e=>{ if(e.target && e.target.dataset && e.target.dataset.del) return; go(); });
+    el.addEventListener("keydown", e=>{
+      if(e.key === "Enter" || e.key === " "){ e.preventDefault(); go(); }
+    });
+  });
+  $$("#stuChips [data-del]").forEach(x=>{
+    x.addEventListener("click", async e=>{
+      e.stopPropagation();
+      const n = x.dataset.del;
+      if(!confirm("删除「" + n + "」的档案？\n（别的工具里这个学生的记录也会一起删掉）")) return;
+      try{
+        await removeStudent(n);
+        renderStuRow();
+        toast("已删除「" + n + "」的档案");
+      }catch(err){ toastLong("删除失败：" + (err && err.message ? err.message : err)); }
+    });
+  });
+  const b = $("#btnSaveStu");
+  if(b) b.addEventListener("click", saveCurrentStudent);
+}
+
+/** 点一位已保存的学生 → 把他的身份字段填回表单（方案参数一律不动） */
+function pickStudent(name){
+  const s = CLOUD_STUDENTS[name];
+  if(!s) return;
+  $("#f-name").value = name;
+  // ⚠️ 一律**重新赋值**（含空值）：否则先点了甲（有校区），再点乙（没校区），
+  //    乙的表单里会留着甲的校区 —— 那是很容易被当成"对的"的静默错数据。
+  // ⚠️ 只有下拉里**真的存在**的值才写（别家工具可能把年级填成「初二」，
+  //    那种值在数学方案的下拉里没有对应项；硬写会得到一个没有任何 option 选中的 select，
+  //    而它读出来是空串 —— 反而把表单弄坏。不属于本工具的值就保留当前值）。
+  if(s.grade && [...$("#f-grade").options].some(o=>o.value === s.grade)) $("#f-grade").value = s.grade;
+  if(s.phase && [...$("#f-phase").options].some(o=>o.value === s.phase)) $("#f-phase").value = s.phase;
+  if(s.book  && [...$("#f-book").options].some(o=>o.value === s.book))   $("#f-book").value  = s.book;
+  if(s.exam && examKeyToSelect(s.exam) !== "custom") $("#f-exam").value = examKeyToSelect(s.exam);
+  $("#f-campus").value = s.campus || "";
+  $("#f-teach").value  = s.teacher || "";
+  refreshHints();
+  toast("已带出「" + name + "」的信息");
+}
+
+/** 把当前表单里的「学生是谁」存到账号 */
+async function saveCurrentStudent(){
+  const name = $("#f-name").value.trim();
+  if(!name){ toastLong("请先填学生姓名，再保存档案"); return; }
+  const id = readStudentIdentity();
+  const btn = $("#btnSaveStu");
+  if(btn){ btn.textContent = "保存中…"; }
+  try{
+    await persistStudent(name, id);
+    CLOUD_STUDENTS[name] = id;
+    renderStuRow();
+    toast("已保存「" + name + "」的档案");
+  }catch(err){
+    toastLong("保存失败：" + (err && err.message ? err.message : err));
+  }finally{
+    if($("#btnSaveStu")) $("#btnSaveStu").textContent = "💾 保存档案";
+  }
+}
+
+/** 启动时拉一次档案；拉不到就**明确告诉用户**，不静默装作没有档案 */
+async function bootCloud(){
+  if(!NEXT_HOST) return;              // 双击 HTML / 别的服务器 → 一切照旧
+  CLOUD_STORE.enabled = true;
+  renderStuRow();
+  try{
+    const all = await CLOUD_STORE.loadAll();
+    CLOUD_STUDENTS = {};
+    for(const [n, row] of Object.entries(all)) CLOUD_STUDENTS[n] = studentFromCloud(row);
+    renderStuRow();
+  }catch(e){
+    CLOUD_STORE.enabled = false;      // 拿不到就别让按钮骗人
+    renderStuRow();
+    toastLong("读不到账号里的学生档案，本页暂时只能用本机输入：" + (e && e.message ? e.message : e), 4600);
+  }
+}
+
+/* =========================================================================
    九、界面绑定
    ========================================================================= */
 /* 考区初始化 */
@@ -1497,7 +1741,13 @@ document.addEventListener("click", e=>{
   sel.value = "nh1";
 })();
 
-/* 薄弱模块与已完成模块的选择条（点击或回车／空格切换，支持键盘操作） */
+/* 薄弱模块与已完成模块的选择条（点击或回车／空格切换，支持键盘操作）
+   ⚠️ 阶段4 起要**排除学生档案那一排**（它复用了 .pill 的样式，但「选中」对它没有意义）：
+      否则点一下学生圆片就会被加上 `.on` 高亮、点「保存档案」也会亮起来 ——
+      看起来像"被选中了"，而它其实是按钮。见 renderStuRow()。 */
+function isStuChip(el){
+  return !!(el && el.closest && el.closest("#stuChips"));
+}
 (function initPills(){
   const topics = [...new Set(MODULES.map(m=>m.topic))];
   $("#f-weak").innerHTML = topics.map(t=>
@@ -1507,9 +1757,11 @@ document.addEventListener("click", e=>{
     `<span class="pill" role="button" tabindex="0" data-id="${m.id}" title="${m.name}">${m.name}</span>`).join("");
 
   document.addEventListener("click", e=>{
+    if(isStuChip(e.target)) return;
     if(e.target.classList && e.target.classList.contains("pill")) e.target.classList.toggle("on");
   });
   document.addEventListener("keydown", e=>{
+    if(isStuChip(e.target)) return;
     if((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("pill")){
       e.preventDefault(); e.target.classList.toggle("on");
     }
@@ -1653,6 +1905,9 @@ $("#btnDoc").addEventListener("click", exportWordTemplate);          // 唯一�
 
 /* 首次进入提示 */
 refreshHints();
+
+/* 阶段4：接账号里的学生档案（只在本站部署时开；双击 HTML 时是 no-op） */
+bootCloud();
 
 /* 测试钩子（无副作用，仅暴露只读能力供自动化测试使用） */
 window.MathPlanHooks = {

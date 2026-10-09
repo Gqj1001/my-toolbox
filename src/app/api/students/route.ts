@@ -93,12 +93,23 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/** 历史归属工具的白名单 —— 与 0014 的 `feedback_history_tool_check` 约束**必须一致**。
+ *
+ *  ⚠️ 为什么要有这个白名单，而不是「不合法就按 paper 处理」：
+ *     导入口原来写的是「缺省按 paper」—— 那会让**将来接进来的工具**（math-plan 等）
+ *     把数据**静默标成 paper**：接口 200、行也进去了，但归属错了，
+ *     「只看试卷分析」这类筛选会把它算进 paper，而且**没有任何报错**。
+ *     静默写错归属比写不进去更糟（写不进去至少会被发现），所以这里明确拒绝。
+ *
+ *  ⚠️ 加新工具时**两步都要做**，只做一步的后果见上：
+ *     ① 先在 Supabase 执行一条迁移，把 `tool in (...)` 的区间放宽到新工具；
+ *     ② 再把新工具名加到这个数组里。 */
+const ALLOWED_TOOLS = ["feedback", "paper"] as const;
+
 /** 把一条外来记录规整成可写入的行（日期走与 feedback 同一个解析器） */
 function normalizeHistoryItem(raw: Record<string, unknown>) {
   const patch = pickHistoryPatch(raw);
-  // tool 必填（0014 的约束只允许 feedback / paper）；缺省按 paper 处理，
-  // 因为这个导入口的现实用途就是「paper-analysis 本机数据搬上来」。
-  const tool = typeof patch.tool === "string" && patch.tool ? patch.tool : "paper";
+  const tool = typeof patch.tool === "string" ? patch.tool : "";
   // ⚠️ 复用 feedback 的同一个解析器（src/lib/date-input.ts）：
   //    paper 的 examDate 是「2026年10月7日」这种给人看的文本，直接写 date 列会被 PG 拒绝。
   const date = parseDisplayDate(patch.date);
@@ -140,12 +151,23 @@ export async function POST(request: NextRequest) {
     const normalized = [];
     // 日期解析不出来的条数**必须如实报回去**（用户明确要求：不静默丢数据）
     let dateUnparsed = 0;
+    // 归属工具不合法的条数：同样**明确拒绝**，不当成 paper 混进去（见 ALLOWED_TOOLS）
+    let badTool = 0;
     for (const raw of items) {
       if (!raw || typeof raw !== "object") continue;
       const item = normalizeHistoryItem(raw as Record<string, unknown>);
       if (!item.student_name || !item.text) continue;
+      if (!(ALLOWED_TOOLS as readonly string[]).includes(item.tool)) { badTool++; continue; }
       if (item.date === null && (raw as Record<string, unknown>).date) dateUnparsed++;
       normalized.push(item);
+    }
+    // ⚠️ 一条都不合法时直接报错：否则会返回 `ok:true, inserted:0`，
+    //    前端会显示「已保存 0 条」——看起来像"保存成功但没数据"，最难查。
+    if (badTool && !normalized.length) {
+      return NextResponse.json(
+        { ok: false, error: `记录的归属工具不合法（只允许 ${ALLOWED_TOOLS.join(" / ")}），已全部拒绝。` },
+        { status: 400 },
+      );
     }
 
     try {
@@ -157,6 +179,8 @@ export async function POST(request: NextRequest) {
         accepted: normalized.length,
         // ⚠️ 前端必须把这个数展示给用户（「有 N 条日期没能识别」），不能吞掉
         dateUnparsed,
+        // 被拒的条数也报出来（正常应是 0；不为 0 说明调用方传错了归属工具）
+        rejectedTool: badTool,
       });
     } catch (e) {
       return dbError("导入记录", e);

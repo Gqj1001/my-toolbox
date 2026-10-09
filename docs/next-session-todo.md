@@ -1,6 +1,7 @@
 # 下个会话待办
 
-> 更新时间：2026-10（本轮收尾）。**已完成的条目已删除**，这里只剩还没做的。
+> 更新时间：2026-10（阶段4 math-plan 接入统一学生 API 的那一笔）。
+> **已完成的条目已删除**，这里只剩还没做的。
 > 配套阅读：`docs/project-overview.md`（现状总入口）、`docs/dsh-work-guide.md`（配合方式）、
 > `docs/perf-notes.md`（性能完整记录）。
 >
@@ -8,31 +9,69 @@
 
 ---
 
-## 1. 阶段 4：math-plan 接入统一学生 API（半天，纯新增）
+## 1. ✅ 阶段 4：math-plan 接入统一学生 API（**已完成 2026-10**）
 
-**注意**：**math-plan 没有 localStorage 要迁** —— 它现在什么都不存（刷新即丢）。
-所以这是**纯新功能**，没有历史数据、没有新旧冲突，比阶段 3（paper，已完成）简单。
+> 这一条做完了，**不要再做一遍**。留下的结论与新待办见下面「已完成」与「1b」。
 
-### 要做
+### 已完成（做了什么）
 
-1. 「**选学生带出信息**」：从 `/api/students` 拉档案列表，选一个自动填
-   `f-name / f-grade / f-teach / f-campus` 等。
-2. 「**保存档案到服务器**」：把「学生是谁」的那几个字段存进 `/api/students`。
-   - ⚠️ 只存**学生身份字段**（name/grade/campus/teacher + `extra` 里的
-     `phase/book/exam`）；**不要**把「这一次方案的参数」（分数、目标分、课时、
-     薄弱模块、已完成模块）塞进档案 —— 那些属于「方案」不属于「学生」。
-   - 工具专属字段进 `extra`（0014 的设计），**不要改表结构**。
-   - ⚠️ 写入用**合并语义**的 upsert（POST 只发变化的字段）—— 见 paper 的做法：
-     四种写入集中到几个入口，**调用点不要自己 fetch**。
-3. 边界同上：只改数据读写，不动 UI 结构。
-4. **照着 paper 那套抄**：`public/tools/paper-analysis/js/app.js` 里的
-   `CLOUD_STORE` + `persistStudent / removeStudent / persistHistory / removeHistory`
-   就是现成模板（阶段 3 已完成，有 27 项测试护航）。
+1. `public/tools/math-plan.html` 的「① 学生与考区」多了一排**已保存学生的小圆片**
+   （点一下带出 年级/校区/教师/学段/教材/考区）+ 一个「💾 保存档案」。
+   **只在 `/tools/math-plan.html` 下出现**（双击 HTML、放到别的服务器上行为不变）。
+2. 数据层照 paper 的模板抄：`CLOUD_STORE`（`loadAll` / `deleteStudent`）+
+   `persistStudent`（**唯一的写入口**）/ `removeStudent`。
+   ⚠️ 刻意**没有**在 `CLOUD_STORE` 里再放一个 `saveStudent` —— 那会变成
+   「同一件事有两个来源」（本项目反复踩过的坑），迟早有一份忘了合并 `extra`。
+3. **只存学生身份**：`name/grade/campus/teacher` + `extra` 里的 `phase/book/exam`。
+   分数 / 目标分 / 课时 / 频次 / 薄弱模块 / 已完成模块 / 备注 **一个都不进档案**
+   （它们是「这一次方案」的参数）。测试有双重防护：点名查这些键，
+   **并且**断言 `extra` 里没有数字型值（身份字段全是字符串）。
+4. ⚠️ **`extra` 是整块替换、不是按键合并** —— 合并语义只保护顶层列。
+   所以 `persistStudent()` 先 `loadAll()` 读回旧行、展开旧 `extra`，再盖自己的三个键。
+   少了这一步，老师用一次辅导方案就会把 paper 的 `extra.cls` 抹掉
+   （有变异测试证明这条断言真的会 FAIL，不是空过）。
+5. 顺手修掉一个真实 bug（`src/app/api/students/route.ts`）：
+   `op:"import"` 的 `tool` 原来是「缺省按 paper」→ 会把**将来接进来的工具**的数据
+   **静默标成 paper**（接口 200、归属错、不报错）。现在白名单外的值一律 400，
+   混着传时「好的进、坏的条数如实报」(`rejectedTool`)。`tests/math-plan-students.test.mjs`
+   与 `tests/students-unified.test.mjs` 都钉住了。
+6. 顺手把左侧底部那句「不上传任何数据」改成实话（点保存会上传学生身份，
+   但不上传分数/课时）—— 原文与实际行为不符。
 
 ### 测试
 
-扩 `tests/students-unified.test.mjs` 的合并语义组，补一条
-「math-plan 写进 `extra` 的字段，被 feedback 保存一次后仍在」（那条已经有类似的，扩一下即可）。
+- 新增 `tests/math-plan-students.test.mjs`（29 项，真服务 + 真浏览器）：
+  选学生带出信息、**只存身份字段**、刷新不丢、**两家工具的 `extra` 键同时活着**、
+  `import` 的 `tool` 校验、**本机模式（`file://`）行为一行没变**。
+  ⚠️ 它自己起 `next start`，**会杀 3000 端口**，别和别人并行跑。
+- 扩 `tests/students-unified.test.mjs`：补「阶段4」组（两家工具的 `extra` 键同时活着、
+  `import` 的 `tool` 校验）；合并语义组原样保留。**62 项**。
+- 顺手把 `students-unified` 里两条**写死数字**的断言改成**相对口径**
+  （见「怎么验」——这正是 `dsh-work-guide.md` 坑 1 说的那种假红）。
+
+### ⚠️ 1b. 留下的两件（**不在本轮范围**）
+
+| # | 事项 | 说明 |
+|---|---|---|
+| a | **math-plan 不写历史记录** | `feedback_history.tool` 的 CHECK 只允许 `('feedback','paper')`（`0014` 第 93 行）。想让 math-plan 也存「方案历史」，**必须先跑一条迁移**放宽约束，**再**改接口与前端 —— 两步缺一不可（只改接口会在写库时撞约束）。SQL 见下面「1c」。 |
+| b | 接口层的 `extra` 仍是整块替换 | 现在靠**每个工具自己**先读旧值再合并。将来若要根治，应当让服务端把 `extra` 也做成**按键合并**（或在 `buildStudentRow()` 里合并 `extra`），这样任何工具少写一句都不会踩别人。 |
+
+### 1c. 「方案历史」要用的迁移 SQL（**已写好，还没执行**）
+
+只在用户明确要做「方案历史」时，才让他去 **Supabase 的 SQL Editor** 里逐字跑：
+
+```sql
+-- 把 feedback_history.tool 的合法值放开到 math-plan（0014 原本只允许 feedback/paper）
+alter table public.feedback_history drop constraint if exists feedback_history_tool_check;
+alter table public.feedback_history
+  add constraint feedback_history_tool_check
+  check (tool in ('feedback', 'paper', 'math-plan'));
+```
+
+⚠️ **跑完 SQL 只是第一步**，还要把 `src/app/api/students/route.ts` 里的
+`ALLOWED_TOOLS` 数组加上 `"math-plan"`，否则接口仍然拒绝。
+那条白名单是**故意**的：它防的是「没登记的工具被**静默标成 paper**」。
+两边都改完才通；只改一边要么写库撞约束、要么接口 400。
 
 ---
 
@@ -152,19 +191,29 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 本轮实测，23 个套件全绿）**：
+**全套回归现状（2026-10 阶段4 本轮实测，24 个套件全绿 ✅）**：
 
 ```
-math-plan-template 82/82   math-plan-lessons 44/44   ai-thinking-mode 11/11
+math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 29/29
 math-plan-ai-apply 20/20   middleware-cache 13/13    verify-checklist 18/18
-step7-api 39/39            step7-ui 36/36            paper-analysis 56/56
-paper-regression 18/18     paper-score-edit 59/59    paper-score-report 15/15
-paper-score-ui 36/36       paper-preset 18/18        paper-analysis-students 27/27
+step7-api 39/39            step7-ui 36/36            ai-thinking-mode 11/11
+paper-analysis 56/56       paper-regression 18/18    paper-score-edit 59/59
+paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
+paper-analysis-students 27/27
 feedback-data-cache 26/26  feedback-client-cache 51/51
-students-unified 56/56     date-input 11/11          admin-grant90 18/18
+students-unified 62/62     date-input 11/11          admin-grant90 18/18
 math-plan-ai-sections 26/26  math-plan-ai-vip-path 17/17
 math-plan-export-ui 18/18
 ```
 
-> ✅ `math-plan-ai-apply` 与 `verify-checklist` 本轮**重启机器后已补跑通过**，
+> ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
+> 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，
+> 回来 503「未配置 AI Key」），而代码是好的。重跑就 11/11。
+> 需要外部服务的套件已固化成 `tests/_run-ui-suites.mjs`（会先等 3000 空出来再跑）：
+
+```powershell
+& "<bundled node>" tests\_run-ui-suites.mjs
+```
+
+> ✅ `math-plan-ai-apply` 与 `verify-checklist` 上一轮**重启机器后已补跑通过**，
 > 之前那次失败是 Edge 调试端口的幽灵监听者（见「已知问题」第 6 条），不是代码问题。

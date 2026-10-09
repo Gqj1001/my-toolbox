@@ -274,6 +274,60 @@ try {
   const badExtra = await studentsPost({ name: MERGE, extra: [1, 2, 3] });
   record("POST 非法 extra（数组）被拒 400", badExtra.status === 400, `status=${badExtra.status}`);
 
+  // ⑦ ★阶段4 补：**两个工具的 extra 键要能同时活着**
+  //    `extra` 是一整个 jsonb，**传了就是整块替换** —— 合并语义只保护顶层列。
+  //    这条钉住「math-plan 先读旧 extra 再合并」的写法之后，paper 的 cls 仍然在；
+  //    否则老师用一次辅导方案就会把试卷分析的班级信息抹掉。
+  //
+  //    ⚠️ 断言的值**必须是这次新写的**，不能沿用探针里本来就有的值
+  //       （`_students-baseline.mjs` 的 PROBE.extra 里已经有 cls:"3班" / phase:"秋"，
+  //        拿它们去断言等于什么都没验 —— 本轮差点踩进去）。
+  //    ⚠️ campus 在 ④ 里被明确清空了（那是实验的一部分），这里重新写回来再断言。
+  const p5 = await studentsPost({
+    name: MERGE,
+    grade: "高三", campus: "燕郊中学校区", teacher: "郭庆杰（math-plan）",
+    extra: { cls: "7班", phase: "秋寒", book: "人教A版", exam: "nh1" },   // ← math-plan 合并后的结果
+  });
+  const p5b = await p5.json().catch(() => null);
+  record("★阶段4：math-plan 与 paper 的 extra 键**同时存在**（cls + phase/book/exam）",
+    p5b?.ok === true && p5b.student?.extra?.cls === "7班" &&
+      p5b.student?.extra?.phase === "秋寒" && p5b.student?.extra?.book === "人教A版" &&
+      p5b.student?.extra?.exam === "nh1",
+    `extra=${JSON.stringify(p5b?.student?.extra)}`);
+  record("★阶段4：math-plan 的三个身份字段（grade/campus/teacher）往返正确",
+    p5b?.student?.grade === "高三" && p5b.student?.campus === "燕郊中学校区" &&
+      p5b.student?.teacher === "郭庆杰（math-plan）",
+    JSON.stringify({ grade: p5b?.student?.grade, campus: p5b?.student?.campus, teacher: p5b?.student?.teacher }));
+  // 再走一次「只带 feedback 字段」的合并写入：两家的 extra 键**都**不能丢
+  const p6 = await studentsPost({ name: MERGE, notes: "阶段4 合并后再存一次" });
+  const p6b = await p6.json().catch(() => null);
+  record("★阶段4：只传 feedback 字段再存一次，math-plan 的三个 extra 键仍然是**这次写的值**",
+    p6b?.student?.extra?.phase === "秋寒" && p6b?.student?.extra?.book === "人教A版" &&
+      p6b?.student?.extra?.exam === "nh1" && p6b?.student?.extra?.cls === "7班",
+    `extra=${JSON.stringify(p6b?.student?.extra)}（若 phase 变回「秋」，说明合并根本没发生）`);
+
+  // ⑧ 阶段4：`op:"import"` 的 tool **不再静默兜底成 paper**
+  //    原来「没传就按 paper」会把别的工具的数据**静默标成 paper**（接口 200、归属错、不报错）。
+  const impNoTool = await studentsPost({ op: "import", items: [
+    { student_name: MERGE, text: "阶段4 缺 tool", date: "10月7日", title: "无归属" },
+  ] });
+  record("★阶段4：import 缺 tool → 明确 400（不静默标成 paper）",
+    impNoTool.status === 400, `status=${impNoTool.status}`);
+  const impBadTool = await studentsPost({ op: "import", items: [
+    { student_name: MERGE, text: "阶段4 坏归属", date: "10月7日", tool: "math-plan", title: "坏" },
+  ] });
+  record("★阶段4：import 给了未登记的 tool → 明确 400（不是静默记成 paper）",
+    impBadTool.status === 400, `status=${impBadTool.status}`);
+  // 混着传时：好的进、坏的**数出来**（不静默丢）
+  const impMixed = await studentsPost({ op: "import", items: [
+    { student_name: MERGE, text: "阶段4 混-坏", date: "10月8日", tool: "math-plan", title: "坏" },
+    { student_name: MERGE, text: "阶段4 混-好", date: "10月9日", tool: "paper", title: "好" },
+  ] });
+  const impMixedB = await impMixed.json().catch(() => null);
+  record("★阶段4：混合导入 → 好的进（inserted:1），坏的条数如实报（rejectedTool:1）",
+    impMixedB?.ok === true && impMixedB.inserted === 1 && impMixedB.rejectedTool === 1,
+    JSON.stringify(impMixedB));
+
   // ================================================================
   // 第 3 组：红线2 —— 跨账号隔离（A 存的学生，B 看不到）
   // ================================================================
@@ -304,10 +358,17 @@ try {
     JSON.stringify(bSaveBody?.student)?.slice(0, 160));
 
   // A 端再查：**A 的数据没有被 B 覆盖**
+  // ⚠️ 只断言「B 没写进来的东西」：`teacher` 是 A 在阶段4 里刚写的值，
+  //    B 那边只发了 grade/notes，**碰不到它**。
+  //    曾经这里断言的是 `notes === "新接口备注"` —— 那是**阶段4 之前**写的值，
+  //    阶段4 自己在同一行上又写了 notes，于是这条**假红**了（2026-10 实测踩到）。
+  //    教训：红线断言要挑**本条测试自己刚写、此后没人再动**的字段。
   const aAgain = await (await studentsApi(`?name=${encodeURIComponent(MERGE)}`)).json().catch(() => null);
   record("★红线2 A 的数据没有被 B 的写入覆盖",
-    aAgain?.student?.grade === "高三" && aAgain?.student?.notes === "新接口备注",
-    `A 端 grade=${JSON.stringify(aAgain?.student?.grade)} notes=${JSON.stringify(aAgain?.student?.notes)}`);
+    aAgain?.student?.grade === "高三" && aAgain?.student?.teacher === "郭庆杰（math-plan）" &&
+      aAgain?.student?.notes !== "这是B账号的",
+    `A 端 grade=${JSON.stringify(aAgain?.student?.grade)} teacher=${JSON.stringify(aAgain?.student?.teacher)} `
+      + `notes=${JSON.stringify(aAgain?.student?.notes)}`);
 
   // B 的历史里也不该有 A 的
   const bHist = await (await fetch(`${BASE}/api/students?withHistory=1`, { headers: { cookie: cookieB } })).json().catch(() => null);
@@ -346,20 +407,30 @@ try {
     imp1b?.dateUnparsed === 1,
     `dateUnparsed=${imp1b?.dateUnparsed}（若变成 2，说明「年月日」支持被弄坏了）`);
 
+  // 库里行数确实没变（用业务键数一遍）
+  // ⚠️ 括号别省：`await fetch(x).then(...)` 会被解析成 `await (fetch(x).then(...))` 之外的东西，
+  //    实际报 "(intermediate value).then is not a function"（因为 await 只作用于 fetch 的结果）。
+  // ⚠️ **不要写死具体条数**（原来是 `/\/4$/`）：这张表里同一学生的记录条数会被**别的测试块**
+  //    合法地改变（阶段4 的混合导入就多插了 1 条），写死数字迟早假红。
+  //    这里改成**相对口径**：导入前后各数一次，条数必须**完全没变** ——
+  //    这才是「幂等」真正要保证的事（见 docs/dsh-work-guide.md 坑 1）。
+  const countHistoryRows = async () => {
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/feedback_history?student_name=eq.${encodeURIComponent(MERGE)}&select=id`,
+      { headers: { ...H, Prefer: "count=exact", Range: "0-0" } });
+    const cr = r.headers.get("content-range") || "";
+    return Number((cr.match(/\/(\d+)$/) || [])[1] ?? NaN);
+  };
+  const rowsAfterFirst = await countHistoryRows();
   const imp2 = await studentsPost({ op: "import", items: importItems });
   const imp2b = await imp2.json().catch(() => null);
   record("★import 第二次（同一批数据）：插入 0 条、跳过 4 条 —— **幂等**",
     imp2b?.ok === true && imp2b.inserted === 0 && imp2b.skipped === 4, JSON.stringify(imp2b));
 
-  // 库里行数确实没变（用业务键数一遍）
-  // ⚠️ 括号别省：`await fetch(x).then(...)` 会被解析成 `await (fetch(x).then(...))` 之外的东西，
-  //    实际报 "(intermediate value).then is not a function"（因为 await 只作用于 fetch 的结果）。
-  const histCountResp = await fetch(
-    `${SUPABASE_URL}/rest/v1/feedback_history?student_name=eq.${encodeURIComponent(MERGE)}&select=id`,
-    { headers: { ...H, Prefer: "count=exact", Range: "0-0" } });
-  const histCount = histCountResp.headers.get("content-range");
-  record("★import 幂等：库里该学生的记录数没有翻倍", /\/4$/.test(histCount || ""),
-    `content-range=${histCount}（期望 */4，与第一次插入的 4 条一致）`);
+  const rowsAfterSecond = await countHistoryRows();
+  record("★import 幂等：再导一次之后，库里该学生的记录数**没有变**（相对口径，不写死数字）",
+    Number.isFinite(rowsAfterFirst) && rowsAfterFirst === rowsAfterSecond,
+    `第一次导入后 ${rowsAfterFirst} 条 → 再导一次后 ${rowsAfterSecond} 条`);
 
   // 同一批内部重复也算跳过
   const imp3 = await studentsPost({ op: "import", items: [importItems[0], importItems[0]] });
