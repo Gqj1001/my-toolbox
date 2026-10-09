@@ -54,14 +54,18 @@ const killPort = () => {
 
 /** 老字段白名单：**一个都不能少**（漏一个就说明改动删了东西）
  *
- *  ⚠️ `id` 与 `saved` **故意排除在「值要比对」之外**（但仍然参与「字段在不在」的检查）：
- *     探针每次运行都是「先删后建」，自增 id 必然不同、时间戳必然不同。
+ *  ⚠️ `id` / `saved` / `updated` **故意排除在「值要比对」之外**
+ *     （但仍然参与「字段在不在」的检查）：
+ *     探针每次运行都是「先删后建」，自增 id 必然不同、时间戳必然不同；
+ *     而 `updated` 是**「最后一次修改的日期」**（`updated_at.slice(0,10)`），
+ *     只要跨过零点就会变 —— 2026-10-09 实测踩到：
+ *     基线是 10-08、当天跑出来是 10-09，红线1 因此**假红**。
  *     把它们当成「值变了」会得到一条永远红的假断言。
- *     它们的**类型**另有断言（id 必须是数字、saved 必须是 ISO 字符串）。 */
+ *     ⚠️ 但**类型**仍然要在 diffFields 里验（见那里的 volatile 分支）。 */
 export const OLD_STUDENT_FIELDS = ["subject", "salutation", "teacher", "type", "notes", "updated", "id"];
 export const OLD_HISTORY_FIELDS = ["text", "date", "typeName", "subject", "saved", "id"];
-/** 值比对时跳过的字段（非确定性） */
-export const VOLATILE_FIELDS = new Set(["id", "saved"]);
+/** 值比对时跳过的字段（非确定性：自增 id、真时间戳、按天滚动的 updated） */
+export const VOLATILE_FIELDS = new Set(["id", "saved", "updated"]);
 /** 允许新增的字段（对照组里单独列出来看，不算"变了"） */
 export const NEW_STUDENT_FIELDS = ["grade", "gender", "campus", "manager", "class_name", "attitude", "extra"];
 export const NEW_HISTORY_FIELDS = ["tool", "title", "score", "fullScore"];

@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 import {
   deleteStudentByName,
   getHistory,
   getStudents,
   historyByStudent,
   importHistory,
+  invalidateHistory,
   pickHistoryPatch,
   pickStudentPatch,
   studentsByName,
@@ -31,6 +33,8 @@ import { getViewer } from "@/lib/viewer";
  *   POST   /api/students  { name, ... }                    upsert 一位（合并语义）
  *   POST   /api/students  { op:"import", items:[…] }        批量导入考试记录（幂等）
  *   DELETE /api/students?name=张三         删除档案（连同其历史）
+ *   DELETE /api/students?id=<historyId>   删除**单条**历史记录（阶段3 补：以前只有
+ *                                         /api/feedback/data 支持，统一接口这边缺）
  *
  * 隐私隔离：全部查询**不加 user_id 过滤**，靠 RLS（`user_id = auth.uid()`）隔离；
  *   进程内缓存的 key 里带 user_id（见 feedback-db 的 getStudents/getHistory 注释）。
@@ -191,6 +195,22 @@ export async function DELETE(request: NextRequest) {
   if (!guard.ok) {
     return NextResponse.json({ ok: false, error: guard.message }, { status: guard.status });
   }
+
+  // 删除**单条历史**（paper-analysis 的「删一条历史」需要它；原来只有
+  // /api/feedback/data 支持，统一接口这边缺）。行为与那边保持一致：
+  // 删完必须 `invalidateHistory()`，否则最长 25 秒内那条记录会从缓存里"复活"。
+  const id = request.nextUrl.searchParams.get("id");
+  if (id) {
+    const supabase = await createClient();
+    const { error } = await supabase.from("feedback_history").delete().eq("id", Number(id));
+    if (error) {
+      console.error("[students] 删除历史失败:", error.code, error.message);
+      return NextResponse.json({ ok: false, error: "删除失败。" }, { status: 500 });
+    }
+    invalidateHistory();
+    return NextResponse.json({ ok: true });
+  }
+
   const name = request.nextUrl.searchParams.get("name");
   if (!name) {
     return NextResponse.json({ ok: false, error: "缺少 name 参数。" }, { status: 400 });

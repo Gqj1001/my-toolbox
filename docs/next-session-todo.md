@@ -75,43 +75,31 @@
 
 ---
 
-## 3. 阶段 3：paper-analysis 接入统一学生 API（1 天）
+## ~~3. 阶段 3：paper-analysis 接入统一学生 API~~ ✅ **已完成（2026-10）**
 
-**背景**：`0014` 迁移已执行、`/api/students` 已上线（阶段 2 第 3 步完成）。
-现在要把 paper-analysis 从 localStorage 搬上来。
+**做法**（`public/tools/paper-analysis/js/app.js`）：
+- 新增 `CLOUD_STORE`（`loadAll / saveStudent / deleteStudent / deleteHistory / importHistory`），
+  只在**云端模式**（`NEXT_HOST`）启用；本机版 / 自建 `server.js` 的部署**行为不变**。
+- 四种写入集中到 `persistStudent / removeStudent / persistHistory / removeHistory`
+  四个入口，调用点不再自己 fetch（避免「同一件事两个来源」）。
+- 档案字段映射：本工具的 `cls` ↔ 表的 `class_name`，并同时写进 `extra.cls`。
+- 历史映射：`tool='paper'` / `title=examName` / `score` / `full_score=full`。
+- 首次进入：**弹窗问用户**（上传 / 以后再说 / 别再问），上传后**保留 localStorage**；
+  只在「本机有数据 + 账号里还是空的」时才弹。
+- 导入幂等；**日期解析不出来的条数如实报出来**（`dateUnparsed`）。
 
-### 现状（诊断已完成）
+**日期归一化**：做了 **(a) 扩展解析器**（用户拍板的方案）——
+`parseDisplayDate()` 新增「`2026年10月7日` → `2026-10-07`」分支（用它自己的年份）。
+这是**有意改变行为**，`tests/date-input.test.mjs` 里那份老实现副本**保持原样**，
+新增一组「有意分歧」断言把差异钉住。
 
-- `public/tools/paper-analysis/js/app.js`：
-  - `K_STU = 'paper_analysis_students_v1'`、`K_HIST = 'paper_analysis_history_v1'`
-  - 档案：`{gender, grade, subject, teacher, manager, cls, attitude, updated}`
-  - 历史：`{text, date, examName, score, full, saved}`（**带分数**，feedback 的历史没有）
-- **math-plan 没有任何存储**（刷新即丢），它的情况见第 4 条。
+**顺带补的接口**：`DELETE /api/students?id=<historyId>` —— 原来只有
+`/api/feedback/data` 支持删单条历史，统一接口这边缺（paper 的「删一条」需要它）。
 
-### 要做
-
-1. 学生 CRUD 走 `/api/students`（**用合并语义的 upsert**，POST 只发变化的字段）。
-2. 历史走 `/api/students` 的 `op:"import"`（幂等：重复跑 `inserted:0/skipped:N`）。
-3. **首次迁移必须弹窗确认，不静默上传**（真实学生姓名，用户要知道自己在做什么）。
-   给三个选项：上传 / 暂不 / 以后再说；上传后**保留** localStorage 作后悔药。
-4. ⚠️ **`date` 归一化（必须先做，否则日期静默变空）**：
-   paper 的 `examDate` 默认填 **「2026年10月7日」**，而
-   `src/lib/date-input.ts` 的 `parseDisplayDate()` **解析不了带「年」的格式**（正则里没有）→ 返回 `null`。
-   已在 `tests/date-input.test.mjs` 与 `students-unified.test.mjs` 留痕（`dateUnparsed` 会数出来）。
-   **三个选择（需用户拍板）**：
-   - (a) 扩展解析器支持「年月日」← **推荐**
-   - (b) 迁移前在前端归一化成「10月7日」
-   - (c) 两者都做 ← 也推荐
-   ⚠️ (a) 是**行为变更**，会让 `tests/date-input.test.mjs` 里那份「老实现逐字副本」
-   明确变红 —— **那正是它存在的意义**（提醒你这次是故意改行为），
-   改的时候要同步更新那个文件并说明原因。
-5. **边界**：本轮只改 `public/tools/paper-analysis/js/app.js` 的**数据读写部分**，
-   不动 UI 结构、样式、业务逻辑（用户明确约束）。
-
-### 测试
-
-新增 `tests/paper-analysis-students.test.mjs`：档案往返、历史导入幂等、
-跨账号隔离、**日期解析失败的条数被如实报告**。
+**测试**：新增 `tests/paper-analysis-students.test.mjs`（**27 项**，全绿）：
+档案往返、合并语义（只发 grade 时 `class_name`/`extra` 不能被清）、
+历史导入幂等、`tool/title/score/full_score` 映射、日期归一化、
+`dateUnparsed` 如实报告、跨账号隔离、`DELETE ?id=` 不被 25 秒缓存"复活"、`DELETE ?name=` 连带历史。
 
 ---
 

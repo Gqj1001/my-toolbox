@@ -249,6 +249,31 @@
   </div>
 </div>
 
+<!-- 首次迁移本机数据到账号（阶段3：统一学生 API）
+     ⚠️ 只在云端模式下、且发现本机有旧数据时弹出。**绝不静默上传**：
+        学生姓名是真实信息，必须老师自己确认。 -->
+<div class="mask" id="maskMigrate">
+  <div class="modal" style="max-width:520px">
+    <h3>📤 把本机数据保存到你的账号</h3>
+    <div class="mbody">
+      <p class="tip" style="margin-top:0">
+        这台电脑的浏览器里存着<b>以前用这个工具留下的数据</b>。
+        保存到账号后，换电脑、换浏览器都能看到，也不会因为清缓存而丢。
+      </p>
+      <div id="migrateSummary" class="info" style="margin:10px 0"></div>
+      <p class="tip">
+        <b>原始数据会保留在本机</b>（万一想反悔还在）。
+        保存后，这个工具就改为直接读写你账号里的 student 档案与历史记录。
+      </p>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-gh btn-sm" id="btnMigrateLater">以后再说</button>
+      <button class="btn btn-gh btn-sm" id="btnMigrateSkip">不用了，别再问</button>
+      <button class="btn btn-pri btn-sm" id="btnMigrateGo">上传到我的账号</button>
+    </div>
+  </div>
+</div>
+
 <script src="js/kp-dict.js"></script>
 <script src="js/knowledge-classifier.js"></script>
 <script src="js/paper-parser.js"></script>

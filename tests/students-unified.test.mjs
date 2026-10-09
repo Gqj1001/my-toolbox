@@ -28,12 +28,26 @@ const BASELINE = `${CWD}\\tests\\_students-baseline.json`;
 
 const { record, summary } = makeRecorder();
 
-/** 逐字段比对：老字段**一个都不能少**，且值必须与基线一致（id/saved 这种非确定性字段只比类型） */
+/** `VOLATILE_FIELDS` 的值跳过比对，但**类型**必须验 ——
+ *  否则「跳过了」等于「完全不管了」，注释里那句「只验类型」就是空话。 */
+function badVolatileType(k, v) {
+  if (k === "id") return !(typeof v === "number" && Number.isFinite(v));
+  if (k === "saved") return !(typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v));
+  if (k === "updated") return !(typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v));
+  return false;
+}
+
+/** 逐字段比对：老字段**一个都不能少**，且值必须与基线一致
+ *  （id/saved/updated 这种非确定性字段只比类型） */
 function diffFields(label, before, after, fields, rec) {
-  const missing = [], changed = [];
+  const missing = [], changed = [], badType = [];
   for (const k of fields) {
     if (!(k in (after || {}))) { missing.push(k); continue; }
-    if (VOLATILE_FIELDS.has(k)) continue;   // 值跳过比对，但"在不在"上面已经查过
+    if (VOLATILE_FIELDS.has(k)) {
+      // 值不比对，但类型要验（空串 / undefined 也算类型不对）
+      if (badVolatileType(k, after[k])) badType.push(`${k}=${JSON.stringify(after[k])}`);
+      continue;
+    }
     if (JSON.stringify(before?.[k]) !== JSON.stringify(after?.[k])) {
       changed.push(`${k}: ${JSON.stringify(before?.[k])} → ${JSON.stringify(after?.[k])}`);
     }
@@ -42,7 +56,9 @@ function diffFields(label, before, after, fields, rec) {
     missing.length ? `缺失=[${missing.join(",")}]` : "");
   const stableCount = fields.length - fields.filter((k) => VOLATILE_FIELDS.has(k)).length;
   rec(`★红线1 ${label}：老字段的值与基线逐字节一致（${stableCount} 个稳定字段）`, changed.length === 0,
-    changed.length ? changed.join(" | ") : `（id/saved 为非确定性字段，只验类型）`);
+    changed.length ? changed.join(" | ") : `（${[...VOLATILE_FIELDS].join("/")} 为非确定性字段，只验类型）`);
+  rec(`★红线1 ${label}：非确定性字段的类型仍然正确（${[...VOLATILE_FIELDS].join("/")}）`,
+    badType.length === 0, badType.length ? badType.join(" | ") : "");
 }
 
 let srv = null;
@@ -303,15 +319,13 @@ try {
   // 第 4 组：import 幂等（多次调用结果一致）
   // ================================================================
   const importItems = [
-    // ⚠️ 用 `10月7日`（解析器支持的那种），**不要**用 `2026年10月7日` ——
-    //    后者解析器不支持（正则里没有「年」），会返回 null。
-    //    这条差异本身有诊断价值（见本组末尾的断言）：paper 的
-    //    `examDate` 默认填的是「2026年10月7日」，**正好是解析不了的那一类**。
+    // ⚠️ `10月7日` 与 `2026年10月7日` 现在**都**能解析（阶段3 给 parseDisplayDate
+    //    补了「年月日」分支 —— paper 的 examDate 默认就是后者的形状）。
     { student_name: MERGE, text: "导入记录-A", date: "10月7日", tool: "paper",
       title: "深圳市一模", score: 86, full_score: 150, subject: "math" },
     { student_name: MERGE, text: "导入记录-B", date: "10-20", tool: "paper",
       title: "周测", score: 90, full_score: 150, subject: "math" },
-    // 这两条日期解析不出来 → 必须被如实报告（不静默丢）
+    // 这条日期解析不出来 → 必须被如实报告（不静默丢）
     { student_name: MERGE, text: "导入记录-C", date: "周三", tool: "paper",
       title: "日期无法识别", score: 70, full_score: 150, subject: "math" },
     { student_name: MERGE, text: "导入记录-D", date: "2026年10月7日", tool: "paper",
@@ -323,10 +337,14 @@ try {
     imp1b?.ok === true && imp1b.inserted === 4 && imp1b.skipped === 0,
     JSON.stringify(imp1b));
   record("★import 如实报告「日期解析不出来」的条数（不静默丢）",
-    imp1b?.dateUnparsed === 2,
-    `dateUnparsed=${imp1b?.dateUnparsed}（「周三」与「2026年10月7日」都解析不了）`);
-  record("★诊断留痕：paper 的 examDate 默认格式「2026年10月7日」当前**解析不了**",
-    imp1b?.dateUnparsed >= 1, "阶段3 迁移时必须处理（可先归一化再导入）");
+    imp1b?.dateUnparsed === 1,
+    `dateUnparsed=${imp1b?.dateUnparsed}（只有「周三」解析不了；「2026年10月7日」阶段3 起已支持）`);
+  // ⚠️ 这条原来钉的是「paper 的默认格式解析不了」（阶段3 的待办）。
+  //    阶段3 已经补上「年月日」分支，所以断言**反过来**：它现在必须能解析。
+  //    在 date-input.test.mjs 里有更完整的一组（新老实现的有意分歧）。
+  record("★paper 的 examDate 默认格式「2026年10月7日」**现在能解析**（阶段3 已处理）",
+    imp1b?.dateUnparsed === 1,
+    `dateUnparsed=${imp1b?.dateUnparsed}（若变成 2，说明「年月日」支持被弄坏了）`);
 
   const imp2 = await studentsPost({ op: "import", items: importItems });
   const imp2b = await imp2.json().catch(() => null);

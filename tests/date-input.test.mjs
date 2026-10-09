@@ -31,7 +31,11 @@ const { record, summary } = makeRecorder();
    老实现：从 src/app/api/feedback/data/route.ts 搬移**之前**的逐字副本
    --------------------------------------------------------------------------
    ⚠️ 这是本测试的「参照物」，**不要**为了让它跟新实现一致而修改它。
-      它就是「搬移前线上跑的那份代码」。两边不一致 = 搬移改变了行为 = 测试该红。
+      它就是「搬移前线上跑的那份代码」。两边不一致 = 行为被改过。
+   ⚠️ **2026-10（阶段3）有意改了行为**：新实现多了「带年份的中文写法」
+      （`2026年10月7日` → `2026-10-07`）。paper-analysis 的考试日期默认就是这个写法，
+      老实现返回 null → 迁移到 feedback_history.date 时日期会**静默变空**。
+      这份老副本**依然不动**，改动体现在下面「A2. 有意分歧」那一组断言里。
    ========================================================================== */
 function parseDisplayDateOLD(input) {
   const raw = String(input ?? "").trim();
@@ -82,6 +86,29 @@ const CASES = [
   // ---- 像但不是 ----
   "周三", "abc", "10月", "10", "-3", "10-", "10--3", "2026-1-1", "2026/10/03",
   "2026-10-03T00:00:00", "3.16-20", "4/24", "10月3日（周三）", "约10月3日",
+];
+
+/**
+ * ★ 2026-10 新增、**有意与老实现分歧**的输入（阶段3 的前置改动）
+ *
+ * 这些就是 paper-analysis「考试日期」输入框的默认形状。
+ * 老实现只认 `10月3日`（没有年份）→ 带年份一律 null → 迁移时日期**静默变空**。
+ * 新实现补上带年份的分支，**并用它自己的年份**。
+ */
+const CASES_NEW_ONLY = [
+  ["2026年10月7日", "2026-10-07"],
+  ["2026年10月7", "2026-10-07"],
+  ["2026 年 10 月 7 日", "2026-10-07"],
+  ["2026年1月1日", "2026-01-01"],
+  ["2026年12月31日", "2026-12-31"],
+  ["1999年2月28日", "1999-02-28"],
+  // 越界仍然必须是 null（不能因为「带了年份」就放行）
+  ["2026年13月1日", null],
+  ["2026年10月32日", null],
+  ["2026年0月5日", null],
+  ["2026年10月0日", null],
+  // 不完整的年月写法不认（避免误判）
+  ["2026年10月", null],
 ];
 
 /* ==========================================================================
@@ -139,6 +166,27 @@ try {
         : "（全部一致）");
     // 打印明细，方便人工核对边界
     record("对照明细（供人工核对边界）", true, "\n" + oldVsNew.join("\n"));
+
+    // ---------------------------------------------------------------- A2. 有意分歧（2026-10 新增）
+    // 老实现对「带年份的中文写法」一律返回 null；新实现必须给出正确 ISO。
+    // ⚠️ 这一组红 = 「年月日」支持被弄坏了（阶段3 的迁移会因此**静默丢日期**）。
+    {
+      const bad = [];
+      for (const [inp, exp] of CASES_NEW_ONLY) {
+        const newR = await (await fetch(
+          `${DEBUG_URL}?input=${encodeURIComponent(inp)}`,
+          { headers: { "x-debug-token": DEBUG_TOKEN, cookie } },
+        )).json().then((b) => b?.result ?? null).catch(() => "<请求失败>");
+        if (newR !== exp) bad.push(`${JSON.stringify(inp)}: 期望${JSON.stringify(exp)} 实际${JSON.stringify(newR)}`);
+        // 顺带确认「老实现确实做不到」——这正是这次改行为的理由
+        const oldR = parseDisplayDateOLD(inp);
+        if (exp !== null && oldR !== null) {
+          bad.push(`${JSON.stringify(inp)}: 老实现也认（${JSON.stringify(oldR)}）→ 说明这条不该归入「新增」`);
+        }
+      }
+      record(`★有意分歧：${CASES_NEW_ONLY.length} 个「年月日」输入按新契约解析（老实现做不到）`,
+        bad.length === 0, bad.length ? bad.join(" | ") : "（含越界仍为 null 的用例）");
+    }
 
     // 顺带钉住几个「契约」值，防止两边一起错
     const expect = {
@@ -214,6 +262,30 @@ try {
   }
   record(`★端到端：${E2E.length} 个日期输入，写库后的 date 列与老实现算出的值完全一致`,
     e2eBad.length === 0, e2eBad.length ? e2eBad.join(" | ") : "（含越界/空/非日期 → null 的用例）");
+
+  // ---------------------------------------------------------------- B2. 端到端：新增的「年月日」写法
+  // ⚠️ 这一组**不能**再和 parseDisplayDateOLD 比 —— 它就是要和老实现不一样。
+  //    期望值写死，证明「带年份的日期真的落进库里了」，而不是静默变 null。
+  const E2E_NEW = [
+    ["2026年10月7日", "2026-10-07", "e2e-cn-year"],
+    ["2026年1月1日", "2026-01-01", "e2e-cn-year-jan1"],
+    ["2026年12月31日", "2026-12-31", "e2e-cn-year-dec31"],
+    ["2026年13月1日", null, "e2e-cn-year-bad-month"],
+  ];
+  const e2eNewBad = [];
+  for (const [input, expected, label] of E2E_NEW) {
+    const { status, storedDate } = await postAndReadBack(input, label);
+    if (status !== 200 || storedDate !== expected) {
+      e2eNewBad.push(`${JSON.stringify(input)} → 库里=${JSON.stringify(storedDate)} 期望=${JSON.stringify(expected)} status=${status}`);
+    }
+    // 顺带留痕：老实现对这个输入是 null，所以旧代码搬过去会**丢日期**
+    const oldR = parseDisplayDateOLD(input);
+    if (expected !== null && oldR !== null) {
+      e2eNewBad.push(`${JSON.stringify(input)}: 老实现也认（${JSON.stringify(oldR)}）→ 这条不该在「新增」组`);
+    }
+  }
+  record(`★端到端：${E2E_NEW.length} 个「年月日」写法真的落进 date 列（老实现会丢成 null）`,
+    e2eNewBad.length === 0, e2eNewBad.length ? e2eNewBad.join(" | ") : "（含越界仍为 null 的用例）");
 
   // ---------------------------------------------------------------- C. 已知问题（记录，不断言 500）
   // `2026-13-45` 这种非法 ISO 会被**原样写库**，再由 PostgreSQL 拒绝。

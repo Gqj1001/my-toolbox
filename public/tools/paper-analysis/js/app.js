@@ -17,6 +17,223 @@ const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, m => ({'&':'&amp;
 const num = x => { const v = parseFloat(x); return isNaN(v) ? 0 : v; };
 const round2 = x => Math.round(num(x) * 100) / 100;
 
+/* ==========================================================================
+   阶段3：统一学生 API（/api/students）
+   --------------------------------------------------------------------------
+   为什么要有这一层：以前学生档案与历史只存在**本机浏览器** localStorage ——
+   换台电脑就没了、清缓存就没了，而且三个工具各存各的。0014 迁移之后
+   全站共用 `feedback_students` / `feedback_history` 两张表，接口是 `/api/students`。
+
+   ⚠️ **写入必须用合并语义的 upsert**（POST 只发变化的字段）：
+      0014 之后同一行装了三个工具的字段，feedback 那条老路径是**整行覆盖**，
+      会把别家工具的字段静默清空。`/api/students` 就是为合并语义做的。
+
+   ⚠️ 工具专属字段（这里的 `cls`）进 `extra` jsonb，**不要**去改表结构。
+
+   ⚠️ 只在**云端模式**（NEXT_HOST）启用。本机版 / 自建 server.js 的部署
+      保持不变（那边没有 /api/students）。见 CLOUD_STORE.enabled。
+   ========================================================================== */
+const K_SKIP_MIGRATE = 'paper_analysis_skip_migrate_v1';
+
+const CLOUD_STORE = {
+  enabled: false,        // detectServer() 成功且是本站部署时才打开
+
+  /** 读取全部档案（+历史） */
+  async loadAll(){
+    const d = await apiFetch('/api/students?withHistory=1');
+    if(!d || !d.ok) throw new Error('读取失败');
+    return { students: d.students || {}, history: d.history || {} };
+  },
+
+  /** 保存一位学生的档案（合并语义） */
+  async saveStudent(name, s){
+    return apiFetch('/api/students', {
+      method:'POST',
+      body:{
+        name,
+        gender: s.gender || '',
+        grade: s.grade || '',
+        subject: s.subject || '',
+        teacher: s.teacher || '',
+        manager: s.manager || '',
+        class_name: s.cls || '',
+        attitude: s.attitude || '',
+        // 工具专属字段进 extra；⚠️ 必须是对象，不能是 null / 数组（0014 有 CHECK 约束）
+        extra: { cls: s.cls || '' },
+      },
+    });
+  },
+
+  /** 删除一位学生（连同历史） */
+  async deleteStudent(name){
+    return apiFetch('/api/students?name=' + encodeURIComponent(name), { method:'DELETE' });
+  },
+
+  /** 删除**单条**历史记录（阶段3 给 /api/students 补的 `?id=` 分支） */
+  async deleteHistory(id){
+    return apiFetch('/api/students?id=' + encodeURIComponent(id), { method:'DELETE' });
+  },
+
+  /** 批量导入考试记录（幂等：重复跑返回 inserted:0 / skipped:N） */
+  async importHistory(items){
+    if(!items || !items.length) return { inserted:0, skipped:0, dateUnparsed:0 };
+    return apiFetch('/api/students', { method:'POST', body:{ op:'import', items } });
+  },
+};
+
+/** 云端档案行 → 本工具内部的档案形状（本工具的字段名叫 `cls`，表里叫 `class_name`） */
+function studentFromCloud(row){
+  return {
+    gender: row.gender || '',
+    grade: row.grade || '',
+    subject: row.subject || '',
+    teacher: row.teacher || '',
+    manager: row.manager || '',
+    cls: row.class_name || (row.extra && row.extra.cls) || '',
+    attitude: row.attitude || '',
+    updated: row.updated || '',
+  };
+}
+
+/** 云端历史行 → 本工具内部的形状。
+ *  ⚠️ 映射关系（0014 加的列就是为这个准备的）：
+ *      tool='paper' / title=examName / score=score / full_score=full */
+function historyFromCloud(row){
+  return {
+    text: row.text || '',
+    // `date` 在云端已经被格式化成「10月7日」这种给人看的写法（feedback-db 的
+    // formatDisplayDate）——与本工具原来的 localStorage 形状一致，直接复用即可。
+    date: row.date || '',
+    examName: row.title || '',
+    score: row.score,
+    full: row.fullScore,
+    saved: row.saved || '',
+    cloudId: row.id,
+  };
+}
+
+/** 本工具的历史 → 导入接口要的形状 */
+function historyToImport(name, h){
+  return {
+    student_name: name,
+    text: h.text,
+    date: h.date,               // 服务端用同一个 parseDisplayDate 解析
+    tool: 'paper',
+    title: h.examName || '',
+    score: (h.score === '' || h.score == null) ? null : Number(h.score),
+    full_score: (h.full === '' || h.full == null) ? null : Number(h.full),
+  };
+}
+
+/** 本机是否存着「值得迁移」的旧数据 */
+function localLegacy(){
+  const stu = loadJSON(K_STU, {}) || {};
+  const hist = loadJSON(K_HIST, {}) || {};
+  const stuN = Object.keys(stu).length;
+  const histN = Object.values(hist).reduce((a, l) => a + (Array.isArray(l) ? l.length : 0), 0);
+  return { stu, hist, stuN, histN, any: stuN > 0 || histN > 0 };
+}
+
+/**
+ * 首次进入时，问用户要不要把本机旧数据上传到账号。
+ *
+ * ⚠️ **绝不静默上传**（用户明确要求）：学生姓名是真实信息，老师必须自己确认。
+ * ⚠️ 上传后**保留本机数据**作后悔药（不删 localStorage）。
+ * ⚠️ 日期解析不出来的条数**如实报出来**，不静默丢。
+ */
+function maybeOfferMigration(){
+  if(!CLOUD_STORE.enabled) return;
+  let skipped = false;
+  try{ skipped = localStorage.getItem(K_SKIP_MIGRATE) === '1'; }catch(e){}
+  if(skipped) return;
+
+  const legacy = localLegacy();
+  if(!legacy.any) return;
+
+  const box = $('#migrateSummary');
+  if(box){
+    box.innerHTML = '本机现有：<b>' + legacy.stuN + '</b> 位学生档案、<b>' + legacy.histN + '</b> 条历史报告。';
+  }
+  const m = $('#maskMigrate');
+  if(m) m.classList.add('on');
+}
+
+function bindMigrateDialog(){
+  const close = () => { const m = $('#maskMigrate'); if(m) m.classList.remove('on'); };
+  const later = $('#btnMigrateLater');
+  if(later) later.onclick = close;   // 下次再问
+  const skip = $('#btnMigrateSkip');
+  if(skip) skip.onclick = () => {
+    try{ localStorage.setItem(K_SKIP_MIGRATE, '1'); }catch(e){}
+    close();
+    toast('好的，以后不再询问');
+  };
+  const go = $('#btnMigrateGo');
+  if(go) go.onclick = async () => {
+    go.disabled = true;
+    const old = go.textContent;
+    go.textContent = '正在上传…';
+    try{
+      const r = await migrateLocalToCloud();
+      close();
+      toast('已保存到账号：' + r.stuOk + ' 位学生、' + r.ins + ' 条历史'
+        + (r.dateUnparsed ? '（有 ' + r.dateUnparsed + ' 条日期没认出来，已按空日期保存）' : ''), 5200);
+      await loadFromCloud();
+    }catch(e){
+      toast('上传失败：' + (e && e.message ? e.message : e), 4200);
+    }finally{
+      go.disabled = false;
+      go.textContent = old;
+    }
+  };
+}
+
+/** 真的执行迁移；返回统计（供提示语使用） */
+async function migrateLocalToCloud(){
+  const legacy = localLegacy();
+  let stuOk = 0, stuFail = 0;
+
+  // ① 档案：逐个 upsert（合并语义，只发本工具拥有的字段）
+  for(const name of Object.keys(legacy.stu)){
+    try{ await CLOUD_STORE.saveStudent(name, legacy.stu[name]); stuOk++; }
+    catch(e){ stuFail++; }
+  }
+
+  // ② 历史：一次批量导入（接口幂等，重复点不会造重复数据）
+  const items = [];
+  for(const name of Object.keys(legacy.hist)){
+    const list = Array.isArray(legacy.hist[name]) ? legacy.hist[name] : [];
+    for(const h of list){
+      if(!h || !h.text) continue;        // 没有正文的没法用（接口也会跳过）
+      items.push(historyToImport(name, h));
+    }
+  }
+  let ins = 0, skipped = 0, dateUnparsed = 0;
+  if(items.length){
+    const d = await CLOUD_STORE.importHistory(items);
+    ins = d.inserted || 0;
+    skipped = d.skipped || 0;
+    dateUnparsed = d.dateUnparsed || 0;
+  }
+  // 档案失败要如实说，不能只报成功的
+  if(stuFail) toast('有 ' + stuFail + ' 位学生的档案没能保存', 3600);
+  return { stuOk, stuFail, ins, skipped, dateUnparsed };
+}
+
+/** 从云端拉全量（档案 + 历史），覆盖内存态并重绘 */
+async function loadFromCloud(){
+  const d = await CLOUD_STORE.loadAll();
+  students = {};
+  for(const [name, row] of Object.entries(d.students || {})) students[name] = studentFromCloud(row);
+  history = {};
+  for(const [name, list] of Object.entries(d.history || {})){
+    history[name] = (Array.isArray(list) ? list : []).map(historyFromCloud);
+  }
+  renderStuChips();
+  renderHist();
+  return { stuN: Object.keys(students).length, histN: Object.values(history).reduce((a, l) => a + l.length, 0) };
+}
+
 /* ---------- 存储 ---------- */
 const K_PAPER = 'paper_analysis_paper_v1';
 const K_STU   = 'paper_analysis_students_v1';
@@ -1038,6 +1255,65 @@ function exportWord(){
 /* ==========================================================================
    学生档案与历史
    ========================================================================== */
+/* ---------- 档案/历史的读写入口（云端走 API，本机走 localStorage） ----------
+   ⚠️ 四种写法（增改档案 / 删档案 / 存历史 / 删历史）集中在这里，
+      调用点只调它们。**不要让调用点自己去 fetch** —— 那会造成
+      「同一件事有两个来源」，正是本项目反复踩过的坑。 */
+
+/** 保存/更新一位学生的档案 */
+async function persistStudent(name, s){
+  if(CLOUD_STORE.enabled){
+    await CLOUD_STORE.saveStudent(name, s);   // 合并语义：只发本工具的字段
+    return;
+  }
+  students[name] = s;
+  saveJSON(K_STU, students);
+}
+
+/** 删除一位学生（连带历史） */
+async function removeStudent(name){
+  if(CLOUD_STORE.enabled){
+    await CLOUD_STORE.deleteStudent(name);
+    delete students[name];
+    delete history[name];
+    return;
+  }
+  delete students[name]; delete history[name];
+  saveJSON(K_STU, students); saveJSON(K_HIST, history);
+}
+
+/** 存一条历史报告。
+ *  ⚠️ 云端用 `op:'import'`（幂等），存完**重新拉一次**，让列表拿到真实 id ——
+ *     否则「删一条」没有 id 可用。 */
+async function persistHistory(name, entry){
+  if(CLOUD_STORE.enabled){
+    const d = await CLOUD_STORE.importHistory([historyToImport(name, entry)]);
+    await loadFromCloud();
+    return d;
+  }
+  history[name] = history[name] || [];
+  history[name].push(entry);
+  saveJSON(K_HIST, history);
+  return { inserted: 1 };
+}
+
+/** 删除某学生的一条历史（按下标；云端用它的 id） */
+async function removeHistory(name, idx){
+  if(CLOUD_STORE.enabled){
+    const h = (history[name] || [])[idx];
+    if(!h || !h.cloudId){
+      toast('这条记录还没有云端编号，请刷新后重试', 3200);
+      return;
+    }
+    await CLOUD_STORE.deleteHistory(h.cloudId);
+    history[name].splice(idx, 1);
+    return;
+  }
+  if(!history[name]) return;
+  history[name].splice(idx, 1);
+  saveJSON(K_HIST, history);
+}
+
 function renderStuChips(){
   const names = Object.keys(students);
   const box = $('#stuChips');
@@ -1049,13 +1325,14 @@ function renderStuChips(){
     if(e.target.dataset.del) return;
     pickStudent(el.dataset.stu);
   });
-  $$('#stuChips [data-del]').forEach(x => x.onclick = e => {
+  $$('#stuChips [data-del]').forEach(x => x.onclick = async e => {
     e.stopPropagation();
     const n = x.dataset.del;
     if(confirm('删除「' + n + '」的档案与历史记录？')){
-      delete students[n]; delete history[n];
-      saveJSON(K_STU, students); saveJSON(K_HIST, history);
-      renderStuChips(); renderHist(); toast('已删除');
+      try{
+        await removeStudent(n);
+        renderStuChips(); renderHist(); toast('已删除');
+      }catch(err){ toast('删除失败：' + (err && err.message ? err.message : err), 3600); }
     }
   });
   const b = $('#btnSaveStu'); if(b) b.onclick = saveCurrentStudent;
@@ -1075,14 +1352,19 @@ function pickStudent(n){
 function saveCurrentStudent(){
   const n = val('stuName');
   if(!n){ toast('请先填学生姓名'); return; }
-  students[n] = {
+  const rec = {
     gender: val('stuGender'), grade: val('stuGrade'), subject: val('stuSubject'),
     teacher: val('stuTeacher'), manager: val('stuManager'), cls: val('stuClass'),
     attitude: val('stuAttitude'),
     updated: new Date().toISOString().slice(0,10)
   };
-  saveJSON(K_STU, students);
-  renderStuChips(); toast('已保存「' + n + '」的档案');
+  // 先写本地内存（界面立刻正确），再落盘到该去的地方（云端 / 本机）
+  students[n] = rec;
+  renderStuChips();
+  Promise.resolve()
+    .then(() => persistStudent(n, rec))
+    .then(() => toast('已保存「' + n + '」的档案'))
+    .catch(err => toast('保存失败：' + (err && err.message ? err.message : err), 4000));
 }
 function renderHist(){
   const n = val('stuName');
@@ -1107,10 +1389,12 @@ function renderHist(){
     $('#stChars').textContent = h.text.length;
     toast('已载入历史报告，可继续修改');
   });
-  $$('#histList [data-dh]').forEach(b => b.onclick = () => {
+  $$('#histList [data-dh]').forEach(b => b.onclick = async () => {
     const n2 = val('stuName'); if(!history[n2]) return;
-    history[n2].splice(+b.dataset.dh, 1);
-    saveJSON(K_HIST, history); renderHist();
+    try{
+      await removeHistory(n2, +b.dataset.dh);
+      renderHist();
+    }catch(err){ toast('删除失败：' + (err && err.message ? err.message : err), 3600); }
   });
   $$('#histList [data-more]').forEach(b => b.onclick = () => {
     const t = document.querySelector(`#histList .t[data-t="${b.dataset.more}"]`);
@@ -1124,13 +1408,21 @@ function saveToHistory(){
   if(!n){ toast('请先填学生姓名'); return; }
   if(!txt){ toast('还没有生成报告'); return; }
   const ctx = collectCtx();
-  history[n] = history[n] || [];
-  history[n].push({
+  const entry = {
     text: txt, date: val('examDate'), examName: val('examName'),
     score: ctx.score, full: ctx.full, saved: new Date().toISOString()
-  });
-  saveJSON(K_HIST, history);
-  renderHist(); toast('已存入「' + n + '」的记录（共 ' + history[n].length + ' 条）');
+  };
+  // 先入本地内存并重绘，再落盘（云端模式下 persistHistory 会重新拉一次拿到真实 id）
+  history[n] = history[n] || [];
+  history[n].push(entry);
+  renderHist();
+  Promise.resolve()
+    .then(() => persistHistory(n, entry))
+    .then(() => {
+      renderHist();
+      toast('已存入「' + n + '」的记录（共 ' + history[n].length + ' 条）');
+    })
+    .catch(err => toast('保存失败：' + (err && err.message ? err.message : err), 4400));
 }
 
 /* ==========================================================================
@@ -1449,23 +1741,42 @@ function init(){
   const now = new Date();
   $('#examDate').value = now.getFullYear() + '年' + (now.getMonth()+1) + '月' + now.getDate() + '日';
 
+  // 先把本机数据读进来（**同步**，界面立刻有内容，不等网络）
   students = loadJSON(K_STU, {});
   history  = loadJSON(K_HIST, {});
+  const hadLocal = Object.keys(students).length > 0
+    || Object.values(history).some(l => Array.isArray(l) && l.length);
 
   // 恢复上次粘贴的内容
   const saved = loadJSON(K_PAPER, null);
   if(saved && saved.text){ $('#paperPaste').value = saved.text; applyPaperMeta(saved.meta); }
 
   bind();
+  bindMigrateDialog();
   renderStuChips();
   renderHist();
   updateModeBadge();
   updateScoreTotal();
 
-  detectServer().then(isServer => {
+  detectServer().then(async isServer => {
     updateModeBadge();
     if(isServer && API.serverCfg && API.serverCfg.visionModel){
       $('#btnPhoto').title = '视觉模型：' + API.serverCfg.visionModel;
+    }
+    // 阶段3：只有**本站部署**才有 /api/students（自建 server.js 没有）
+    CLOUD_STORE.enabled = !!isServer && NEXT_HOST;
+    if(!CLOUD_STORE.enabled) return;
+
+    // 以账号里的数据为准（本机那份已经在上面画出来了，这里覆盖成云端真实数据）
+    try{
+      const n = await loadFromCloud();
+      if(hadLocal && n.histN === 0 && n.stuN === 0){
+        // 本机有数据、账号里还是空的 → 正是要问用户的时候
+        maybeOfferMigration();
+      }
+    }catch(e){
+      // 拉不到就继续用本机数据，但**明确告诉用户**（不静默）
+      toast('读取账号数据失败，暂时显示本机数据：' + (e && e.message ? e.message : e), 4600);
     }
   }).catch(()=>{});
 }

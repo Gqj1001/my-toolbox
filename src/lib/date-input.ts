@@ -10,18 +10,33 @@
  *   （feedback 的 `dateInput`、paper-analysis 的 `examDate`），
  *   而这两个工具都要往 `feedback_history.date` 里写。所以这套解析必须**只有一份**。
  *
- * 行为契约（**别改**，`tests/date-input.test.mjs` 用一份「老实现副本」逐条钉住了它）：
+ * 行为契约（`tests/date-input.test.mjs` 用一份「老实现副本」逐条钉住了它）：
  *   · `2026-10-03`      → 原样返回（正则匹配即通过，**不校验月/日是否合法**）
  *   · `10月3日` / `10月3` → 当年 + 该月日
  *   · `10-3` / `10/3` / `10.3` → 当年 + 该月日
+ *   · `2026年10月7日`    → `2026-10-07`（**2026-10 新增**，见下）
  *   · 月不在 1–12 或日不在 1–31 → `null`
  *   · 其它任何输入（`周三` / 空 / `abc` / 非字符串） → `null`
  *
- * ⚠️ **已知问题（本轮不修，见 docs/perf-notes.md「已知问题」）**：
+ * ⚠️ **`年月日` 是 2026-10 增加的、刻意改变行为的一项**（阶段3 接入统一学生 API 的前置）：
+ *    paper-analysis 的「考试日期」默认值就是 `2026年10月7日` 这种带年份的写法，
+ *    而老实现只认 `10月3日`（没有年份）→ 带年份的一律返回 `null`，
+ *    于是迁移到 `feedback_history.date` 时**日期会静默变空**（用户明确要求不许静默丢数据）。
+ *    所以这里补上带年份的分支；**带的年份用它自己的**，不再套当年。
+ *    `tests/date-input.test.mjs` 里那份老实现副本**仍然保持原样**，
+ *    并新增一组「老实现返回 null、新实现返回 ISO」的**有意分歧**断言 —— 那正是它存在的意义。
+ *
+ * ⚠️ **已知问题（仍然不修，见 docs/perf-notes.md「已知问题」）**：
  *    因为是「正则匹配即原样返回」，`2026-13-45` 这种**非法 ISO 也会被原样写库**，
  *    然后被 PostgreSQL 拒绝 → 整个请求 500。这是搬移**之前就存在**的行为，
- *    本轮刻意不动（用户明确要求行为零改动），将来单独修。
+ *    本轮**只动了 年月日 一件事**，刻意不顺手加范围校验（免得把一次行为变更搅成两次）。
  */
+
+/** 把解析出来的年月日拼成 `YYYY-MM-DD`；月/日越界返回 null */
+function toIso(year: number, m: number, d: number): string | null {
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  return `${year}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
 
 /** 用户输入的日期文本 → `YYYY-MM-DD`；无法解析时返回 `null`（该列可为空） */
 export function parseDisplayDate(input: unknown): string | null {
@@ -31,26 +46,17 @@ export function parseDisplayDate(input: unknown): string | null {
   // 已是 ISO
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
 
+  // 带年份的中文写法：`2026年10月7日` / `2026年10月7`（★ 2026-10 新增）
+  // ⚠️ 必须排在「不带年份」那条**前面**，否则 `年` 会被当成无关字符而匹配失败。
+  const cnY = raw.match(/^(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/);
+  if (cnY) return toIso(Number(cnY[1]), Number(cnY[2]), Number(cnY[3]));
+
   const year = new Date().getFullYear();
   const cn = raw.match(/^(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/);
-  if (cn) {
-    const m = Number(cn[1]);
-    const d = Number(cn[2]);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${year}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    }
-    return null;
-  }
+  if (cn) return toIso(year, Number(cn[1]), Number(cn[2]));
 
   const sep = raw.match(/^(\d{1,2})[-/.](\d{1,2})$/);
-  if (sep) {
-    const m = Number(sep[1]);
-    const d = Number(sep[2]);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${year}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    }
-    return null;
-  }
+  if (sep) return toIso(year, Number(sep[1]), Number(sep[2]));
 
   // 其它格式（如「周三」）不写入日期列，避免整条记录写入失败
   return null;
