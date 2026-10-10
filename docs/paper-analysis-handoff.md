@@ -141,8 +141,17 @@ tests/paper-score-report.test.mjs                      第二批·Word 报告链
 - **AI 建议段是 VIP 专属**：服务端 `requireVip()` 校验，401 未登录 / 403 非会员或封禁 /
   503 未配 Key / 502 上游失败。`AI_KEY` 只从 `process.env` 读，**绝不下发前端**，
   上游错误原文也不透传。
-- **视觉识别未启用**：DeepSeek 的 `deepseek-chat` 不支持图片输入。路由结构已完整，
-  配好 `AI_VISION_MODEL`（+ `AI_KEY`）即自动可用，**不需要改代码**。
+- ✅ **视觉识别（答题卡识别）线上已启用**（2026-10 实查线上 `/api/paper-analysis/mode`：
+  `config.visionModel = "deepseek-flash"`、`hasKey: true`）。DeepSeek 的 `deepseek-flash`
+  **支持图片输入**，所以不需要第三方多模态模型；配好 `AI_VISION_MODEL`（+ `AI_KEY`）即自动可用，
+  **不需要改代码**。
+  > ⚠️ 本文档旧版写「视觉识别未启用（deepseek-chat 不支持图片）」——**那句已过期**：
+  > ① `deepseek-chat` 确实不支持图片，但线上用的是 `deepseek-flash`（官方文档明确支持）；
+  > ② 用户已实机自测「符合预期」，并在 Vercel 配好了 `AI_VISION_MODEL`。
+  > 防回归测试见 `tests/vision-scores.test.mjs`（本地桩上游 + 分两阶段起服务，
+  > 专门钉「模型名不含 deepseek 就不能带 thinking」这条护栏）。
+  > ⚠️ 提醒：识别结果**必须人工核对**；模型看不清的题会**直接省略**，
+  > 所以「识别出 15 道题」≠「其余 5 道是 0 分」。
 - **legacy 脚本已忽略，不要再修**：`tests/*.legacy.mjs` 断言基于过期数据。
 - **不要碰 feedback 的任何文件**（`public/tools/feedback.html`、`src/app/admin/feedback-*` 等）。
 - **不要动 membership 系统**（`src/lib/membership*`、`user_roles`、升级/封禁逻辑）。
@@ -216,7 +225,8 @@ tests/paper-score-report.test.mjs                      第二批·Word 报告链
 
 ## 已知遗留问题
 
-1. **视觉识别未启用** —— 上传图片/拍照识别答题卡都返回友好降级提示，非功能性。
+1. ✅ **视觉识别（答题卡识别）已启用**（2026-10 实查线上 `config.visionModel = "deepseek-flash"`）——
+   本文件旧版写「未启用、返回降级提示」已过期。现补了防回归套件 `tests/vision-scores.test.mjs`。
 2. **九大学科未做** —— 试卷分析的学科适配目前以数学为主（模板、词典、归因规则）。
 3. **逐题常用值是"常用的一套"，不是某一年的真题** —— 北京卷等逐年会变，
    老师按当年卷子改一两道即可（改完合计会提示"与预设不一致"，是温和提示不是阻止）。
@@ -239,7 +249,8 @@ tests/paper-score-report.test.mjs                      第二批·Word 报告链
 **唯一待办**：线上用真实月考报告实测一遍（真实报告 docx 未入库，`模板-占位符.docx` 那条链路已覆盖）。
 
 后续可做方向（未排期，按需选）：
-- **视觉识别启用** —— 路由结构已完整，配好 `AI_VISION_MODEL`（+ `AI_KEY`）即自动可用，不需要改代码。
+- ~~**视觉识别启用**~~ —— ✅ **已在线上启用**（`AI_VISION_MODEL=deepseek-flash`，2026-10 实查）。
+  剩下的是「识别结果必须人工核对」这条使用口径，已在界面上与文档里写明。
 - **九大学科适配** —— 目前模板、词典、归因规则都以数学为主。
 - **（可选）逐年分值预设** —— 现在各卷面结构只带一套「常用」逐题值，逐年会变；
   若老师希望把某年的分值存下来复用，需要给预设加"自定义"能力（目前没有）。

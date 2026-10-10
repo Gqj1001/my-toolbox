@@ -128,6 +128,8 @@
 ## 3. ✅ vision-scores 启用态测试（**已完成 2026-10**）
 
 > 用户 2026-10 已实机自测「符合预期」；本轮按下面的清单把**防回归**补上了。
+> ✅ **线上已经启用**（2026-10 实查线上 `/api/paper-analysis/mode`：`config.visionModel = "deepseek-flash"`、
+> `hasKey: true`）—— 所以这条路径**已经在真实流量上跑着了**，防回归套件的价值也就落实了。
 > **做了什么**：新增 `tests/vision-scores.test.mjs` —— 起本地桩冒充 `{baseUrl}/chat/completions`，
 > 用 `AI_VISION_BASE_URL` 指过去（**产品代码一行没改**），并**分两阶段起服务**
 > （阶段① 不配 `AI_VISION_MODEL` → 验 503；阶段② 配 `deepseek-flash` + 桩 → 验其余 4 条）。
