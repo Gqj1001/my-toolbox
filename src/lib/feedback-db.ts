@@ -643,6 +643,31 @@ export async function getHistory(userId?: string): Promise<HistoryRow[]> {
   return softFail("反馈历史", () => cached(historyCache, uid, loadHistory));
 }
 
+/**
+ * **不缓存**的学生档案读取 —— 给「学员档案」页（`/dashboard`）用。
+ *
+ * ⚠️ 为什么档案页必须绕开缓存（2026-10 实测踩到）：
+ *    `getStudents()` 有 25 秒**进程内**缓存，而写入发生在**另一个请求**里
+ *    （Server Action / 另一个标签页 / 手机端）。`invalidateStudents()` 只清得掉
+ *    **同一个进程实例**里的那份；实测出现「表单提交成功、详情页显示得好好的，
+ *    但紧接着任何读接口都返回空」——最长 25 秒，症状就是**保存了却看不见**。
+ *    档案页是「以看为主」的页面，**正确性优先于省一次往返**，所以直接查库。
+ *
+ * ⚠️ 工具页（feedback / paper / math-plan）**继续用缓存的 `getStudents()`**：
+ *    它们的读写都在同一个页面会话里，写完会自己失效，缓存收益是实打实的。
+ *    不要为了"统一"把工具那边也改成直查 —— 那是把性能优化白白丢掉。
+ *
+ * ⚠️ `softFail` 与缓存版保持一致：查失败时返回空（不 500），且失败不落缓存（本来就不缓存）。
+ */
+export async function getStudentsFresh(): Promise<StudentRow[]> {
+  return softFail("学生档案（直读）", loadStudents);
+}
+
+/** 同上：**不缓存**的历史读取 */
+export async function getHistoryFresh(): Promise<HistoryRow[]> {
+  return softFail("反馈历史（直读）", loadHistory);
+}
+
 /** 实际查库（不含缓存）
  *
  *  ⚠️ 同 `loadStudents()`：**只加列，不动老列**，select 必须是单字面量字符串。

@@ -2,8 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   deleteStudentByName,
-  getHistory,
-  getStudents,
+  getHistoryFresh,
+  getStudentsFresh,
   historyByStudent,
   importHistory,
   invalidateHistory,
@@ -69,7 +69,16 @@ export async function GET(request: NextRequest) {
   const withHistory = sp.get("withHistory") === "1";
 
   try {
-    const rows = await getStudents(guard.userId);
+    // ⚠️ **用不缓存的直读**（`getStudentsFresh` / `getHistoryFresh`），不是带 25 秒 TTL 的
+    //    `getStudents()` / `getHistory()`。原因（2026-10 实测，很难查）：
+    //    这些写入口现在同时被 **Server Action**（学员档案页）调用，
+    //    Server Action 里调的 `invalidateStudents()` **清不掉 Route Handler 这边的那份缓存**
+    //    （两者不在同一个模块实例/执行上下文里传递失效信号）。
+    //    症状：档案页里刚新建的学生，页面**显示正常**（它读的是直读），
+    //    但 `/api/students` 返回 `count:0` —— 三个工具拉档案时**看不到这个学生**，
+    //    最长 25 秒，看起来就是「保存了但没生效」。
+    //    这个接口是三个工具读写学生档案的**唯一入口**，正确性优先于省一次往返。
+    const rows = await getStudentsFresh();
     // 复用 feedback 的装配函数：**同一份返回结构**，三个工具与将来的统一首页只认这一种形状。
     // （不要在别处再写一套 {姓名: {...}} 的拼装，那种"第二个来源"是这个项目踩过的坑。）
     const all = studentsByName(rows);
@@ -81,7 +90,7 @@ export async function GET(request: NextRequest) {
     };
 
     if (withHistory) {
-      const histRows = await getHistory(guard.userId);
+      const histRows = await getHistoryFresh();
       payload.history = historyByStudent(histRows);
     }
     if (name) {

@@ -31,9 +31,9 @@ export default function SiteHeader({ role, current }: { role: "admin" | "user"; 
           <Link href="/tools" className={linkClass("/tools")}>
             工具列表
           </Link>
-          {/* ⚠️ 「百宝箱」(/dashboard) 暂时**不放进导航**：它正在改造成「学员档案」页，
-              改造完成前从这里点进去只会看到一个和本页几乎一样的列表。
-              等学员档案上线后，在这里加回「学员档案」入口。 */}
+          <Link href="/dashboard" className={linkClass("/dashboard")}>
+            学员档案
+          </Link>
           {isAdmin ? (
             // prefetch={false}：减少「危险窗口」内的并发请求数，同时省掉多余的 RSC 预取。
             // 打开一个页面会并行预取十几个链接（/tools、/admin、/upgrade、每张工具卡片），

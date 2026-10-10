@@ -49,29 +49,25 @@
 - 顺手把 `students-unified` 里两条**写死数字**的断言改成**相对口径**
   （见「怎么验」——这正是 `dsh-work-guide.md` 坑 1 说的那种假红）。
 
-### ⚠️ 1b. 留下的两件（**不在本轮范围**）
+### 1b. `math-plan` 已登记为合法的历史归属（**已完成 2026-10**）
+
+- 迁移 **`0016_history_tool_allow_math_plan.sql`**：把 `feedback_history_tool_check`
+  从 `('feedback','paper')` 放开到 `('feedback','paper','math-plan')`。
+  **用户已在 Supabase SQL Editor 里执行过**（重复执行也安全，脚本是 drop if exists + add）。
+- 接口白名单 `ALLOWED_TOOLS` 同步加上 `"math-plan"`（`src/app/api/students/route.ts`）。
+  ⚠️ 两边**必须一致**：只改库 → 接口 400；只改代码 → 写库撞约束（23514）。
+  现在接口遇到约束没放开的情况会返回 **409 + 明确指向迁移文件名**（不再是一句「操作失败」）。
+- math-plan 顶栏加了「📥 存入档案」：**手动点**才把这一次方案写进该学生档案
+  （用户选的手动，避免生成十几次存出一堆垃圾）。正文含
+  【学情诊断】【提分目标】【课时安排】【逐次课表】【学习特点】，
+  并带 `title`（学段+「辅导方案」）与 `score/full_score`（供以后看趋势）。
+
+### ⚠️ 1c. 仍然留着的两件（**不在本轮范围**）
 
 | # | 事项 | 说明 |
 |---|---|---|
-| a | **math-plan 不写历史记录** | `feedback_history.tool` 的 CHECK 只允许 `('feedback','paper')`（`0014` 第 93 行）。想让 math-plan 也存「方案历史」，**必须先跑一条迁移**放宽约束，**再**改接口与前端 —— 两步缺一不可（只改接口会在写库时撞约束）。SQL 见下面「1c」。 |
-| b | 接口层的 `extra` 仍是整块替换 | 现在靠**每个工具自己**先读旧值再合并。将来若要根治，应当让服务端把 `extra` 也做成**按键合并**（或在 `buildStudentRow()` 里合并 `extra`），这样任何工具少写一句都不会踩别人。 |
-
-### 1c. 「方案历史」要用的迁移 SQL（**已写好，还没执行**）
-
-只在用户明确要做「方案历史」时，才让他去 **Supabase 的 SQL Editor** 里逐字跑：
-
-```sql
--- 把 feedback_history.tool 的合法值放开到 math-plan（0014 原本只允许 feedback/paper）
-alter table public.feedback_history drop constraint if exists feedback_history_tool_check;
-alter table public.feedback_history
-  add constraint feedback_history_tool_check
-  check (tool in ('feedback', 'paper', 'math-plan'));
-```
-
-⚠️ **跑完 SQL 只是第一步**，还要把 `src/app/api/students/route.ts` 里的
-`ALLOWED_TOOLS` 数组加上 `"math-plan"`，否则接口仍然拒绝。
-那条白名单是**故意**的：它防的是「没登记的工具被**静默标成 paper**」。
-两边都改完才通；只改一边要么写库撞约束、要么接口 400。
+| a | 接口层的 `extra` 仍是整块替换 | 现在靠**每个工具自己**先读旧值再合并。将来若要根治，应当让服务端把 `extra` 也做成**按键合并**（或在 `buildStudentRow()` 里合并 `extra`），这样任何工具少写一句都不会踩别人。 |
+| b | 学员档案还没有「按学情分析」 | 用户明说「现在只做管理」，**生成整体学情分析是以后的事**。现在只是把记录收集齐、能按学生看。 |
 
 ---
 
@@ -93,23 +89,36 @@ alter table public.feedback_history
 | 落点全部改到 `/tools` | `/` 首页、登录后、`/upgrade` 的「已是会员」、**非管理员被挡**（`?error=admin_required`）、管理员自我降级（`?error=self_demoted`）。以前这些落点都是 `/dashboard` |
 | 过渡期保护 | `/dashboard` **一行没动**，并加了一条临时断言「它仍可访问、不是空页」，避免改造期间被弄坏 |
 
-### ⬜ 下一步：百宝箱 = 学员档案管理（「能看又能改」）
+### ✅ 已完成：百宝箱 = 学员档案管理（2026-10）
 
-用户选的定位：**能看又能改** —— 不只是展示，还要能在档案页**新建学生 / 改年级校区教师 / 删除**。
+用户选的定位：**能看又能改**。已做：
 
-要做的（动手前先给用户页面结构方案）：
+| 做了什么 | 细节 |
+|---|---|
+| **名单页** | 学生列表（每人显示 年级/校区/教师 + 记录条数）+ 姓名搜索 + **新建学生** |
+| **详情页** `/dashboard?name=xxx` | 学生信息 + **全部记录**（按工具分组：辅导方案 / 试卷分析 / 课后反馈）+ 展开全文 |
+| **修改** | 每个字段配一个「改」勾选框：**勾了才提交**（勾上留空 = 明确清空）。⚠️ 不用「留空＝不改」——那样「清空校区」永远做不到 |
+| **删除** | 二次确认，明说「会连同三个工具里这个学生的记录一起删除」 |
+| **顶栏入口** | 加回「学员档案」（原来故意没放） |
+| **写入口** | `src/app/dashboard/archive-actions.ts`：三个 Server Action，**全部复用** `feedback-db` 的 `upsertStudent()` / `deleteStudentByName()`，不另写一套 |
 
-1. **名单页** `/dashboard`：学生列表 + 搜索 + 新建学生 + 删除；每人显示 年级/校区/教师/来源工具
-2. **详情页**：这位学生的基础信息 + **全部记录**（辅导方案 / 试卷分析 / 课后反馈 分组）
-3. 全部数据走**已有的** `/api/students` 与 `src/lib/feedback-db.ts`
-   ⚠️ **不要另写一套装配函数** —— `studentsByName()` / `historyByStudent()` 已经是唯一来源
-4. 顶栏加回「学员档案」入口（现在故意没放）
+#### ⚠️ 本轮踩到并修掉的三个真实 bug（都很难查，记录一下）
 
-> ⚠️ **一个必须先讲清的事实**：档案里的「记录」来自 `feedback_history` 表，
-> 而 **math-plan 目前不写历史**（`tool` 的 CHECK 只允许 `feedback`/`paper`）。
-> 所以档案页现在能收齐的是**试卷分析**和**课后反馈**，
-> 「辅导方案」那一路要先把历史打开（见本节 1c 的两步）。
-> 设计方案时必须先跟用户确认这一点，别让他以为「辅导方案也会出现在档案里」。
+1. **新建表单什么都没存进去**：`createStudent` 用了「修改」的解析器，而修改要求
+   `change_<字段>` 勾选框 —— 新建表单没有勾选框，于是三个字段**一个都没写**，
+   页面还跳转成功（静默失败）。→ 拆成 `newStudentPatch()` / `patchFromForm()` 两个解析器。
+2. **`/api/students` 读的是 25 秒缓存，看不到刚写的数据**：Server Action 里的
+   `invalidateStudents()` **清不掉 Route Handler 那份缓存**（不在同一个执行上下文里传失效信号）。
+   症状：档案页显示正常（它是直读），但 `/api/students` 返回 `count:0` ——
+   三个工具拉档案时看不到这个学生，最长 25 秒，看起来就是「保存了没生效」。
+   → 该接口与档案页**都改用 `getStudentsFresh()` / `getHistoryFresh()`（直读、不缓存）**。
+   工具页仍用缓存版（它们读写在同一会话里，写完自己失效，缓存收益是实打实的）。
+3. **构建期一行误导日志**：`/` 是静态预渲染 + 它 redirect 到 `/dashboard`，
+   于是构建期真的去查了一次库，抛出 "Dynamic server usage" 被 `softFail` 接住并打成
+   一行**像故障**的日志（构建结果其实是对的）。→ `/dashboard` 显式 `export const dynamic = "force-dynamic"`。
+
+> 测试：新增 `tests/archive-students.test.mjs`（17 项，真服务 + 真浏览器，含
+> 「不勾框不提交」「勾框才改」「删除连带记录」）。
 
 ---
 
