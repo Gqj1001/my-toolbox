@@ -14,6 +14,11 @@
  *   B. 端到端测试：真的 POST 一条历史（走 route.ts 的写路径），再从库里读回
  *      `date` 列，断言它就是老实现算出来的值。这组**不依赖调试口**，永远跑。
  *
+ * ★ 2026-10 第二批（修「非法日期 → 500」）新增两组：
+ *   A3/A4 与 B3 —— 见下面各自块注释。核心是「**有意分歧**」：
+ *   老实现放行的非法日期（`2026-13-45` / `2026-02-30` / `2月30日` / `0000-01-01`）
+ *   新实现一律返回 null；同时**反向防护**真的存在的日子（闰年、0001/9999 年）不被误伤。
+ *
  * 跑法：
  *   & "<bundled node>" tests\date-input.test.mjs
  * ⚠️ 它自己起 next start（端口 3000）并杀掉旧监听，别和其它真服务套件同时跑。
@@ -73,6 +78,9 @@ function parseDisplayDateOLD(input) {
 const CASES = [
   // ---- 正常：ISO ----
   "2026-10-03", "2026-01-01", "2026-12-31", "1999-02-28",
+  // ★ 2026-10 新增的边界（真日历校验**不能误伤**这些真的存在的日子）
+  //   0001-01-01 / 9999-12-31 都用只读查询问过库：**接受**（见 docs/perf-notes.md 七）
+  "2024-02-29", "2026-02-28", "0001-01-01", "9999-12-31",
   // ---- 正常：中文 ----
   "10月3日", "10月3", "10月03日", "1月1日", "12月31日", "10 月 3 日", "10月3日  ",
   // ---- 正常：分隔符 ----
@@ -109,6 +117,34 @@ const CASES_NEW_ONLY = [
   ["2026年10月0日", null],
   // 不完整的年月写法不认（避免误判）
   ["2026年10月", null],
+];
+
+/* ==========================================================================
+   ★ 2026-10 第二批：**有意与老实现分歧**的「非法日期」（修「非法日期导致 500」）
+
+   老实现的问题：ISO 那条分支**只做正则匹配就原样返回**，而中文/分隔符分支只有
+   「月 1–12、日 1–31」这种粗校验 —— 于是下面这些值会被原样交给
+   `feedback_history.date`，PostgreSQL 一律拒绝（22008）→ **整个写入请求 500**。
+
+   ⚠️ 注意 `2026-02-30` / `2026-02-29`(2026 非闰年) / `2月30日` 这几条：
+      它们**过了**老的 1–12 / 1–31 范围校验，所以只加范围校验挡不住 ——
+      必须做「那一天真的存在吗」的日历校验。这就是当初选 B 方案而不是 A 的理由。
+
+   ⚠️ 这一组红 = 「非法日期又能写库了」→ 线上会重新出现 500。
+   ========================================================================== */
+const CASES_BAD_DATE = [
+  "2026-13-45",   // 月日双越界（用户报的那条）
+  "2026-13-01",   // 只有月越界
+  "2026-00-10",   // 月为 0
+  "2026-10-00",   // 日为 0
+  "2026-10-32",   // 日 32
+  "2026-02-30",   // ★ 2 月没有 30 号（老的 1–31 校验挡不住）
+  "2026-04-31",   // ★ 4 月没有 31 号（同上）
+  "2026-02-29",   // ★ 2026 不是闰年（同上）
+  "0000-01-01",   // ★ 库实测拒绝 0000 年（`0001-01-01` 才接受）
+  "2月30日",       // 中文分支：老实现会拼出 2026-02-30
+  "4月31日",       // 中文分支同上
+  "2-30",         // 分隔符分支同上
 ];
 
 /* ==========================================================================
@@ -186,6 +222,57 @@ try {
       }
       record(`★有意分歧：${CASES_NEW_ONLY.length} 个「年月日」输入按新契约解析（老实现做不到）`,
         bad.length === 0, bad.length ? bad.join(" | ") : "（含越界仍为 null 的用例）");
+    }
+
+    // ---------------------------------------------------------------- A3. 有意分歧：非法日期
+    // ★ 2026-10 第二批：新实现必须把「那一天不存在」的输入一律变成 null；
+    //    同时**逐条确认老实现确实会放行** —— 否则这组断言会退化成「两边都 null」的空过，
+    //    看着全绿、其实什么都没钉住（本项目踩过这类假绿）。
+    {
+      const bad = [];
+      const lines = [];
+      for (const inp of CASES_BAD_DATE) {
+        const newR = await (await fetch(
+          `${DEBUG_URL}?input=${encodeURIComponent(inp)}`,
+          { headers: { "x-debug-token": DEBUG_TOKEN, cookie } },
+        )).json().then((b) => b?.result ?? null).catch(() => "<请求失败>");
+        const oldR = parseDisplayDateOLD(inp);
+        lines.push(`  ${JSON.stringify(inp)}: 老=${JSON.stringify(oldR)} 新=${JSON.stringify(newR)}`);
+        if (newR !== null) bad.push(`${JSON.stringify(inp)}: 新实现应 null，实际 ${JSON.stringify(newR)}`);
+        // 老实现必须**放行**（返回非 null）—— 这正是「500 的来源」，也是这次改行为的理由
+        if (oldR === null) bad.push(`${JSON.stringify(inp)}: 老实现也返回 null → 这条不该归入「非法日期分歧」`);
+      }
+      record(`★有意分歧：${CASES_BAD_DATE.length} 个「那一天不存在」的输入 → 新实现 null（老实现会放行 → 写库 500）`,
+        bad.length === 0, bad.length ? bad.join(" | ") : "（含 2 月 30 日 / 非闰年 2 月 29 日 / 0000 年）");
+      record("★非法日期明细（供人工核对：老 vs 新）", true, "\n" + lines.join("\n"));
+    }
+
+    // ---------------------------------------------------------------- A4. 反向防护：真的存在的日子不能误伤
+    // ⚠️ 真日历校验最容易犯的错是「顺手把闰年 / 边界年份也挡了」——
+    //    那会把老师填的合法日期**静默变空**（比 500 更难发现）。所以单独钉一条。
+    {
+      // ⚠️ 期望值写死（不能拿老实现当参照：`2026年10月7日` 正是「老实现返回 null」的那一类）
+      const y = new Date().getFullYear();
+      const MUST_KEEP = [
+        ["2026-10-03", "2026-10-03"],
+        ["2024-02-29", "2024-02-29"],   // 闰年
+        ["2026-02-28", "2026-02-28"],
+        ["0001-01-01", "0001-01-01"],   // 库实测接受的最小年
+        ["9999-12-31", "9999-12-31"],   // 四位数年份的上界
+        ["2026年10月7日", "2026-10-07"],
+        ["10月3日", `${y}-10-03`],
+        ["10-3", `${y}-10-03`],
+      ];
+      const bad = [];
+      for (const [inp, expected] of MUST_KEEP) {
+        const newR = await (await fetch(
+          `${DEBUG_URL}?input=${encodeURIComponent(inp)}`,
+          { headers: { "x-debug-token": DEBUG_TOKEN, cookie } },
+        )).json().then((b) => b?.result ?? null).catch(() => "<请求失败>");
+        if (newR !== expected) bad.push(`${JSON.stringify(inp)}: 期望${JSON.stringify(expected)} 实际${JSON.stringify(newR)}`);
+      }
+      record(`★反向防护：${MUST_KEEP.length} 个**真实存在**的日期一个都没被误伤（含闰年 2024-02-29、0001 年、9999 年）`,
+        bad.length === 0, bad.length ? bad.join(" | ") : "（与写死的期望值逐条一致）");
     }
 
     // 顺带钉住几个「契约」值，防止两边一起错
@@ -287,12 +374,45 @@ try {
   record(`★端到端：${E2E_NEW.length} 个「年月日」写法真的落进 date 列（老实现会丢成 null）`,
     e2eNewBad.length === 0, e2eNewBad.length ? e2eNewBad.join(" | ") : "（含越界仍为 null 的用例）");
 
-  // ---------------------------------------------------------------- C. 已知问题（记录，不断言 500）
-  // `2026-13-45` 这种非法 ISO 会被**原样写库**，再由 PostgreSQL 拒绝。
-  // 这是搬移前就有的行为，本轮不动（见 docs/perf-notes.md「已知问题」）。
-  record("已知问题留痕：非法 ISO 被原样返回（不校验月/日），这是既有行为",
-    parseDisplayDateOLD("2026-13-45") === "2026-13-45",
-    `parseDisplayDateOLD("2026-13-45") = ${JSON.stringify(parseDisplayDateOLD("2026-13-45"))}`);
+  // ---------------------------------------------------------------- B3. 端到端：非法日期不再 500（★ 2026-10 第二批）
+  // ⚠️ 这一组才是**真 bug 的防护**：修复前这些值会被原样送进 `feedback_history.date`，
+  //    PostgreSQL 报 22008 → 路由整条写入失败 → 前端拿到 **500**、记录全丢。
+  //    判据必须是 **HTTP 200 + 库里 date 为 null**（两个都要）：
+  //    只看 200 不够（若接口吞掉错误照样 200）；只看 null 也不够（请求根本没成功时也是 null）。
+  const E2E_BAD_DATE = [
+    ["2026-13-45", "e2e-bad-iso-1345"],     // ← 用户报的那条：修复前 500
+    ["2026-13-01", "e2e-bad-iso-m13"],
+    ["2026-10-32", "e2e-bad-iso-d32"],
+    ["2026-02-30", "e2e-bad-iso-feb30"],    // ← 只加范围校验挡不住的假日期
+    ["2026-02-29", "e2e-bad-iso-feb29"],    // ← 2026 非闰年
+    ["0000-01-01", "e2e-bad-iso-year0"],
+    ["2月30日", "e2e-bad-cn-feb30"],         // ← 中文分支同一个洞
+  ];
+  const e2eBadDateFail = [];
+  for (const [input, label] of E2E_BAD_DATE) {
+    const { status, storedDate } = await postAndReadBack(input, label);
+    if (status !== 200 || storedDate !== null) {
+      e2eBadDateFail.push(`${JSON.stringify(input)} → status=${status} 库里=${JSON.stringify(storedDate)}（期望 200 + null）`);
+    }
+  }
+  record(`★端到端：${E2E_BAD_DATE.length} 个非法日期**不再 500**（HTTP 200 且 date 落成 null，记录不丢）`,
+    e2eBadDateFail.length === 0,
+    e2eBadDateFail.length ? e2eBadDateFail.join(" | ") : "（修复前这些全是 500）");
+
+  // ---------------------------------------------------------------- C. 修复留痕（★ 2026-10 第二批）
+  // 这里原来记的是「已知问题：非法 ISO 被原样返回」。
+  // 现在这个行为**已被修掉**，而参照物（老实现副本）**故意保持原样** ——
+  // 两条一起断言，才说明「是**有意**改的行为」，而不是参照物被人改过、两边一起错。
+  {
+    const oldR = parseDisplayDateOLD("2026-13-45");
+    const newR = debugUsable
+      ? await (await fetch(`${DEBUG_URL}?input=${encodeURIComponent("2026-13-45")}`,
+          { headers: { "x-debug-token": DEBUG_TOKEN, cookie } })).json().then((b) => b?.result ?? null).catch(() => "<请求失败>")
+      : "<调试口未配置，未测>";
+    record("★修复留痕：非法 ISO「2026-13-45」老实现原样返回（参照物未被改动）、新实现返回 null",
+      oldR === "2026-13-45" && (!debugUsable || newR === null),
+      `老=${JSON.stringify(oldR)} / 新=${JSON.stringify(newR)}`);
+  }
 
   // ---------------------------------------------------------------- 清理
   await fetch(`${SUPABASE_URL}/rest/v1/feedback_history?student_name=eq.${encodeURIComponent(STU)}`, { method: "DELETE", headers: H });
