@@ -93,7 +93,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** 历史归属工具的白名单 —— 与 0014 的 `feedback_history_tool_check` 约束**必须一致**。
+/** 历史归属工具的白名单 —— 与 `feedback_history_tool_check` 约束**必须一致**。
  *
  *  ⚠️ 为什么要有这个白名单，而不是「不合法就按 paper 处理」：
  *     导入口原来写的是「缺省按 paper」—— 那会让**将来接进来的工具**（math-plan 等）
@@ -103,8 +103,11 @@ export async function GET(request: NextRequest) {
  *
  *  ⚠️ 加新工具时**两步都要做**，只做一步的后果见上：
  *     ① 先在 Supabase 执行一条迁移，把 `tool in (...)` 的区间放宽到新工具；
- *     ② 再把新工具名加到这个数组里。 */
-const ALLOWED_TOOLS = ["feedback", "paper"] as const;
+ *     ② 再把新工具名加到这个数组里。
+ *
+ *  `math-plan` 是 2026-10 加进来的（迁移 `0016_history_tool_allow_math_plan.sql`，
+ *  用户已在 Supabase SQL Editor 里执行）：辅导方案工具点「存入档案」时写它。 */
+const ALLOWED_TOOLS = ["feedback", "paper", "math-plan"] as const;
 
 /** 把一条外来记录规整成可写入的行（日期走与 feedback 同一个解析器） */
 function normalizeHistoryItem(raw: Record<string, unknown>) {
@@ -183,6 +186,23 @@ export async function POST(request: NextRequest) {
         rejectedTool: badTool,
       });
     } catch (e) {
+      // ⚠️ 数据库的 CHECK 约束没跟上白名单时，必须给出**能照着做**的提示。
+      //    2026-10 第一次跑就撞上了：白名单加了 math-plan，但迁移 0016 还没在线上执行，
+      //    于是前端只看到一句「操作失败，请稍后重试」——完全没法定位。
+      //    归属工具的合法值**唯一来源是迁移文件**，接口这边只能替它报错。
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/feedback_history_tool_check|check_violation|23514/.test(msg)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "数据库还不接受这个归属工具：请先在 Supabase SQL Editor 执行迁移 " +
+              "supabase/migrations/0016_history_tool_allow_math_plan.sql（放宽 tool 的 CHECK 约束），再重试。",
+            code: "tool_constraint",
+          },
+          { status: 409 },
+        );
+      }
       return dbError("导入记录", e);
     }
   }

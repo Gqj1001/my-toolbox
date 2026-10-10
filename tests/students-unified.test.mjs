@@ -313,20 +313,43 @@ try {
   ] });
   record("★阶段4：import 缺 tool → 明确 400（不静默标成 paper）",
     impNoTool.status === 400, `status=${impNoTool.status}`);
+  // ⚠️ 这里用的是**从未登记过**的 tool（`history`）。
+  //    2026-10 之前这条用的是 `math-plan`——那时它确实还没登记；
+  //    学员档案把 math-plan 放开（迁移 0016）之后，再用它当"坏值"就会变成假红。
   const impBadTool = await studentsPost({ op: "import", items: [
-    { student_name: MERGE, text: "阶段4 坏归属", date: "10月7日", tool: "math-plan", title: "坏" },
+    { student_name: MERGE, text: "阶段4 坏归属", date: "10月7日", tool: "history", title: "坏" },
   ] });
   record("★阶段4：import 给了未登记的 tool → 明确 400（不是静默记成 paper）",
     impBadTool.status === 400, `status=${impBadTool.status}`);
   // 混着传时：好的进、坏的**数出来**（不静默丢）
   const impMixed = await studentsPost({ op: "import", items: [
-    { student_name: MERGE, text: "阶段4 混-坏", date: "10月8日", tool: "math-plan", title: "坏" },
+    { student_name: MERGE, text: "阶段4 混-坏", date: "10月8日", tool: "history", title: "坏" },
     { student_name: MERGE, text: "阶段4 混-好", date: "10月9日", tool: "paper", title: "好" },
   ] });
   const impMixedB = await impMixed.json().catch(() => null);
   record("★阶段4：混合导入 → 好的进（inserted:1），坏的条数如实报（rejectedTool:1）",
     impMixedB?.ok === true && impMixedB.inserted === 1 && impMixedB.rejectedTool === 1,
     JSON.stringify(impMixedB));
+
+  // ⑨ 阶段4 之三：`math-plan` 已登记（迁移 0016）—— 辅导方案要能进学员档案
+  //    ⚠️ 这条会**真的写库**：如果迁移没在线上执行，数据库会拒绝（409 + 明确提示）。
+  //       那种情况下这条会红 —— 那是**正确的红**（提醒你 SQL 还没跑）。
+  const impPlan = await studentsPost({ op: "import", items: [
+    { student_name: MERGE, text: "阶段4 辅导方案正文", date: "10月11日", tool: "math-plan",
+      title: "秋季辅导方案", score: 62, full_score: 150 },
+  ] });
+  const impPlanB = await impPlan.json().catch(() => null);
+  record("★阶段4 之三：tool='math-plan' 已被接受（迁移 0016 + 接口白名单两处都放开了）",
+    impPlan.status === 200 && impPlanB?.inserted === 1,
+    `status=${impPlan.status} body=${JSON.stringify(impPlanB)}（409 = 数据库那半还没做）`);
+  // 读回来归属必须**仍是 math-plan**（这才是这条要防的事：别被兜底成 paper）
+  {
+    const h = await (await studentsApi(`?name=${encodeURIComponent(MERGE)}&withHistory=1`)).json().catch(() => null);
+    const plan = (h?.history?.[MERGE] || []).find((x) => String(x.text).includes("阶段4 辅导方案正文"));
+    record("★阶段4 之三：读回来归属仍是 math-plan，考试名/分数也在",
+      plan?.tool === "math-plan" && plan?.title === "秋季辅导方案" && plan?.score === 62,
+      JSON.stringify({ tool: plan?.tool, title: plan?.title, score: plan?.score }));
+  }
 
   // ================================================================
   // 第 3 组：红线2 —— 跨账号隔离（A 存的学生，B 看不到）

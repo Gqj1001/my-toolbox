@@ -314,6 +314,74 @@ try {
     reopened.ok === true, JSON.stringify(reopened));
 
   // ================================================================
+  // 1e. ★阶段4 之三：「📥 存入档案」把**这一次方案**写进历史（tool='math-plan'）
+  // ================================================================
+  // 用户明确要「手动点才存」（生成十几次不该存十几条垃圾），所以要钉住：
+  //   ① 没生成方案前按钮是禁用的；生成后变可用
+  //   ② 点了之后 history 里真的多出一条 tool='math-plan' 的记录，且正文是这份方案
+  //   ③ 再点一次**不会**产生第二条（接口按 (学生,工具,考试名,日期) 判重）
+  {
+    // 先确认按钮在「还没生成方案」时是禁用的
+    const btnIdle = await inDoc(`
+      const b = document.getElementById('btnSavePlan');
+      return { exists: !!b, disabled: b ? b.disabled : null, text: b ? b.textContent.trim() : null };
+    `);
+    record("★存入档案：按钮存在，且**没生成方案前是禁用的**（不会存出空记录）",
+      btnIdle?.exists === true && btnIdle.disabled === true, JSON.stringify(btnIdle));
+
+    // 清掉可能的旧记录（用同一个标题+日期做幂等键，重复跑不会累积）
+    await purge(STU);
+
+    // 填姓名 + 点一个预设（预设会立刻生成方案）
+    const gen = await inDoc(`
+      const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+      const n = document.getElementById('f-name');
+      if(!n) return { err: '没有姓名输入框' };
+      d.set.call(n, ${JSON.stringify(STU)});
+      const preset = document.querySelector('.preset button[data-preset="gap"]');
+      if(!preset) return { err: '没有预设按钮' };
+      preset.click();
+      return 'clicked';
+    `);
+    if (gen && gen.err) record("（准备）填姓名并生成方案", false, gen.err);
+    await sleepMs(2500);
+    const btnReady = await inDoc(`
+      const b = document.getElementById('btnSavePlan');
+      return { disabled: b ? b.disabled : null, rows: (window.MathPlanHooks && window.MathPlanHooks.counts()) ? window.MathPlanHooks.counts().docRows : null };
+    `);
+    record("★存入档案：生成方案后按钮变为**可用**",
+      btnReady?.disabled === false, JSON.stringify(btnReady));
+
+    // 点它
+    await inDoc(`document.getElementById('btnSavePlan').click(); return 'ok';`);
+    let savedRow = null;
+    for (let i = 0; i < 20; i++) {
+      await sleepMs(500);
+      const h = await api(`/api/students?name=${encodeURIComponent(STU)}&withHistory=1`);
+      const rows = h.body?.history?.[STU] || [];
+      savedRow = rows.find((x) => x.tool === "math-plan") || null;
+      if (savedRow) break;
+    }
+    record("★存入档案：点一下之后，档案里真的多了一条 tool='math-plan' 的记录",
+      !!savedRow, savedRow ? JSON.stringify({ title: savedRow.title, score: savedRow.score, date: savedRow.date }) : "没找到");
+    record("★存入档案：正文是这份方案（含学情诊断 / 提分目标 / 逐次课表）",
+      !!savedRow && /【学情诊断】/.test(String(savedRow.text)) &&
+        /【提分目标】/.test(String(savedRow.text)) && /【逐次课表】/.test(String(savedRow.text)),
+      savedRow ? String(savedRow.text).slice(0, 120) : "—");
+    record("★存入档案：分数与考试名带上了（供以后看趋势）",
+      savedRow?.score === 65 && /辅导方案$/.test(String(savedRow?.title)),
+      JSON.stringify({ score: savedRow?.score, title: savedRow?.title }));
+
+    // 再点一次 → 幂等，不该出现第二条
+    await inDoc(`document.getElementById('btnSavePlan').click(); return 'ok';`);
+    await sleepMs(2500);
+    const h2 = await api(`/api/students?name=${encodeURIComponent(STU)}&withHistory=1`);
+    const planRows = (h2.body?.history?.[STU] || []).filter((x) => x.tool === "math-plan");
+    record("★存入档案：再点一次**不会**存出第二条（按 学生+工具+考试名+日期 判重）",
+      planRows.length === 1, `math-plan 记录条数=${planRows.length}`);
+  }
+
+  // ================================================================
   // 2. 接口防护：op:"import" 的 tool 不许静默兜底
   // ================================================================
   const impBad = await api("/api/students", {
@@ -326,15 +394,38 @@ try {
     impBad.status === 400 && impBad.body?.ok === false,
     `status=${impBad.status} body=${JSON.stringify(impBad.body)}`);
 
-  const impMath = await api("/api/students", {
+  const impBadTool = await api("/api/students", {
     method: "POST",
     body: JSON.stringify({ op: "import", items: [
-      { student_name: STU, text: "math-plan 归属", date: "10月7日", tool: "math-plan", title: "方案记录" },
+      { student_name: STU, text: "未登记归属", date: "10月7日", tool: "history", title: "坏" },
     ] }),
   });
-  record("★防护：tool='math-plan' 现在被拒（0014 的约束还没放开，改库之前不许悄悄记成 paper）",
-    impMath.status === 400 && impMath.body?.ok === false,
-    `status=${impMath.status} body=${JSON.stringify(impMath.body)}`);
+  record("★防护：import 给了**未登记**的 tool（history）→ 明确 400（不是静默记成 paper）",
+    impBadTool.status === 400 && impBadTool.body?.ok === false,
+    `status=${impBadTool.status} body=${JSON.stringify(impBadTool.body)}`);
+
+  // ★tool='math-plan' 现在是**合法**的（2026-10 起：迁移 0016 + 接口白名单都放开了）。
+  //  ⚠️ 这条以前是反过来的（断言它被拒）—— 那时约束还没放开、用来防止「静默记成 paper」。
+  //     现在放开之后，要钉住的是「它真的能以 math-plan 的身份写进去、读出来还是 math-plan」。
+  const impPlan = await api("/api/students", {
+    method: "POST",
+    body: JSON.stringify({ op: "import", items: [
+      { student_name: STU, text: "math-plan 归属正文", date: "10月11日", tool: "math-plan",
+        title: "秋季辅导方案", score: 62, full_score: 150 },
+    ] }),
+  });
+  record("★tool='math-plan' 已被接受并写入（迁移 0016 + 接口白名单两处都放开了）",
+    impPlan.status === 200 && impPlan.body?.inserted === 1,
+    `status=${impPlan.status} body=${JSON.stringify(impPlan.body)}`);
+  // 读回来归属必须**仍是 math-plan**（不是被兜底成 paper）——这才是这条断言真正要防的事
+  {
+    const h = await api(`/api/students?name=${encodeURIComponent(STU)}&withHistory=1`);
+    const rows = h.body?.history?.[STU] || [];
+    const plan = rows.find((x) => String(x.text).includes("math-plan 归属正文"));
+    record("★读回来归属仍是 math-plan（没被兜底成 paper），分数/考试名也带上了",
+      plan?.tool === "math-plan" && plan?.title === "秋季辅导方案" && plan?.score === 62,
+      JSON.stringify({ tool: plan?.tool, title: plan?.title, score: plan?.score }));
+  }
 
   const impOk = await api("/api/students", {
     method: "POST",
@@ -349,7 +440,7 @@ try {
   const impMixed = await api("/api/students", {
     method: "POST",
     body: JSON.stringify({ op: "import", items: [
-      { student_name: STU, text: "混入的坏记录", date: "10月8日", tool: "math-plan", title: "坏" },
+      { student_name: STU, text: "混入的坏记录", date: "10月8日", tool: "history", title: "坏" },
       { student_name: STU, text: "混入的好记录", date: "10月9日", tool: "paper", title: "好" },
     ] }),
   });

@@ -199,6 +199,9 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
   <div class="spacer"></div>
   <button id="btnEdit">✎ 编辑模式</button>
   <button id="btnPrint">🖨 打印 / 存 PDF</button>
+  <!-- 阶段4 之三：把「这一次方案」存进学员档案（手动点，避免生成十几次存一堆垃圾）。
+       只在云端模式（/tools/math-plan.html）下可用；双击 HTML 打开时会提示不可用。 -->
+  <button id="btnSavePlan" title="把这一次生成的方案存到该学生的档案里">📥 存入档案</button>
   <button class="primary" id="btnDoc">⬇ 导出 Word（模板）</button>
 </header>
 
@@ -1722,10 +1725,110 @@ async function bootCloud(){
     CLOUD_STUDENTS = {};
     for(const [n, row] of Object.entries(all)) CLOUD_STUDENTS[n] = studentFromCloud(row);
     renderStuRow();
+    syncSavePlanBtn();
   }catch(e){
     CLOUD_STORE.enabled = false;      // 拿不到就别让按钮骗人
     renderStuRow();
+    syncSavePlanBtn();
     toastLong("读不到账号里的学生档案，本页暂时只能用本机输入：" + (e && e.message ? e.message : e), 4600);
+  }
+}
+
+/* =========================================================================
+   八之四、把「这一次方案」存进学员档案（阶段4 之三）
+   -------------------------------------------------------------------------
+   ⚠️ 这一步存的**不是学生身份**，而是**这一次的方案记录** —— 与 persistStudent 是两件事：
+        · persistStudent(name, id)  → 写 feedback_students（学生是谁）
+        · savePlanToArchive()       → 写 feedback_history（这一次方案），tool='math-plan'
+      两者故意分开：身份是长期档案，方案是一次性记录。
+
+   ⚠️ 必须**手动点**「📥 存入档案」才写：老师一天可能生成十几次方案，
+      自动存会把档案塞满垃圾（用户 2026-10 明确选的手动）。
+
+   ⚠️ `tool:'math-plan'` 依赖两处同时放开，缺一写不进去：
+      ① 数据库约束（迁移 0016，用户已在 Supabase 执行过）
+      ② 接口白名单 ALLOWED_TOOLS（src/app/api/students/route.ts）
+   ========================================================================= */
+
+/** 今天的中文日期（与页面里 examDate 的默认写法一致，服务端有同一个解析器认它） */
+function todayCn(){
+  const d = new Date();
+  return d.getFullYear() + "年" + (d.getMonth() + 1) + "月" + d.getDate() + "日";
+}
+
+/** 把当前这份方案整理成一段纯文本存进档案 */
+function planArchiveText(){
+  if(!CURRENT) return "";
+  const o = CURRENT.o;
+  const lines = [];
+  lines.push("【学情诊断】" + (CURRENT.diagText || ""));
+  lines.push("【提分目标】" + o.score + " → " + o.target + " 分"
+    + "（" + (BAND_TEXT[bandOf(o.score)] || {}).band + "）");
+  lines.push("【课时安排】共 " + o.totalHours + " 课时"
+    + "；在校每周 " + o.freq + " 次 × " + o.weeks + " 周，假期每周 " + o.freqH + " 次 × " + o.holidayWeeks + " 周");
+  const rows = currentLessonRows();
+  if(rows.length){
+    lines.push("【逐次课表】");
+    rows.forEach(r => {
+      lines.push((r.stage || "") + "｜" + (r.content || "") + "｜" + (r.hours == null ? "" : r.hours + " 课时")
+        + "｜" + (r.goal || ""));
+    });
+  }
+  if(o.note) lines.push("【学习特点】" + o.note);
+  return lines.join("\n");
+}
+
+/** 方案存好之前，「存入档案」按钮该是禁用还是可用 */
+function syncSavePlanBtn(){
+  const b = $("#btnSavePlan");
+  if(!b) return;
+  if(!CLOUD_STORE.enabled){
+    b.disabled = false;               // 本机模式也要能点，点了给一句明确提示
+    b.title = "双击打开的版本没有账号档案，请从 010034.xyz 进入本工具";
+    return;
+  }
+  b.disabled = !CURRENT;
+  b.title = CURRENT
+    ? "把这一次生成的方案存到该学生的档案里"
+    : "请先点「生成方案」，再存入档案";
+}
+
+/** 手动把「这一次方案」存进该学生的档案 */
+async function savePlanToArchive(){
+  const name = $("#f-name").value.trim();
+  if(!name){ toastLong("请先填学生姓名（档案是按学生存的）"); return; }
+  if(!CURRENT){ toastLong("请先点「生成方案」，再存入档案"); return; }
+  if(!CLOUD_STORE.enabled){
+    toastLong("双击打开的版本没有账号档案：请从 010034.xyz 进入本工具后再存");
+    return;
+  }
+  const text = planArchiveText();
+  if(!text){ toastLong("没有可存的方案内容"); return; }
+
+  const btn = $("#btnSavePlan");
+  const old = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "保存中…"; }
+  try{
+    const o = CURRENT.o;
+    const d = await apiPost({ op:"import", items:[{
+      student_name: name,
+      text,
+      date: todayCn(),
+      tool: "math-plan",
+      subject: "math",
+      title: (PHASE_TEXT[o.phase] || "辅导方案").replace(/[（(].*/,"") + "辅导方案",
+      // 分数与满分按「档案列」存：方便以后看趋势，且列本来就存在（0014 加的）
+      score: o.score,
+      full_score: 150,
+    }] });
+    const n = d && typeof d.inserted === "number" ? d.inserted : 0;
+    toast(n ? "已存入「" + name + "」的档案" : "这条方案已经在档案里了（没有重复存）", 3600);
+  }catch(err){
+    // 常见失败：数据库约束还没放开（迁移 0016 没跑）→ 如实把接口的话给老师看
+    toastLong("存入档案失败：" + (err && err.message ? err.message : err), 5200);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = old || "📥 存入档案"; }
+    syncSavePlanBtn();
   }
 }
 
@@ -1832,6 +1935,7 @@ $("#btnGen").addEventListener("click", ()=>{
   const plan = generate(o);
   plan.diagText = diagnosisText(o);
   render(plan);
+  syncSavePlanBtn();          // 有方案了 → 「存入档案」变可用
   $("#out").scrollIntoView({behavior:"smooth", block:"start"});
   toast("方案已生成：" + plan.rows.length + " 次课 / " + o.totalHours + " 课时");
 });
@@ -1867,6 +1971,7 @@ $$(".preset button").forEach(b=>b.addEventListener("click", ()=>{
   const plan = generate(o);
   plan.diagText = diagnosisText(o);
   render(plan);
+  syncSavePlanBtn();          // 预设也会立刻出一份方案 → 按钮同样要变可用
   toast("已套用预设：" + b.textContent);
 }));
 
@@ -1899,12 +2004,15 @@ $("#btnDelRow").addEventListener("click", ()=>{
 });
 $("#btnPrint").addEventListener("click", ()=>window.print());
 $("#btnDoc").addEventListener("click", exportWordTemplate);          // 唯一的导出入口：模板化 docx
+// 「存入档案」（阶段4 之三）：手动把这一次方案写进该学生的档案
+$("#btnSavePlan").addEventListener("click", savePlanToArchive);
 // 「导出 Word（旧版）」按钮已按需求删除（只删 UI 入口）。
 // exportWord() 函数本身保留着，万一以后要退回旧版，把按钮 HTML 加回来 + 恢复下面这行即可：
 // $("#btnDocLegacy").addEventListener("click", exportWord);
 
 /* 首次进入提示 */
 refreshHints();
+syncSavePlanBtn();   // 未生成方案前「存入档案」是禁用的
 
 /* 阶段4：接账号里的学生档案（只在本站部署时开；双击 HTML 时是 no-op） */
 bootCloud();
