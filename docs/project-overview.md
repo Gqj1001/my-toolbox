@@ -42,12 +42,23 @@
 > （`tests/students-unified.test.mjs` 的「合并③」组）。
 > 将来若要统一，应当让老入口也走 `upsertStudent()`，而不是各写一套。
 
-> ⚠️ **合并语义只保护「顶层列」，`extra` 是一整个 jsonb —— 传了就是整块替换**。
-> 所以每个工具保存前必须**先把旧的 `extra` 读回来展开**，再盖上自己那几个键；
-> 少了这一步，math-plan 存一次就会把 paper 的 `extra.cls` 抹掉。
-> 两个工具都这么做了（paper 的 `CLOUD_STORE.saveStudent`、
-> math-plan 的 `persistStudent`），证据是 `tests/math-plan-students.test.mjs`
-> 的「extra 互不踩②」与 `students-unified` 的「阶段4」两条。
+> ✅ **`extra` 现在也是服务端按键合并了（2026-10 第二批）**：写入前服务端先读回旧 `extra`、
+> 展开、再盖上本次传的键 —— 所以**任何工具少写一句都不会踩到别人**。规则三条：
+> ① 同名键**新值赢**；② 别的工具的键**原样保留**；
+> ③ `extra` 里某个键传 `null` = **删掉那个键**（而「整个 `extra` 传 `null` / 没传」= 沿用旧值）。
+> 实现是 `src/lib/feedback-db.ts` 的 `buildStudentRow()` → `mergeExtra()`；
+> 证据是 `tests/students-unified.test.mjs` 的「阶段5」组与
+> `tests/math-plan-students.test.mjs` 的「extra 互不踩③」。
+>
+> > ⚠️ **在此之前那是个真 bug，不是"将来会咬人"**：`extra` 传了就是整块替换，
+> > 而 `paper-analysis` 的 `CLOUD_STORE.saveStudent()` **并没有**先读旧值（它只发 `{cls}`）——
+> > 所以「先在 math-plan 存了 phase/book/exam，再到 paper 点一次保存」时，那三个键**当场消失**。
+> > 工具页那句「先读旧值」**仍然保留**（服务端合并是**兜底**，不是替代；两边都做，结果一致、幂等），
+> > 但**已经不再依赖它**了。
+> >
+> > 💰 **代价（用户选的）**：合并前改成**直读最新行**（不再用 25 秒缓存）——
+> > 每次「保存档案」多一次 Supabase 往返。理由：按键合并的正确性完全依赖旧值是最新的；
+> > 保存是低频动作，换来的是不丢数据。
 
 字段归属：公共列 = 姓名 / 年级 / 科目 / 老师 / 称呼 / 态度 / 校区 / 学管师 / 班级 / 性别；
 **工具专属字段进 `extra` jsonb**（paper → `cls`；math-plan → `phase/book/exam`），
@@ -386,12 +397,13 @@ vs 网站"谁能进得来"），混着改容易一边修好另一边弄坏。所
 **详细清单见 `docs/next-session-todo.md`。** 当前优先级最高的三件：
 | # | 待办 | 工作量 | 为什么排前面 |
 |---|---|---|---|
-| 1 | **`extra` 改成服务端按键合并**（技术债） | 半天 | 合并语义现在只保护**顶层列**，`extra` 是一整个 jsonb、传了就是整块替换 —— 靠每个工具**自己**先读旧值再盖。将来少写一句，math-plan 存一次就会把 paper 的 `extra.cls` 抹掉 |
-| 2 | **学情分析** | 1–2 天 | 用户 2026-10 定的方向：拿档案里三个工具（辅导方案 / 试卷分析 / 课后反馈）的记录，生成学生的整体学情报告 |
-| 3 | 其余技术债与全学科扩展 | — | 见 `docs/next-session-todo.md`（含 `DEFAULT_MODEL` 清理、feedback 离线入口、物理试点） |
+| 1 | **学情分析** | 1–2 天 | 用户 2026-10 定的方向：拿档案里三个工具（辅导方案 / 试卷分析 / 课后反馈）的记录，生成学生的整体学情报告 |
+| 2 | 其余技术债 | 半天起 | 见 `docs/next-session-todo.md`：`DEFAULT_MODEL` 清理、feedback 离线入口、`extra` 写路径读失败会静默降级（第二批报告里点名的那个隐患） |
+| 3 | 全学科扩展（物理试点） | 等触发 | 有物理老师主动要，或数学用稳 2–3 周 |
 
-> ✅ **已结案**（本轮之前的）：`/dashboard` 学员档案管理、math-plan「存入档案」+ `0016` 放开
-> `feedback_history.tool`、`vision-scores` 启用态防回归测试、非法日期导致 500 的修复。
+> ✅ **已结案**（本轮之前的）：`extra` 服务端按键合并、`/dashboard` 学员档案管理、
+> math-plan「存入档案」+ `0016` 放开 `feedback_history.tool`、`vision-scores` 启用态防回归测试、
+> 非法日期导致 500 的修复。
 
 
 > ✅ **已结案**：`feedback.html`「下载 10 秒」—— **根因是用户电脑上的代理软件**
@@ -418,10 +430,11 @@ vs 网站"谁能进得来"），混着改容易一边修好另一边弄坏。所
 | 客户端缓存（IndexedDB）已上线 | 六之五那一整节；紧急开关 `?noclientcache=1` |
 | 工具页性能 P1–P4 已收口 | 见第八节 |
 | `parseDisplayDate` 已抽到 `src/lib/date-input.ts` | 抽出来时**行为零改动**，有老实现对拍测试（`tests/date-input.test.mjs`）。此后有**两次有意改行为**（都在那一节记着）：① 「年月日」写法（阶段3）；② **非法日期返回 null**（2026-10，修「手填 `2026-13-45` 导致整个请求 500」） |
+| **`extra` 改成服务端按键合并**（2026-10 第二批） | 写入前服务端读回旧 `extra`、展开、再盖本次的键（`buildStudentRow()` → `mergeExtra()`）。**顺带修掉一个真 bug**：paper 的 `saveStudent` 从来不读旧值，以前「先 math-plan 后 paper」会把 `phase/book/exam` 抹掉。规则：同名键新值赢 / 别家键保留 / 键值 `null` = 删掉该键。合并前改成**直读最新行**（每次保存 +1 次往返，换不丢数据）。新测试 8 项（`students-unified` 64 → **72**），并把 `math-plan-students` 的「互不踩③」**翻转**成"不再被盖掉" ✅ |
 | **非法日期导致 500 已修**（2026-10） | `parseDisplayDate()` 三条分支共用**真日历校验**：`2026-13-45`、`2026-02-30`、`2月30日`、`0000-01-01` 一律 → `null`（写入照常成功）。口径按**只读查询实测**对齐 PostgreSQL。测试 11 → **15 项** ✅（含变异自证：「有意分歧」组会随实现回退而变红） |
 | **vision-scores 启用态防回归测试**（2026-10） | 新增 `tests/vision-scores.test.mjs`（**15 项**）：本地桩冒充上游 + **分两阶段起服务**，5 条断言（图片块位置 / thinking 护栏 / 正常 JSON / 非 JSON 不 500 / 未配模型 503），另加防假绿断言。**产品代码一行未改**；已用**变异测试**证明「模型名不含 deepseek 就不能带 thinking」那条真的会红 |
 | **空壳工具口径已对齐**（2026-10） | `json-formatter` / `password-generator` 的代码文件**早就不在仓库里**（`public/tools/` 从来没有；页面在 `d08be8b` 删的），所以「清理」实际没有代码可删，只把 `README.md` 与本页的旧说法改成事实 |
-| **全套回归 26 套全绿**（2026-10 第一批） | 合计 **802 项**；顺手发现旧清单有三处过期/漏项（`math-plan-students` 实为 37、`students-unified` 实为 64、漏 `archive-students` 17）。明细见 `docs/next-session-todo.md` 第八节 |
+| **全套回归 26 套全绿**（2026-10 第一批 + 第二批） | 合计 **810 项**；顺手发现旧清单有三处过期/漏项（`math-plan-students` 实为 37、`students-unified` 实为 64、漏 `archive-students` 17）。明细见 `docs/next-session-todo.md` 第八节 |
 
 > ⚠️ **`/api/debug/*` 有两个路由**（`clear-caches`、`parse-date`），**生产环境默认关闭**
 > （要 `ALLOW_DEBUG_CACHE_CLEAR=1` + `DEBUG_CACHE_TOKEN`≥24 位 + 登录会话）。

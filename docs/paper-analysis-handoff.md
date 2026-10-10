@@ -167,6 +167,10 @@ tests/paper-score-report.test.mjs                      第二批·Word 报告链
   四个入口；**调用点不要自己 fetch**（避免"同一件事两个来源"）。
 - 字段映射：本工具的 `cls` ↔ 表的 `class_name`，并同时写进 `extra.cls`；
   历史 `tool='paper'` / `title=examName` / `score` / `full_score=full`。
+  > ⚠️ **2026-10 第二批（重要）**：这里的 `saveStudent()` **只发 `extra:{cls}`、不读旧值** ——
+  > 在「服务端按键合并」之前，这会**抹掉别的工具存在同一行的 `extra` 键**
+  > （典型：math-plan 的 `phase/book/exam`）。**现在服务端已经按键合并**，所以它这样写是安全的、
+  > **不需要**改成本地先读旧值。别再"顺手"给它加读旧值的逻辑（那会变成两个来源）。
 - 接口补齐：`DELETE /api/students?id=<historyId>`（原来只有 `/api/feedback/data` 支持删单条）。
 - 日期：`src/lib/date-input.ts` 的 `parseDisplayDate()` 新增「年月日」分支
   （`2026年10月7日` → `2026-10-07`，用它自己的年份）。这是**有意改行为**，
