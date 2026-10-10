@@ -273,7 +273,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 第三批实测，28 个套件全绿 ✅，合计 866 项断言）**：
+**全套回归现状（2026-10 第三批实测，28 个套件全绿 ✅，合计 870 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -285,7 +285,7 @@ paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 72/72     date-input 15/15          admin-grant90 18/18
-archive-students 17/17     vision-scores 15/15
+archive-students 21/21     vision-scores 15/15
 student-report 37/37       student-analysis 19/19
 ```
 
@@ -306,7 +306,9 @@ student-report 37/37       student-analysis 19/19
 >
 > 变化说明（2026-10 第三批）：**新增 `student-report` 37/37**（纯函数、**本仓库第一个直接
 > import `.ts` 的套件**、不需要起服务）＋ **`student-analysis` 19/19**（桩上游 +
-> 鉴权「非会员不白花一次调用」 + 提示词护栏 + 落库 / 迁移未执行时的 409 两条分支）。
+> 鉴权「非会员不白花一次调用」 + 提示词护栏 + 落库 / 迁移未执行时的 409 两条分支）；
+> `archive-students` **17 → 21**（补 4 条真浏览器断言：学情分析区块渲染、得分率算对、
+> 「没抽到就如实说」、免费用户看不到生成按钮）。
 > 第二、三批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
