@@ -30,7 +30,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 | `/tools/math-plan` | 高中数学辅导方案生成器（iframe 承载单文件 HTML） | 登录用户（**页内 AI 润色是会员专属**） |
 | `/tools/paper-analysis` | 试卷分析工作台 | 登录用户（**页内 AI 建议/答题卡识别是会员专属**） |
 | `/tools/feedback` | 课后反馈工作台（iframe 承载单文件 HTML） | 登录用户（**页内 AI 润色是会员专属**） |
-| `/dashboard` | 学员档案管理（原「百宝箱」）：学生名单 + 详情 + 记录汇总 | 登录用户 |
+| `/dashboard` | 学员档案管理（原「百宝箱」）：学生名单 + 详情 + 记录汇总 + **学情分析**（统计免费 / AI 报告会员专属） | 登录用户 |
 | `/admin` | 管理后台：用户列表与角色修改 | 仅管理员 |
 | `/admin/feedback-keywords`、`/admin/feedback-candidates` | 关键词库维护 / AI 候选审核 | 仅管理员 |
 | `/login`、`/signup` | 登录 / 注册 | 公开 |

@@ -69,7 +69,7 @@
 | # | 事项 | 说明 |
 |---|---|---|
 | a | ✅ 接口层的 `extra` 改成**服务端按键合并**（**已完成 2026-10 第二批**） | 合并挪进 `src/lib/feedback-db.ts` 的 `buildStudentRow()` → `mergeExtra()`：写入前读回旧 `extra`、展开、再盖本次的键。**顺带修掉一个真 bug**：paper 的 `CLOUD_STORE.saveStudent()` 从来不读旧值（只发 `{cls}`），所以以前「先 math-plan 存、再到 paper 点保存」会把 `phase/book/exam` 抹掉。规则：同名键新值赢 / 别家键保留 / **键值 `null` = 删掉该键**（整个 `extra` 传 null 或没传 = 沿用旧值）。合并前改成**直读最新行**（用户选的：每次保存 +1 次 Supabase 往返，换不丢数据）。⚠️ 工具页那句「先读旧值」**保留**（服务端是兜底）。防护：`students-unified` 新增「阶段5」8 项（64 → **72**）＋ `math-plan-students` 的「互不踩③」**翻转**成"不再被盖掉"；已用**变异测试**证明这 7 条会随合并被摘掉而变红 |
-| b | 学员档案还没有「按学情分析」 | 用户明说「现在只做管理」，**生成整体学情分析是以后的事**（= 第三批）。现在只是把记录收集齐、能按学生看 |
+| b | ✅ 学员档案的「**学情分析**」（**已完成 2026-10 第三批**） | 档案详情页新增区块：**统计免费**（概览 / 成绩趋势 / 课时累计 / 薄弱与失分，抽不到就在 `notes` 里明说，绝不猜）＋ **AI 报告会员专属**（`POST /api/students/analysis`，生成【整体学情】【优势】【薄弱与原因】【下一步建议】）。算法是纯函数 `src/lib/student-report.ts`（页面与 AI 接口**共用同一份**，不是两套）。报告以 `tool='analysis'` **落库成一条记录**（用户选的）。⚠️ **需要用户在 Supabase 执行迁移 `0017_history_tool_allow_analysis.sql`**（放开 `feedback_history.tool` 的 CHECK）；没执行时生成**照样成功**，只是保存会返回 409 并点名迁移文件（报告正文照常返回，不白花一次 AI 调用）。测试：`student-report` **37 项**（纯函数，**本仓库第一个直接 import `.ts` 的套件**）＋ `student-analysis` **19 项**（桩上游 + 鉴权 + 提示词护栏 + 落库） |
 | c | ⚠️ **写路径的读失败会静默降级**（第二批发现的隐患，**未动**） | `upsertStudent()` 合并前那次读走 `getStudentsFresh()` → 查失败时 `softFail()` 返回空数组 → 被当成"没有旧行"，于是**没传的列会被写成 NULL**（= 退回整行覆盖），也就是**数据库抖一下可能静默抹掉别家工具的数据**。根治方向：让**写**路径的这次读失败**明确抛错**（读接口仍然不该 500，但写路径也许应该）。这是取舍，等用户定 |
 
 ---
@@ -249,7 +249,9 @@
 4. **这些套件会自己起 `next start`、并杀掉 3000 端口**，别和其它真服务套件并行跑：
    `feedback-data-cache`、`feedback-client-cache`、`students-unified`、`admin-grant90`、
    `middleware-cache`、`math-plan-students`、`date-input`、`paper-analysis-students`、
-   `archive-students`、**`vision-scores`（2026-10 新增，起两次服务）**。
+   `archive-students`、**`vision-scores`（2026-10 新增，起两次服务）**、
+   **`student-analysis`（2026-10 第三批新增，桩上游在 4588）**。
+   （`student-report` **不需要服务**：纯函数 + 直接 import `.ts`，秒级跑完。）
 5. **`tests/step7-ui.test.mjs` 隔离弱点**：按关键词查全表，会被上次运行遗留数据污染。
 6. **Edge 调试端口会被「幽灵监听者」占住**（2026-10 踩过一次）：
    `Get-NetTCPConnection` 列得出 9490 在监听、PID 却是个**不存在的进程**，
@@ -271,7 +273,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 第二批实测，26 个套件全绿 ✅，合计 810 项断言）**：
+**全套回归现状（2026-10 第三批实测，28 个套件全绿 ✅，合计 866 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -284,20 +286,28 @@ paper-analysis-students 27/27
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 72/72     date-input 15/15          admin-grant90 18/18
 archive-students 17/17     vision-scores 15/15
+student-report 37/37       student-analysis 19/19
 ```
 
 > ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。第一批实测时就发现旧表有几处**过期或漏项**：
 > `math-plan-students` 实际是 **37**（旧表写 29）、`students-unified` 曾经写 62 而实际 64，
 > 而且**整个 `archive-students`（17 项）被漏掉了**。这正是 `dsh-work-guide.md` 坑 1 说的那类问题。
 >
+> ⚠️ `student-analysis` 的项数**取决于数据库状态**：`0017` 还没执行时是 **19 项**
+> （验证「生成成功 + 409 明确点名迁移文件 + 报告正文不丢」）；
+> 执行之后会走「落库成功」那条分支（另加落库读回与"报告不吃自己"共 4 条）。
+>
 > 变化说明（2026-10 第一批）：`date-input` **11 → 15**（非法日期「有意分歧」「反向防护」
 > 「端到端不再 500」三组）；**新增 `vision-scores` 15/15**（本地桩上游 + 分两阶段起服务）。
 >
 > 变化说明（2026-10 第二批）：`students-unified` **64 → 72**（新增「阶段5」8 项：服务端
-> `extra` 按键合并 —— paper 只发 `{cls}` / 同键覆盖 / 不传 extra 逐字节不变 /
-> `null` 删键 vs 整个 null 沿用旧值 / 非法形状仍被拒）；
-> `math-plan-students` 项数不变（37），但「extra 互不踩③」**翻转**成"服务端兜底、不再被盖掉"。
-> 两批都用**变异测试**自证过断言真会红（第一批 14/15、第二批 66/72 与 36/37）。
+> `extra` 按键合并）；`math-plan-students` 项数不变（37），但「extra 互不踩③」**翻转**成
+> "服务端兜底、不再被盖掉"。
+>
+> 变化说明（2026-10 第三批）：**新增 `student-report` 37/37**（纯函数、**本仓库第一个直接
+> import `.ts` 的套件**、不需要起服务）＋ **`student-analysis` 19/19**（桩上游 +
+> 鉴权「非会员不白花一次调用」 + 提示词护栏 + 落库 / 迁移未执行时的 409 两条分支）。
+> 第二、三批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，
