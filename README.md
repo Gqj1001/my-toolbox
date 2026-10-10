@@ -26,15 +26,21 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 
 | 路径 | 说明 | 访问要求 |
 | --- | --- | --- |
-| `/dashboard` | 百宝箱：工具卡片网格，顶部显示邮箱与退出登录 | 登录用户 |
-| `/tools` | 工具列表（与百宝箱同一份目录与权限规则） | 登录用户 |
-| `/tools/json-formatter` | JSON 格式化（示例占位） | 登录用户 |
-| `/tools/password-generator` | 密码生成器（示例占位） | 登录用户 |
-| `/tools/permission-console` | 权限控制台（示例占位） | 仅管理员 |
-| `/tools/math-plan` | 高中数学辅导方案生成器（iframe 承载单文件 HTML） | 登录用户 |
+| `/tools` | 个人中心：会员状态卡（邮箱/等级/到期/退出登录）+ 工具目录 | 登录用户 |
+| `/tools/math-plan` | 高中数学辅导方案生成器（iframe 承载单文件 HTML） | 登录用户（**页内 AI 润色是会员专属**） |
+| `/tools/paper-analysis` | 试卷分析工作台 | 登录用户（**页内 AI 建议/答题卡识别是会员专属**） |
+| `/tools/feedback` | 课后反馈工作台（iframe 承载单文件 HTML） | 登录用户（**页内 AI 润色是会员专属**） |
+| `/dashboard` | 学员档案管理（原「百宝箱」）：学生名单 + 详情 + 记录汇总 | 登录用户 |
 | `/admin` | 管理后台：用户列表与角色修改 | 仅管理员 |
+| `/admin/feedback-keywords`、`/admin/feedback-candidates` | 关键词库维护 / AI 候选审核 | 仅管理员 |
 | `/login`、`/signup` | 登录 / 注册 | 公开 |
-| `/` | 重定向到 `/dashboard` | — |
+| `/` | 重定向到 `/tools` | — |
+
+> ⚠️ **旧版这张表里的三条占位工具都不存在**，别再照着找：
+> `json-formatter` / `password-generator` 已在 `0012` 迁移里 `active=false` 下线，
+> 而且它们的**页面文件更早就删了**（`d08be8b`，代码从来不在 `public/tools/` 里）；
+> `permission-console` **从未**登记进 `tools` 表，也从没有过页面文件。
+> 以 `docs/project-overview.md` 第二节那张表为准（它写的是线上 `tools` 表的真实内容）。
 
 ### 工具目录与角色可见性
 

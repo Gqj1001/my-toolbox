@@ -1,6 +1,6 @@
 # 下个会话待办
 
-> 更新时间：2026-10（阶段4 math-plan 接入统一学生 API 的那一笔）。
+> 更新时间：2026-10（**第一批：空壳工具口径对齐 + 非法日期 500 修复 + vision-scores 防回归**）。
 > **已完成的条目已删除**，这里只剩还没做的。
 > 配套阅读：`docs/project-overview.md`（现状总入口）、`docs/dsh-work-guide.md`（配合方式）、
 > `docs/perf-notes.md`（性能完整记录）。
@@ -71,7 +71,7 @@
 
 ---
 
-## 2. `/tools` 改个人中心（**已完成 2026-10**）+ 百宝箱改「学员档案」（**下一步**）
+## 2. `/tools` 改个人中心（**已完成 2026-10**）+ 百宝箱改「学员档案」（**已完成 2026-10**）
 
 > ⚠️ **原方案作废**：这条原来是「`/tools` 挂会员卡 + `/dashboard` 改成自动跳转，
 > 消除两页重复」。用户 2026-10 明确改口：**百宝箱不删了，要把它做成「学员档案管理」页**
@@ -122,7 +122,15 @@
 
 ---
 
-## 3. vision-scores 启用态测试（半天）—— ⚠️ 用户 2026-10 说**已自测通过、符合预期**
+## 3. ✅ vision-scores 启用态测试（**已完成 2026-10**）
+
+> 用户 2026-10 已实机自测「符合预期」；本轮按下面的清单把**防回归**补上了。
+> **做了什么**：新增 `tests/vision-scores.test.mjs` —— 起本地桩冒充 `{baseUrl}/chat/completions`，
+> 用 `AI_VISION_BASE_URL` 指过去（**产品代码一行没改**），并**分两阶段起服务**
+> （阶段① 不配 `AI_VISION_MODEL` → 验 503；阶段② 配 `deepseek-flash` + 桩 → 验其余 4 条）。
+> 5 条断言全部落地，另加「桩真的被打了」「图片 data URL 原样透传」「Authorization 头没断」**防假绿**。
+> 详见下方清单与 `docs/perf-notes.md` / `tests/vision-scores.test.mjs` 的头部注释。
+
 
 > 用户原话：「对于 1 来说，已经测试完毕，结果不错，符合预期。」
 > 所以这条**降级为可选**：功能侧已被用户认可；下面这些断言的价值在于**防将来改坏**
@@ -209,7 +217,7 @@
 
 | # | 项 | 备注 |
 |---|---|---|
-| 7 | 空壳工具清理 | `json-formatter` / `password-generator` 已下线（`0012`），但代码文件还在 `public/tools/` 里。触发条件：确认不再需要 |
+| 7 | ✅ 空壳工具清理（**已完成 2026-10**） | 已核对：线上 `tools` 表里这两条确实 `active=false`（顺带确认 `vip-batch` / `vip-report` / `hidden-demo` 也是）；而**代码文件早就不在** —— `public/tools/` 从来**没有**这两个文件，它们的页面在 `d08be8b`（会员系统那一笔）就删了。所以**没有代码可删**，本轮只把 `README.md`、`project-overview.md` 里「文件还在 public/tools/」的旧说法改成事实 |
 | 8 | few-shot 效果评估 | 触发条件：累计用 AI 润色 20–30 次后 |
 | 9 | 深度优化 AI 润色（调温度/prompt） | 可选 |
 | 11 | feedback 离线模式入口 | 可选（现在云端拉不到就是空页面，是**有意**的） |
@@ -221,17 +229,24 @@
 
 ## 7. 已知问题（记录，修不修都行）
 
-1. **非法 ISO 日期会被原样写库 → 500**（`2026-13-45` 这种）。
-   详见 `docs/perf-notes.md`「七、已知问题」。**按用户要求未修**。
-   修的时候 `tests/date-input.test.mjs` 的老实现副本会红 —— 那是预期的。
+1. ✅ **非法日期会被原样写库 → 500**（`2026-13-45` 这种）—— **已修（2026-10）**。
+   做法：`src/lib/date-input.ts` 三条分支共用**真日历校验**（不是只加 1–12/1–31 的范围校验，
+   因为 `2026-02-30`、`2月30日`、非闰年的 `2026-02-29` 能过范围校验但库照样拒绝）。
+   校验口径按**只读查询实测**对齐 PostgreSQL：接受 `0001-01-01` / `2024-02-29`，
+   拒绝 `0000-01-01` / `2026-02-29` / `2026-04-31` / `2026-10-32`。
+   防护在 `tests/date-input.test.mjs`：新增「有意分歧」组（老实现放行 / 新实现 null）、
+   「反向防护」组（闰年与边界年份不被误伤）、以及端到端「**HTTP 200 + date 落成 null**」。
+   完整记录见 `docs/perf-notes.md`「七、已知问题」第 1 条（已从"不修"改成"已修"）。
    （注：`2026年10月7日` 那类**不是**这个问题，阶段 3 已支持。）
 2. **`tools` 表的建表语句不在仓库里**（只有种子数据），
    会员那三列（`plan`/`status`/`expires_at`）的加列语句也不在。
    **不要试图用仓库的 SQL 重建数据库。**
 3. **换工具权限 / 下线工具没有后台界面** —— 只能去 Supabase SQL Editor 手工跑
    （照 `0012` 的写法）。改完最多 30 秒全站生效（`tools` 表有 30 秒进程内缓存）。
-4. **`tests/feedback-data-cache.test.mjs` 与 `tests/math-plan-ai-vip-path.test.mjs`
-   会杀 3000 端口**，别和其它真服务套件并行跑。
+4. **这些套件会自己起 `next start`、并杀掉 3000 端口**，别和其它真服务套件并行跑：
+   `feedback-data-cache`、`feedback-client-cache`、`students-unified`、`admin-grant90`、
+   `middleware-cache`、`math-plan-students`、`date-input`、`paper-analysis-students`、
+   `archive-students`、**`vision-scores`（2026-10 新增，起两次服务）**。
 5. **`tests/step7-ui.test.mjs` 隔离弱点**：按关键词查全表，会被上次运行遗留数据污染。
 6. **Edge 调试端口会被「幽灵监听者」占住**（2026-10 踩过一次）：
    `Get-NetTCPConnection` 列得出 9490 在监听、PID 却是个**不存在的进程**，
@@ -253,25 +268,28 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 个人中心本轮实测，24 个套件全绿 ✅）**：
+**全套回归现状（2026-10 第一批实测，26 个套件全绿 ✅，合计 802 项断言）**：
 
 ```
-math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 29/29
-math-plan-ai-apply 20/20   middleware-cache 13/13    verify-checklist 18/18
+math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
+math-plan-ai-apply 20/20   math-plan-ai-sections 26/26  math-plan-ai-vip-path 18/18
+math-plan-export-ui 18/18  middleware-cache 13/13    verify-checklist 18/18
 step7-api 39/39            step7-ui 36/36            ai-thinking-mode 11/11
 paper-analysis 56/56       paper-regression 23/23    paper-score-edit 59/59
 paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
 feedback-data-cache 26/26  feedback-client-cache 51/51
-students-unified 62/62     date-input 11/11          admin-grant90 18/18
-math-plan-ai-sections 26/26  math-plan-ai-vip-path 18/18
-math-plan-export-ui 18/18
+students-unified 64/64     date-input 15/15          admin-grant90 18/18
+archive-students 17/17     vision-scores 15/15
 ```
 
-> 变化说明（本轮）：`paper-regression` 18 → **23**（卡片断言从 `/dashboard` 搬到 `/tools`，
-> 并新增 4 条个人中心断言 + 1 条「/dashboard 过渡期仍可访问」）；
-> `math-plan-ai-vip-path` 17 → **18**（「会员状态生效」从顶栏改到个人中心会员卡，
-> 并新增「顶栏不再重复显示会员等级」）。
+> ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。本轮实测发现旧表有几处本来就**过期或漏项**：
+> `math-plan-students` 实际是 **37**（旧表写 29）、`students-unified` 实际 **64**（旧表写 62），
+> 而且**整个 `archive-students`（17 项）被漏掉了**。这正是 `dsh-work-guide.md` 坑 1 说的那类问题。
+>
+> 变化说明（2026-10 第一批）：`date-input` **11 → 15**（新增「非法日期有意分歧」
+> 「反向防护（闰年/边界年不被误伤）」「端到端不再 500」三组）；
+> **新增 `vision-scores` 15/15**（本地桩上游 + 分两阶段起服务，补上"启用态"这条从没被跑过的路径）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，
