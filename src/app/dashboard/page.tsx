@@ -2,21 +2,26 @@ import Link from "next/link";
 import NewStudentForm from "@/components/archive-new-student";
 import StudentEditor from "@/components/archive-student-editor";
 import SiteHeader from "@/components/site-header";
+import AnalysisPanel from "./analysis-panel";
+import AnalysisSummary from "./analysis-summary";
 import {
   getHistoryFresh,
   getStudentsFresh,
   historyByStudent,
   studentsByName,
 } from "@/lib/feedback-db";
+import { buildStudentReport, TOOL_LABELS } from "@/lib/student-report";
 import { getViewer } from "@/lib/viewer";
 
-/** 记录按工具分组时的显示名与顺序（顺序 = 老师看档案的习惯：方案 → 卷子 → 反馈） */
+/** 记录按工具分组时的显示名与顺序（顺序 = 老师看档案的习惯：方案 → 卷子 → 反馈 → 学情报告） */
 const TOOL_META: Record<string, { label: string; badge: string }> = {
-  "math-plan": { label: "辅导方案", badge: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" },
-  paper: { label: "试卷分析", badge: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300" },
-  feedback: { label: "课后反馈", badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
+  "math-plan": { label: TOOL_LABELS["math-plan"], badge: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" },
+  paper: { label: TOOL_LABELS.paper, badge: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300" },
+  feedback: { label: TOOL_LABELS.feedback, badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
+  // ★ 第三批：学情分析生成的 AI 报告也以一条记录的形式存在档案里（tool='analysis'）
+  analysis: { label: TOOL_LABELS.analysis, badge: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" },
 };
-const TOOL_ORDER = ["math-plan", "paper", "feedback"];
+const TOOL_ORDER = ["math-plan", "paper", "feedback", "analysis"];
 /** 认不出来的归属（将来加工具时会先出现这种）也要显示出来，不能静默丢掉 */
 function toolMeta(tool: string) {
   return TOOL_META[tool] ?? { label: tool || "未标归属", badge: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300" };
@@ -95,6 +100,14 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
     const isKnown = selected in all;
     const info = (all[selected] ?? {}) as Record<string, unknown>;
     const items = ((allHistory[selected] ?? []) as HistoryItem[]).slice().reverse();   // 新的在前
+    // ★ 第三批：学情分析。用**原始行**（`historyRows`）算，因为那份有真正的 ISO 日期，
+    //   而 `historyByStudent()` 给的是给人看的「10月7日」（没有年份，排不了序）。
+    //   ⚠️ 报告必须由 `buildStudentReport()` 这一个来源算出来 —— 页面与 AI 接口共用它。
+    const report = buildStudentReport({
+      name: selected,
+      student: studentRows.find((r) => r.name === selected) ?? null,
+      rows: historyRows.filter((r) => r.student_name === selected),
+    });
     const groups = TOOL_ORDER
       .map((t) => ({ tool: t, items: items.filter((i) => (i.tool ?? "feedback") === t) }))
       .filter((g) => g.items.length);
@@ -132,6 +145,15 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
             grade={String(info.grade ?? "")}
             campus={String(info.campus ?? "")}
             teacher={String(info.teacher ?? "")}
+          />
+
+          {/* ★ 第三批：学情分析 —— 统计部分所有人可见（服务端算好、不花 AI 钱），
+              AI 报告是会员专属（`AnalysisPanel` 里的按钮）。 */}
+          <AnalysisSummary report={report} />
+          <AnalysisPanel
+            name={selected}
+            isVip={!!viewer.membership.isVip}
+            hasRecords={report.overview.total > 0}
           />
 
           {groups.length ? (

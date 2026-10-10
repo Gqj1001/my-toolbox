@@ -115,8 +115,12 @@ export async function GET(request: NextRequest) {
  *     ② 再把新工具名加到这个数组里。
  *
  *  `math-plan` 是 2026-10 加进来的（迁移 `0016_history_tool_allow_math_plan.sql`，
- *  用户已在 Supabase SQL Editor 里执行）：辅导方案工具点「存入档案」时写它。 */
-const ALLOWED_TOOLS = ["feedback", "paper", "math-plan"] as const;
+ *  用户已在 Supabase SQL Editor 里执行）：辅导方案工具点「存入档案」时写它。
+ *
+ *  `analysis` 是 2026-10 第三批加进来的（迁移 `0017_history_tool_allow_analysis.sql`）：
+ *  学情分析生成的 AI 报告会以它落库。⚠️ 这条迁移**必须也在线上执行**，
+ *  否则保存报告会撞 23514（接口会返回 409 并点名迁移文件）。 */
+const ALLOWED_TOOLS = ["feedback", "paper", "math-plan", "analysis"] as const;
 
 /** 把一条外来记录规整成可写入的行（日期走与 feedback 同一个解析器） */
 function normalizeHistoryItem(raw: Record<string, unknown>) {
