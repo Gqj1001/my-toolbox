@@ -10,9 +10,11 @@
  *      分数 / 目标分 / 课时 / 薄弱模块 / 已完成模块 / 备注 —— 那些属于「这一次方案」，
  *      存进档案就会「换个学生做方案，把上一位的分数写成他的」。
  *   3. **刷新不丢**：保存 → 重新打开页面 → 学生圆片还在（数据真在服务器上）。
- *   4. **★extra 跨工具互不踩**：`extra` 是一整个 jsonb，**传了就是整块替换** ——
- *      合并语义只保护顶层列。所以 math-plan 存一次必须**保住 paper 的 extra.cls**，
- *      反过来也一样。这条是**唯一能抓出「extra 被整块覆盖」的测试**。
+ *   4. **★extra 跨工具互不踩**：math-plan 存一次必须**保住 paper 的 extra.cls**，反过来也一样。
+ *      ⚠️ **2026-10 第二批之后这条的性质变了**：以前 `extra` 在接口层是**整块替换**
+ *      （合并语义只保护顶层列），所以"保住别人"完全靠**每个工具自己先读旧值**；
+ *      现在服务端做了**按键合并**（`mergeExtra()`），调用方一句旧值都不读也不会踩到别人。
+ *      本文件的三条断言因此变成**服务端兜底**的证据（尤其③，它以前记录的正是"会被盖掉"）。
  *
  * 外加一条接口防护（顺手修掉的真实 bug）：
  *   5. `op:"import"` 的 `tool` 原来是「缺省按 paper」—— 会把别的工具的数据**静默标成 paper**。
@@ -296,17 +298,23 @@ try {
       false, `写入后 extra=${JSON.stringify(ex)}（cross=${JSON.stringify(cross)}）`);
   }
 
-  // ③ 反过来：模拟 paper 只发自己的 extra.cls（整块替换）——
-  //    这是**接口层**的行为，math-plan 前端无能为力，所以这里如实记录现状，
-  //    而不是假装它不会发生。真正要防的是「math-plan 自己把别人清掉」（②已钉住）。
+  // ③ 反过来：模拟 paper **只发自己的 extra.cls**（它**没有**先读旧值 ——
+  //    `public/tools/paper-analysis/js/app.js` 的 `CLOUD_STORE.saveStudent()` 就是只发 `{cls}`）。
+  //
+  //    ★ 2026-10 第二批：这一步**以前会把 math-plan 的 phase/book/exam 盖掉** ——
+  //      那时 `extra` 在接口层是整块替换，paper 前端又不读旧值，所以这条断言
+  //      如实记录着"会被盖掉"。现在服务端做了**按键合并**（`mergeExtra()`），
+  //      即使调用方一句旧值都不读，也不会踩到别人 —— 这条断言因此**翻转**成"不再被盖掉"。
+  //      ⚠️ 它正是「服务端按键合并生效」的直接证据：合并被摘掉，这条立刻红。
   const paperWrite = await api("/api/students", {
     method: "POST",
     body: JSON.stringify({ name: STU, class_name: PAPER_CLS, extra: { cls: PAPER_CLS } }),
   });
-  record("★extra 互不踩③：paper 若只发 {cls}（整块替换语义），math-plan 的键会被它盖掉 —— " +
-    "所以 math-plan 侧必须自己先读旧 extra（②就是这条的证据）",
-    paperWrite.body?.student?.extra?.cls === PAPER_CLS,
-    `extra=${JSON.stringify(paperWrite.body?.student?.extra)}（这条记录现状：接口层的 extra 是整块替换）`);
+  const paperExtra = paperWrite.body?.student?.extra ?? {};
+  record("★extra 互不踩③：paper 只发 {cls}（服务端按键合并兜底）→ math-plan 的三个键**仍在**",
+    paperExtra.cls === PAPER_CLS && paperExtra.phase === "秋" &&
+      paperExtra.book === "人教B版" && paperExtra.exam === "nh2",
+    `extra=${JSON.stringify(paperExtra)}（phase/book/exam 消失 = 服务端合并没生效）`);
 
   // ---- 1d. 刷新不丢 ----
   const reopened = await openPlan();

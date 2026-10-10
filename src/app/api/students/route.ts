@@ -235,7 +235,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const row = await upsertStudent(guard.userId, name, patch);
+    const row = await upsertStudent(name, patch);
     // 返回结构与本接口的 GET 一致（同一个装配函数），前端只认一种形状
     return NextResponse.json({ ok: true, student: studentsByName([row])[name] });
   } catch (e) {

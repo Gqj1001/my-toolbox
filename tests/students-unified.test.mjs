@@ -352,6 +352,110 @@ try {
   }
 
   // ================================================================
+  // 第 2b 组：★阶段5（2026-10 第二批）—— `extra` 的**服务端按键合并**
+  // ================================================================
+  // 背景：以前合并语义只保护**顶层列**，`extra` 是一整个 jsonb、**传了就是整块替换** ——
+  //   谁最后写谁说了算，所以每个工具都必须**自己**先读旧值再盖上自己的键。
+  //   实测 `public/tools/paper-analysis/js/app.js` 的 `CLOUD_STORE.saveStudent()`
+  //   **没有**先读旧值（它只发 `{cls}`），于是「先 math-plan 存、再到 paper 点保存」
+  //   会把 math-plan 的 `phase/book/exam` **抹掉**（`math-plan-students.test.mjs`
+  //   的「extra 互不踩③」以前如实记录着这个现象）。
+  //   现在合并挪进服务端（`buildStudentRow()` → `mergeExtra()`），下面钉住它。
+  //
+  //   ⚠️ 用**独立的探针姓名**：MERGE 那行紧接着要被「红线2」按值断言，别互相污染。
+  const EX = "__extra合并探针";
+  await fetch(`${BASE}/api/students?name=${encodeURIComponent(EX)}`, { method: "DELETE", headers: { cookie } });
+  /** 只看 extra 的**键值对**（排序后比），避免 jsonb 键序差异造成假红 */
+  const exKey = (o) => JSON.stringify(Object.entries(o || {}).sort(([a], [b]) => (a < b ? -1 : 1)));
+
+  // ① paper 只发自己的键（**不**读旧值）→ math-plan 的键必须还在
+  {
+    const w1 = await studentsPost({ name: EX, grade: "高三", extra: { phase: "秋", book: "人教A版", exam: "nh1" } });
+    const w1b = await w1.json().catch(() => null);
+    const w2 = await studentsPost({ name: EX, class_name: "7班", extra: { cls: "7班" } });   // ← paper 的写法
+    const w2b = await w2.json().catch(() => null);
+    record("★阶段5①：paper 只发 {cls}（**不**先读旧值）→ math-plan 的 phase/book/exam **仍在**",
+      w1b?.ok === true && w2b?.ok === true && w2b.student?.extra?.cls === "7班" &&
+        w2b.student?.extra?.phase === "秋" && w2b.student?.extra?.book === "人教A版" &&
+        w2b.student?.extra?.exam === "nh1",
+      `extra=${JSON.stringify(w2b?.student?.extra)}（只剩 cls 就是服务端按键合并没生效）`);
+  }
+
+  // ② 反向：math-plan 只发自己的三个键 → paper 的 cls 也必须在
+  {
+    const w3 = await studentsPost({ name: EX, extra: { phase: "秋寒", book: "人教B版", exam: "nh2" } });
+    const w3b = await w3.json().catch(() => null);
+    record("★阶段5②：math-plan 只发自己的三个键 → paper 的 cls **仍在**，自己的键是新值",
+      w3b?.student?.extra?.cls === "7班" && w3b?.student?.extra?.phase === "秋寒" &&
+        w3b?.student?.extra?.book === "人教B版" && w3b?.student?.extra?.exam === "nh2",
+      `extra=${JSON.stringify(w3b?.student?.extra)}`);
+  }
+
+  // ③ 同名键：**新值赢**（否则就是"保留旧值"把新数据吞了，另一种 bug）
+  {
+    const w4 = await studentsPost({ name: EX, extra: { cls: "9班" } });
+    const w4b = await w4.json().catch(() => null);
+    record("★阶段5③：同名键**新值赢**（cls 7班 → 9班），且别家键一个不丢",
+      w4b?.student?.extra?.cls === "9班" && w4b?.student?.extra?.phase === "秋寒" &&
+        w4b?.student?.extra?.book === "人教B版" && w4b?.student?.extra?.exam === "nh2",
+      `extra=${JSON.stringify(w4b?.student?.extra)}`);
+  }
+
+  // ④ 这一次**没传** extra → 旧 extra 逐字节不变
+  {
+    const before = (await (await studentsApi(`?name=${encodeURIComponent(EX)}`)).json().catch(() => null))?.student?.extra;
+    const w5 = await studentsPost({ name: EX, notes: "阶段5 不带 extra" });
+    const w5b = await w5.json().catch(() => null);
+    record("★阶段5④：这次**没传** extra → 旧 extra 逐字节不变（既不清空也不写 null）",
+      w5b?.ok === true && exKey(before) === exKey(w5b.student?.extra) && exKey(before) !== "[]",
+      `before=${JSON.stringify(before)} after=${JSON.stringify(w5b?.student?.extra)}`);
+  }
+
+  // ⑤ 新建时只发 {cls} → extra 恰好是这次传的，**不会**凭空多出别家的键
+  {
+    const NEWEX = "__extra新建探针";
+    await fetch(`${BASE}/api/students?name=${encodeURIComponent(NEWEX)}`, { method: "DELETE", headers: { cookie } });
+    const w6 = await studentsPost({ name: NEWEX, extra: { cls: "1班" } });
+    const w6b = await w6.json().catch(() => null);
+    record("★阶段5⑤：新建档案时 extra 恰好等于这次传的（不凭空多键，也不是 {}）",
+      w6b?.ok === true && exKey(w6b.student?.extra) === exKey({ cls: "1班" }),
+      `extra=${JSON.stringify(w6b?.student?.extra)}`);
+    await fetch(`${BASE}/api/students?name=${encodeURIComponent(NEWEX)}`, { method: "DELETE", headers: { cookie } });
+  }
+
+  // ⑥ ★两种 null 要分清（用户 2026-10 选的口径）：
+  //    · `extra: {exam: null}`（对象里某个键是 null）→ **删掉那个键**
+  //    · `extra: null`（整个 extra 传 null）→ "这次没值" → **沿用旧值**（也是 23502 的护栏）
+  {
+    const w7 = await studentsPost({ name: EX, extra: { exam: null } });
+    const w7b = await w7.json().catch(() => null);
+    const ex = w7b?.student?.extra ?? {};
+    record("★阶段5⑥：extra 里某个键传 null = **删掉**它（exam 消失，别的键还在）",
+      w7b?.ok === true && !("exam" in ex) && ex.cls === "9班" && ex.phase === "秋寒" && ex.book === "人教B版",
+      `extra=${JSON.stringify(ex)}`);
+
+    const w8 = await studentsPost({ name: EX, grade: "高二", extra: null });
+    const w8b = await w8.json().catch(() => null);
+    record("★阶段5⑥：整个 extra 传 null → **沿用旧值**（不清空、也不撞 23502 报错）",
+      w8b?.ok === true && w8b.student?.extra?.cls === "9班" && w8b.student?.extra?.book === "人教B版" &&
+        w8b.student?.grade === "高二",
+      `extra=${JSON.stringify(w8b?.student?.extra)} grade=${JSON.stringify(w8b?.student?.grade)}`);
+  }
+
+  // ⑦ 非法形状仍然**明确被拒**（服务端合并**不许**把非法输入悄悄"修好"成对象）
+  {
+    const badArr = await studentsPost({ name: EX, extra: [1, 2, 3] });
+    const badStr = await studentsPost({ name: EX, extra: "abc" });
+    const after = (await (await studentsApi(`?name=${encodeURIComponent(EX)}`)).json().catch(() => null))?.student?.extra;
+    record("★阶段5⑦：非法 extra（数组/字符串）仍被 400 拒，且库里旧 extra **未被改动**",
+      badArr.status === 400 && badStr.status === 400 && exKey(after) === exKey({ cls: "9班", phase: "秋寒", book: "人教B版" }),
+      `数组=${badArr.status} 字符串=${badStr.status} 库里的 extra=${JSON.stringify(after)}`);
+  }
+
+  // 清理阶段5 探针
+  await fetch(`${BASE}/api/students?name=${encodeURIComponent(EX)}`, { method: "DELETE", headers: { cookie } });
+
+  // ================================================================
   // 第 3 组：红线2 —— 跨账号隔离（A 存的学生，B 看不到）
   // ================================================================
   // roster：rolea-* = 免费/管理员（当前用），roleb-* = 另一位

@@ -31,9 +31,10 @@ export type ArchiveActionState = {
 };
 
 /** 与 `/api/students` 一致的守卫：未登录 / 封禁 都不许写。
- *  ⚠️ 顺带把 `user.id` 带出来：`upsertStudent(uid, …)` 的 uid 只用于**缓存 key**
- *  （隐私红线：缓存必须按用户分桶），传进去能省掉一次 `auth.getUser()` 往返
- *  （用户环境约 500ms）。不传虽然也能跑，但要白付一次。 */
+ *  ⚠️ 仍然把 `user.id` 带出来备查，但**写档案已经不再需要它**：
+ *  `upsertStudent(name, patch)` 2026-10 第二批改成直读最新行来做按键合并
+ *  （由 RLS 按会话隔离用户），不再拼缓存 key，所以不再收 uid 参数。
+ *  这里那次 `getViewer()` 是**必须**的（要判封禁），不是白付。 */
 async function requireWriter() {
   const viewer = await getViewer();
   if (!viewer.user) return { ok: false as const, message: "登录已过期，请重新登录。" };
@@ -106,7 +107,7 @@ export async function createStudent(
   if (name.length > 100) return { status: "error", message: "学生姓名过长（最多 100 字）。" };
 
   try {
-    await upsertStudent(guard.userId, name, newStudentPatch(formData));
+    await upsertStudent(name, newStudentPatch(formData));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[archive] 新建学生失败:", msg);
@@ -135,7 +136,7 @@ export async function updateStudent(
   }
 
   try {
-    await upsertStudent(guard.userId, name, patch);
+    await upsertStudent(name, patch);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[archive] 修改学生失败:", msg);

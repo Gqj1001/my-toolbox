@@ -706,6 +706,19 @@ async function loadHistory(): Promise<HistoryRow[]> {
 //
 // ⚠️ 本轮**不改** feedback 的写路径（它是正常工作的老代码，动它有回归风险）。
 //    将来若也要合并语义，应当让 `/api/feedback/data` 也走这两个函数，而不是各写一套。
+//
+// ★ **2026-10 第二批（技术债收口）：`extra` 也改成服务端按键合并。**
+//   在此之前，合并语义只保护**顶层列**，`extra` 是一整个 jsonb、**传了就是整块替换** ——
+//   于是每个工具都必须**自己**先把旧 `extra` 读回来展开、再盖上自己那几个键；
+//   少写一句就会抹掉别家工具的数据。实测就是这样：paper-analysis 的
+//   `CLOUD_STORE.saveStudent()` 只发 `{cls}`（它**没有**先读旧值），
+//   所以「先在 math-plan 存了 phase/book/exam，再到 paper 点一次保存」
+//   → 那三个键当场消失（`tests/math-plan-students.test.mjs` 的「extra 互不踩③」
+//   以前如实记录着这个现象，现在那条断言已经**翻转**成"不再被盖掉"）。
+//
+//   现在合并放进 `buildStudentRow()`：即使某个工具（或将来新接的工具）**一句都不写**，
+//   也不会踩到别人。工具页那句「先读旧值」**仍然保留** ——
+//   服务端合并是**兜底**，不是替代（两边都做，结果一致、幂等）。
 
 /** 可合并的列（= `loadStudents()` 选的列，去掉 id/updated_at）。
  *  ⚠️ 加了新列必须同步这里，否则新列永远写不进去（且不会报错）。 */
@@ -732,10 +745,50 @@ export function pickStudentPatch(input: Record<string, unknown>): StudentPatch {
 }
 
 /** 当前用户已有的档案（按姓名）——供合并写入前读取。
- *  ⚠️ 走 `getStudents()`，所以缓存 key 天然带 user_id（隐私红线）。 */
-async function loadStudentsByName(uid: string): Promise<Map<string, StudentRow>> {
-  const rows = await getStudents(uid);
+ *
+ *  ★ **2026-10 第二批：改成直读最新行**（`getStudentsFresh()`，不走 25 秒缓存）。
+ *     理由：`extra` 现在是**按键合并**，正确性完全依赖「旧 `extra` 是最新的」；
+ *     用缓存版的话，多实例部署时可能把别家工具刚改过的键**写回旧值**（最长 25 秒窗口）。
+ *  ⚠️ 直读靠 **RLS** 隔离用户，所以调用方必须是**带会话**的上下文
+ *     （Route Handler / Server Action）。**绝不能**从 service_role 的上下文调用 ——
+ *     那会读到所有用户的档案，同名学生会串号。
+ *
+ *  ⚠️ 另记一个**既有**隐患（本轮不动）：`getStudentsFresh()` 查失败时走 `softFail()` →
+ *     返回空数组 → 这里就当成"没有旧行"，于是「没传的列」会被写成 NULL（= 回到整行覆盖）。
+ *     也就是说**数据库抖一下可能静默抹掉别家工具的数据**。要根治得让写路径的读失败**明确抛错**，
+ *     那是另一个取舍（读接口不能因此 500，但**写**路径失败也许应该）。留待用户决定。 */
+async function loadStudentsByNameFresh(): Promise<Map<string, StudentRow>> {
+  const rows = await getStudentsFresh();
   return new Map(rows.map((r) => [r.name, r]));
+}
+
+/** `extra` 是不是一个**普通对象**（jsonb 的合法形状）。
+ *  ⚠️ 数组与标量都不是合法形状：0014 有 `check (jsonb_typeof(extra) = 'object')`，
+ *     写进去会被数据库明确拒绝（23514）。我们**不**在这里"顺手修好"它 —— 见 `mergeExtra`。 */
+function isExtraObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * `extra` 的**服务端按键合并**（★ 2026-10 第二批的收口点）
+ *
+ * 规则（四条都要记住，写错任何一条都会**静默**出问题）：
+ *   1. 旧键先展开，**新键覆盖同名旧键**（本次写的一定赢）；
+ *   2. **别的工具的键原样保留** —— 这正是本函数存在的理由；
+ *   3. 新值里 **`null` 表示「把这个键删掉」**（不是"写成 null"）——
+ *      这是唯一能删掉自己那个键的口子（用户 2026-10 选的口径）；
+ *   4. 传进来的**不是对象**（数组 / 字符串 / 数字）→ **原样透传**，
+ *      让数据库像以前一样**明确报错**，而不是被这里悄悄改成合法对象
+ *      （"静默修好非法输入"是更难查的一类 bug）。
+ */
+function mergeExtra(oldValue: unknown, incoming: unknown): unknown {
+  if (!isExtraObject(incoming)) return incoming;   // 规则 4：非法形状原样透传
+  const merged: Record<string, unknown> = isExtraObject(oldValue) ? { ...oldValue } : {};
+  for (const [k, v] of Object.entries(incoming)) {
+    if (v === null) delete merged[k];              // 规则 3：null = 删掉这个键
+    else merged[k] = v;                            // 规则 1、2：新键覆盖，别家键留着
+  }
+  return merged;
 }
 
 /** 只有出现过的键才覆盖；没出现过的一律沿用旧值（旧值没有就是 null）
@@ -750,13 +803,23 @@ async function loadStudentsByName(uid: string): Promise<Map<string, StudentRow>>
 function buildStudentRow(name: string, existing: StudentRow | undefined, patch: StudentPatch): Record<string, unknown> {
   const row: Record<string, unknown> = { name };
   for (const col of STUDENT_MERGE_COLUMNS) {
+    if (col === "extra") {
+      // ★ 第二批：extra 单独走**按键合并**（不是整块替换）。
+      //   注意区分两件事：「整个 extra 传 null / 没传」= 沿用旧值；
+      //   「extra 对象里的某个键值是 null」= 删掉那个键（在 mergeExtra 里处理）。
+      if (Object.prototype.hasOwnProperty.call(patch, col) && patch.extra != null) {
+        row[col] = mergeExtra(existing?.extra, patch.extra);
+      } else {
+        const old = existing?.extra;
+        if (old == null) continue;   // 省略 → 用数据库默认 '{}'
+        row[col] = old;
+      }
+      continue;
+    }
     if (Object.prototype.hasOwnProperty.call(patch, col)) {
-      // 本次明确传了：extra 传 null 也当作「没值」→ 省略（见上）
-      if (col === "extra" && patch.extra == null) continue;
       row[col] = patch[col];
     } else {
       const old = existing ? existing[col] : undefined;
-      if (col === "extra" && old == null) continue;   // 省略 → 用数据库默认 '{}'
       row[col] = old ?? null;
     }
   }
@@ -766,14 +829,20 @@ function buildStudentRow(name: string, existing: StudentRow | undefined, patch: 
 /** upsert 一份档案（**合并语义**）。返回写后的行。
  *
  *  ⚠️ 顺序：**先读旧行 → 合并 → 再写**。不先读就无法区分「没传」与「传了空」。
- *  ⚠️ 写完必须 `invalidateStudents()`，否则最长 25 秒读到的还是旧值。 */
+ *  ★ 2026-10 第二批：这里的读改成**直读最新行**（见 `loadStudentsByNameFresh()`），
+ *     不再走 25 秒缓存 —— 合并的正确性依赖旧值是最新的。
+ *     代价：每次保存档案多一次 Supabase 往返（保存是低频动作，换来的是不丢数据）。
+ *  ⚠️ 写完必须 `invalidateStudents()`，否则最长 25 秒读到的还是旧值。
+ *
+ *  ⚠️ 签名 2026-10 第二批去掉了 `uid`：它以前只用来拼**缓存 key**，
+ *     现在合并走直读（由 RLS 隔离用户），这个参数已经没有用处，留着会误导人。
+ *     调用方必须处于**带会话**的上下文（Route Handler / Server Action），见上面的警告。 */
 export async function upsertStudent(
-  uid: string,
   name: string,
   patch: StudentPatch,
 ): Promise<StudentRow> {
   const supabase = await createClient();
-  const existing = (await loadStudentsByName(uid)).get(name);
+  const existing = (await loadStudentsByNameFresh()).get(name);
 
   const row = buildStudentRow(name, existing, patch);
 
