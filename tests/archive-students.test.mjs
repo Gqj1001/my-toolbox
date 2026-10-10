@@ -146,6 +146,32 @@ try {
   record("★详情页：有「修改档案」勾选框与「删除这位学生」按钮",
     detail?.hasEditor === true && detail?.hasDelete === true, JSON.stringify(detail));
 
+  // ---- 3b. ★第三批：详情页的「学情分析」区块（当前登录的是**免费**账号 rolea）----
+  //    这里钉住四件事：
+  //      ① 统计部分**免费可见**（三个小节都在）——用户口径是「统计免费、AI 会员专属」；
+  //      ② 数字算得对（88/150 → 58.7%），别把别的记录算进来；
+  //      ③ **抽不到就如实说**（这条 paper 正文里没有那句话）——这是本功能最容易做坏的地方：
+  //         编一条"薄弱模块"出来老师会拿去跟家长说；
+  //      ④ 免费用户**看不到**生成按钮（AI 是会员专属）。
+  const analysis = await inDoc(`
+    const body = document.body.innerText.replace(/\\s+/g,' ');
+    const btnTexts = [...document.querySelectorAll('button')].map(b => b.innerText.trim());
+    return { body, btnTexts };
+  `);
+  const aBody = String(analysis?.body ?? "");
+  record("★学情分析：详情页有该区块，且统计三个小节都在（成绩趋势 / 课时安排 / 薄弱与失分）",
+    /学情分析/.test(aBody) && /成绩趋势/.test(aBody) && /课时安排/.test(aBody) && /薄弱与失分/.test(aBody),
+    aBody.slice(0, 160));
+  record("★学情分析：把这条试卷分析算进了成绩统计（88 / 150 → 得分率 58.7%）",
+    /88/.test(aBody) && /150/.test(aBody) && /58\.7%/.test(aBody),
+    (aBody.match(/58\.7%/) ? "找到 58.7%" : "**没找到得分率**") + " | " + aBody.slice(0, 200));
+  record("★学情分析：正文没有那句话就**如实说没抽到**（不硬凑一条薄弱模块）",
+    /没有抽到薄弱/.test(aBody) && /没有出现「核心薄弱板块/.test(aBody),
+    (aBody.match(/[^ ]*没有出现「核心薄弱板块[^ ]*/) ?? ["<未找到如实说明>"])[0]);
+  record("★学情分析：免费用户看得到统计，但**没有**「生成学情报告」按钮（AI 会员专属）",
+    /会员专属/.test(aBody) && !(analysis?.btnTexts ?? []).some((t) => /生成学情报告/.test(String(t))),
+    `按钮=[${(analysis?.btnTexts ?? []).join(" / ")}]`);
+
   // ---- 4. 修改：**不勾任何框**直接提交 → 什么都不该变 ----
   const noChange = await inDoc(`
     const form = [...document.querySelectorAll('form')].find(f => f.querySelector('input[name="change_grade"]'));
