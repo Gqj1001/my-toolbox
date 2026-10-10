@@ -75,9 +75,52 @@ alter table public.feedback_history
 
 ---
 
-## 2. vision-scores 启用态测试（半天）
+## 2. `/tools` 改个人中心（**已完成 2026-10**）+ 百宝箱改「学员档案」（**下一步**）
 
-**为什么**：答题卡识别的**路由与前端都完整**（逐项查过，见下），
+> ⚠️ **原方案作废**：这条原来是「`/tools` 挂会员卡 + `/dashboard` 改成自动跳转，
+> 消除两页重复」。用户 2026-10 明确改口：**百宝箱不删了，要把它做成「学员档案管理」页**
+> （把每个学生的辅导方案 / 试卷分析 / 反馈收集到一处，**只做管理**；
+> 「生成整体学情分析」是以后的事）。所以两页是**各有各的活**，不再合并。
+
+### ✅ 已完成：`/tools` = 个人中心（2026-10）
+
+| 做了什么 | 细节 |
+|---|---|
+| 新增会员状态卡 | `src/components/membership-card.tsx`：邮箱 / 会员等级 / 剩余天数 / 到期日 / 管理员标识 / 查看会员权益 / **退出登录** |
+| 顶栏精简 | `site-header.tsx` **只留导航**（+ 管理后台入口）。邮箱、会员徽标、退出按钮全部移走 —— 原来它们和 `/dashboard` 正文各显示一遍 |
+| 顺手省一次查询 | 顶栏不再查 `getMembership()`，每个页面少一次会员查询（`role` 仍由调用方传入，用于显示「管理后台」入口） |
+| 导航只留一个入口 | 去掉重复指向同一处的「百宝箱」链接（档案页上线后再加回「学员档案」入口） |
+| 落点全部改到 `/tools` | `/` 首页、登录后、`/upgrade` 的「已是会员」、**非管理员被挡**（`?error=admin_required`）、管理员自我降级（`?error=self_demoted`）。以前这些落点都是 `/dashboard` |
+| 过渡期保护 | `/dashboard` **一行没动**，并加了一条临时断言「它仍可访问、不是空页」，避免改造期间被弄坏 |
+
+### ⬜ 下一步：百宝箱 = 学员档案管理（「能看又能改」）
+
+用户选的定位：**能看又能改** —— 不只是展示，还要能在档案页**新建学生 / 改年级校区教师 / 删除**。
+
+要做的（动手前先给用户页面结构方案）：
+
+1. **名单页** `/dashboard`：学生列表 + 搜索 + 新建学生 + 删除；每人显示 年级/校区/教师/来源工具
+2. **详情页**：这位学生的基础信息 + **全部记录**（辅导方案 / 试卷分析 / 课后反馈 分组）
+3. 全部数据走**已有的** `/api/students` 与 `src/lib/feedback-db.ts`
+   ⚠️ **不要另写一套装配函数** —— `studentsByName()` / `historyByStudent()` 已经是唯一来源
+4. 顶栏加回「学员档案」入口（现在故意没放）
+
+> ⚠️ **一个必须先讲清的事实**：档案里的「记录」来自 `feedback_history` 表，
+> 而 **math-plan 目前不写历史**（`tool` 的 CHECK 只允许 `feedback`/`paper`）。
+> 所以档案页现在能收齐的是**试卷分析**和**课后反馈**，
+> 「辅导方案」那一路要先把历史打开（见本节 1c 的两步）。
+> 设计方案时必须先跟用户确认这一点，别让他以为「辅导方案也会出现在档案里」。
+
+---
+
+## 3. vision-scores 启用态测试（半天）—— ⚠️ 用户 2026-10 说**已自测通过、符合预期**
+
+> 用户原话：「对于 1 来说，已经测试完毕，结果不错，符合预期。」
+> 所以这条**降级为可选**：功能侧已被用户认可；下面这些断言的价值在于**防将来改坏**
+> （尤其是那条「模型名不含 deepseek 就不能带 thinking」——改成无条件带会直接 400）。
+> 有空再补，不要当成阻塞项。
+
+**为什么值得补**：答题卡识别的**路由与前端都完整**（逐项查过，见下），
 但**「启用之后」那条路径从来没有被执行过** —— 现有测试只覆盖两条降级路径。
 **你配好 `AI_VISION_MODEL` 打开开关那一刻，是这条路径第一次真正跑起来。**
 
@@ -111,27 +154,37 @@ alter table public.feedback_history
 
 ---
 
-## 3. ⚠️ 悬着的问题：feedback.html「下载 10 秒」（需要 HAR）
+## 4. ✅ feedback.html「下载 10 秒」—— **已结案（2026-10，根因是本机代理）**
 
 **用户报的现象**：`feedback.html` 42.8 KB，Content download 花了 **10.31 秒**
 （等待服务器响应只有 504ms）。
 
-**已经查到的（2026-10）**：
-- **不是 A-2 引入的**：A-2 提交（`6ccfcc3`）与它的父提交在本地**输出逐字一致**。
-- **服务端正常**：线上实测 `feedback.html` 首字节 **145ms**、总 **247ms**，
-  `Cache-Control: public`（没被改过）。171,933 字节未压缩 ≈ 用户看到的 42.8 KB。
-- 42.8 KB ÷ 10.31 秒 ≈ **4 KB/s** —— 这个量级像是**链路**问题，不是服务器。
-- 顺带发现：`/api/feedback/data` **冷启动 5.4 秒**（第二次 408ms）—— 独立问题，与本条无关。
+**用户提供了两份 HAR（Chrome + Edge，桌面）后定位到根因**：
 
-**下一步**：要用户给一份 **HAR**（F12 → Network → 右键 → Save all as HAR），
-才能判断是 CDN、运营商还是别的。**没有 HAR 不要再猜。**
+> **不是服务器、不是 CDN、不是代码 —— 是用户电脑上的代理软件**
+> （`D:\狮子云\shiziCore.exe`，系统代理 `127.0.0.1:7890`）**把网站流量绕出去了**。
 
----
+证据（用 `tests/_analyze-har.mjs` 跑出来的，脚本已留在仓库里）：
 
-## 4. `/tools` 改个人中心 + `/dashboard` 改 redirect（半天）
+| 证据 | 数值 |
+|---|---|
+| 所有请求的「远端 IP / 连接」 | **全部是 `127.0.0.1` : `7890`**（Chrome 16/16、Edge 52/60） |
+| `feedback.html` 耗时分解 | 等待服务器 **411ms**（`x-vercel-cache: HIT`、`server: Vercel`、香港 hkg1）+ **下载 2987ms** |
+| 实测下载速度 | 约 **56 KB/s**（与用户报的 4–43 KB/s 同量级） |
+| Chrome 那份更夸张 | 三个 **8–14KB 的小 JS**，光「等待服务器」各等了 **9.2–9.6 秒** |
+| 同页对比 | `/admin` 60KB 用 494ms、`_next` 224KB 用 873ms —— **时快时慢，典型代理链路特征** |
 
-两页 99% 重复（都渲染同一个 tool-grid）。`/tools` 挂上会员状态卡 + 退出登录，
-`/dashboard` 改成自动跳转。
+**结论**：服务器只用 411ms，慢的全在「绕行那一趟」。**别再查服务端了。**
+
+**给用户的做法**（已交付）：
+- ✅ 在「狮子云」里把 **`010034.xyz` 加入直连/绕过代理名单**（不要去手改系统代理开关，
+  「狮子云」下次启动会覆盖）
+- 加完再用 F12 → Network 复测 `feedback.html`，掉到 1 秒内即彻底结案
+- 可能还要一起加 **Supabase 域名**（它同样被绕行，影响工具的跟手程度）
+
+> ⚠️ 判断口径：以后凡是「某个文件下载慢、但服务端首字节很快」，
+> **先看 HAR 里 `serverIPAddress` 是不是 `127.0.0.1`** —— 一眼就能排除服务器。
+> 分析脚本：`& "<bundled node>" tests\_analyze-har.mjs "<har 路径>"`
 
 ---
 
@@ -191,20 +244,25 @@ alter table public.feedback_history
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 阶段4 本轮实测，24 个套件全绿 ✅）**：
+**全套回归现状（2026-10 个人中心本轮实测，24 个套件全绿 ✅）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 29/29
 math-plan-ai-apply 20/20   middleware-cache 13/13    verify-checklist 18/18
 step7-api 39/39            step7-ui 36/36            ai-thinking-mode 11/11
-paper-analysis 56/56       paper-regression 18/18    paper-score-edit 59/59
+paper-analysis 56/56       paper-regression 23/23    paper-score-edit 59/59
 paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 62/62     date-input 11/11          admin-grant90 18/18
-math-plan-ai-sections 26/26  math-plan-ai-vip-path 17/17
+math-plan-ai-sections 26/26  math-plan-ai-vip-path 18/18
 math-plan-export-ui 18/18
 ```
+
+> 变化说明（本轮）：`paper-regression` 18 → **23**（卡片断言从 `/dashboard` 搬到 `/tools`，
+> 并新增 4 条个人中心断言 + 1 条「/dashboard 过渡期仍可访问」）；
+> `math-plan-ai-vip-path` 17 → **18**（「会员状态生效」从顶栏改到个人中心会员卡，
+> 并新增「顶栏不再重复显示会员等级」）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，

@@ -77,9 +77,12 @@ export async function setUserRole(
   revalidatePath("/tools");
   revalidatePath("/");
 
-  // 管理员把自己降级了：失去后台权限，直接送回百宝箱并提示
+  // 管理员把自己降级了：失去后台权限，直接送回工具列表（个人中心）并提示。
+  // ⚠️ 落点 2026-10 从 `/dashboard` 改成 `/tools`：百宝箱要改成「学员档案」页，
+  //    不该再兼「被踢出来时的兜底落地页」。`?error=self_demoted` 的展示处在
+  //    src/app/tools/page.tsx 的 errorMessages。
   if (userId === guard.user.id && role === "user") {
-    redirect("/dashboard?error=self_demoted");
+    redirect("/tools?error=self_demoted");
   }
 
   return {

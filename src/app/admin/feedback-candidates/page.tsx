@@ -44,7 +44,7 @@ export default async function FeedbackCandidatesPage({ searchParams }: { searchP
   if (role !== "admin") {
     return (
       <>
-        <SiteHeader email={user?.email ?? null} role={role ?? "user"} current="/admin" />
+        <SiteHeader role={role ?? "user"} current="/admin" />
         <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-6 py-10">
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             没有访问权限：该页面仅对 admin 角色开放。
@@ -67,7 +67,7 @@ export default async function FeedbackCandidatesPage({ searchParams }: { searchP
   if (batchErr) {
     return (
       <>
-        <SiteHeader email={user?.email ?? null} role="admin" current="/admin" />
+        <SiteHeader role="admin" current="/admin" />
         <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-6 py-10">
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">AI 关键词审核</h1>
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
@@ -174,7 +174,7 @@ export default async function FeedbackCandidatesPage({ searchParams }: { searchP
 
   return (
     <>
-      <SiteHeader email={user?.email ?? null} role="admin" current="/admin" />
+      <SiteHeader role="admin" current="/admin" />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">
         <div className="flex flex-wrap items-start justify-between gap-3">

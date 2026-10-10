@@ -73,12 +73,15 @@ await ev(`document.querySelector("form").requestSubmit(), true`);
 for (let i = 0; i < 60; i++) { await sleep(500); if ((await ev("location.pathname")) !== "/login") break; }
 await sleep(1500);
 
-// ---------- dashboard 卡片 ----------
-console.log("\n=== dashboard 新卡片 ===");
-await goto("/dashboard", 6000);
+// ---------- 工具列表（= 个人中心）的卡片 ----------
+// ⚠️ 2026-10 起这里从 `/dashboard` 改成 `/tools`：
+//    工具列表才是主落地页（`/` 与登录后都直接去它），百宝箱要改成「学员档案」页。
+//    卡片内容与排序的断言**一条都没放松**，只是换了页面。
+console.log("\n=== 工具列表（个人中心）的卡片 ===");
+await goto("/tools", 6000);
 {
   const t = await ev(`document.body.innerText`);
-  rec("dashboard 出现「试卷分析工作台」", /试卷分析工作台/.test(String(t)), "");
+  rec("工具列表出现「试卷分析工作台」", /试卷分析工作台/.test(String(t)), "");
   const cards = await ev(`[...document.querySelectorAll('a')].filter(a=>a.href.includes('/tools/')).map(a=>({href:a.getAttribute('href'), text:a.innerText.replace(/\\s+/g,' ').slice(0,40)}))`);
   const paper = (cards ?? []).find((c) => String(c.href).includes("paper-analysis"));
   rec("卡片链接指向 /tools/paper-analysis", !!paper, JSON.stringify(paper ?? {}));
@@ -97,7 +100,36 @@ await goto("/dashboard", 6000);
   rec("已下线的 4 个空壳工具不再出现（JSON/密码/vip-batch/vip-report）",
     !order.some((x) => /JSON|密码生成|批量数据|高级报表/.test(x)),
     order.slice(0, 8).join(" | "));
+
+  // ---------- 个人中心：会员状态卡（2026-10 新增）----------
+  // 这张卡接替了原来散在「顶栏 + /dashboard 正文」的会员信息，所以要有断言钉住它。
+  const pc = await ev(`(() => {
+    const body = document.body.innerText.replace(/\\s+/g,' ');
+    const btns = [...document.querySelectorAll('button')].map(b => b.innerText.replace(/\\s+/g,' ').trim());
+    const links = [...document.querySelectorAll('a')].map(a => a.getAttribute('href'));
+    return { body, hasSignOut: btns.some(x => /退出登录/.test(x)),
+             signOutCount: btns.filter(x => /退出登录/.test(x)).length,
+             hasUpgrade: links.includes('/upgrade'),
+             hasToolsNav: links.filter(h => h === '/tools').length };
+  })()`);
+  rec("★个人中心：账号邮箱显示出来了",
+    /@/.test(String(pc?.body ?? "")), String(pc?.body ?? "").slice(0, 90));
+  rec("★个人中心：会员等级显示出来了（免费版/会员版）",
+    /(免费版|会员版)/.test(String(pc?.body ?? "")), "");
+  rec("★个人中心：有「退出登录」按钮，而且**只有一个**",
+    pc?.hasSignOut === true && pc?.signOutCount === 1, `个数=${pc?.signOutCount}`);
+  rec("★个人中心：非会员时给出「查看会员权益」入口", pc?.hasUpgrade === true, JSON.stringify(pc?.hasUpgrade));
   console.log(`     卡片: ${order.slice(0, 6).join(" | ")}`);
+}
+
+// ---------- /dashboard 仍然打得开（它正在被改造成「学员档案」页）----------
+// ⚠️ 这一条是**临时**的：等学员档案上线，这里要改成断言「学员档案」的内容。
+//    现在钉住的是「改造期间它没被弄坏、也没 404」。
+await goto("/dashboard", 4000);
+{
+  const st = await ev(`({ path: location.pathname, hasBody: document.body.innerText.length > 0 })`);
+  rec("（过渡期）/dashboard 仍可访问且不是空页（它将被改造成学员档案）",
+    st?.path === "/dashboard" && st?.hasBody === true, JSON.stringify(st));
 }
 
 // ---------- feedback 页面回归 ----------

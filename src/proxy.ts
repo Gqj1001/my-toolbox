@@ -233,10 +233,10 @@ export default async function proxy(request: NextRequest) {
     return redirectTo(loginUrl);
   }
 
-  // 2) 已登录用户不必再看登录/注册页 -> 直接回百宝箱
+  // 2) 已登录用户不必再看登录/注册页 -> 直接回工具列表
   if (user && (pathname === "/login" || pathname === "/signup")) {
     const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/dashboard";
+    homeUrl.pathname = "/tools";
     homeUrl.search = "";
 
     return redirectTo(homeUrl);
@@ -293,8 +293,11 @@ export default async function proxy(request: NextRequest) {
     const allowed = role === "admin" || isBootstrapAdmin(user.email);
 
     if (!allowed) {
+      // 非管理员被送回「工具列表」（个人中心）。⚠️ 2026-10 起这个落点是 `/tools`：
+      // 以前是 `/dashboard`，但百宝箱要改成「学员档案」页，它不该再兼「兜底落地页」。
+      // `?error=admin_required` 的展示处也要跟着搬（见 src/app/tools/page.tsx）。
       const homeUrl = request.nextUrl.clone();
-      homeUrl.pathname = "/dashboard";
+      homeUrl.pathname = "/tools";
       homeUrl.search = "";
       homeUrl.searchParams.set("error", "admin_required");
 

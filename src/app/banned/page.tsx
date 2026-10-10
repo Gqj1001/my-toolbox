@@ -11,7 +11,7 @@ export default async function BannedPage() {
 
   return (
     <>
-      <SiteHeader email={user?.email ?? null} role={role ?? "user"} />
+      <SiteHeader role={role ?? "user"} />
 
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-6 py-16 text-center">
         <span

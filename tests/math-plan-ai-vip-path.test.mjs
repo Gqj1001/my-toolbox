@@ -76,10 +76,19 @@ try {
   const inVip = await login(userEmail, password);
   record("roleb（已开通 VIP）登录成功", inVip);
   if (inVip) {
-    // 顶栏在会员时显示「会员版 · 剩 N 天」，免费时显示「免费版」
-    const navTxt = await ev(`(document.querySelector('header')||document.body).innerText.replace(/\\s+/g,' ')`);
-    const lookVip = /会员版/.test(navTxt);
-    record("roleb 的会员状态已生效（顶栏显示「会员版」）", lookVip, navTxt.slice(0, 90));
+    // 会员状态在 `/tools`（= 个人中心）的**会员状态卡**上看。
+    // ⚠️ 2026-10 起**顶栏不再显示会员等级**：邮箱/会员徽标/退出按钮都搬到会员卡上了
+    //    （原来顶栏和 /dashboard 正文各显示一遍，同一页重复两三处）。
+    //    所以这条断言改到 `/tools` 上查 —— **要验的东西没变**：roleb 的 VIP 真的生效了。
+    //    ⚠️ `login()` 落点也是 `/tools`（登录后即个人中心），这里显式走一遍更不容易被落点变化弄坏。
+    await goto("/tools", 3000);
+    const pcTxt = await ev(`document.body.innerText.replace(/\\s+/g,' ')`);
+    const lookVip = /会员版/.test(pcTxt) && /\d+ 天/.test(pcTxt);
+    record("roleb 的会员状态已生效（个人中心会员卡显示「会员版 · 剩 N 天」）", lookVip, pcTxt.slice(0, 110));
+    // 顺带钉住「顶栏不再承担会员信息」这件事，防止有人又把它加回去造成重复
+    const headerTxt = await ev(`(document.querySelector('header')||document.body).innerText.replace(/\\s+/g,' ')`);
+    record("顶栏只管导航（不再重复显示会员等级）",
+      !/会员版|免费版/.test(headerTxt), headerTxt.slice(0, 90));
 
     const noKey = await callApi(BODY);
     record("VIP + 无 AI_KEY → 503「服务端未配置 AI Key」",

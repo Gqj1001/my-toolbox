@@ -28,8 +28,10 @@ export default async function UpgradePage({ searchParams }: PageProps<"/upgrade"
   const toolSlug = typeof params.tool === "string" ? params.tool : null;
 
   // 已经是会员就不用再看升级页
+  // ⚠️ 2026-10 起回 `/tools`（原来是 `/dashboard`）：工具列表才是主落地页，
+  //    百宝箱要改成「学员档案」，不该再兼这个兜底。
   if (membership.isVip) {
-    redirect("/dashboard");
+    redirect("/tools");
   }
 
   const { user, role } = await getCurrentUserWithRole();
@@ -47,14 +49,14 @@ export default async function UpgradePage({ searchParams }: PageProps<"/upgrade"
 
   return (
     <>
-      <SiteHeader email={user?.email ?? null} role={role ?? "user"} current="/dashboard" />
+      <SiteHeader role={role ?? "user"} current="/tools" />
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 overflow-y-auto px-6 py-10">
         <Link
-          href="/dashboard"
+          href="/tools"
           className="w-fit text-sm text-zinc-500 transition hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
         >
-          ← 返回百宝箱
+          ← 返回工具列表
         </Link>
 
         <header className="flex flex-col gap-3">

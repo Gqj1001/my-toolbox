@@ -20,7 +20,7 @@ export default async function AdminPage() {
   if (role !== "admin") {
     return (
       <>
-        <SiteHeader email={user?.email ?? null} role={role ?? "user"} current="/admin" />
+        <SiteHeader role={role ?? "user"} current="/admin" />
         <main className="mx-auto w-full max-w-5xl flex-1 overflow-y-auto px-6 py-10">
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             没有访问权限：管理后台仅对 admin 角色开放。
@@ -38,7 +38,7 @@ export default async function AdminPage() {
 
   return (
     <>
-      <SiteHeader email={user?.email ?? null} role="admin" current="/admin" />
+      <SiteHeader role="admin" current="/admin" />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">
         <div className="flex flex-col gap-1">

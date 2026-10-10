@@ -20,7 +20,7 @@ const CWD = "D:\\my-website\\my-toolbox";
 const LOG_DIR = "D:\\my-website\\.tmp-planning-samples\\ui-suite-logs";
 
 /** 需要「外面先起好服务」的套件 */
-const NEED_SERVER = [
+const DEFAULT_NEED_SERVER = [
   "step7-ui.test.mjs",
   "verify-checklist.mjs",
   "paper-regression.test.mjs",
@@ -29,7 +29,19 @@ const NEED_SERVER = [
   "math-plan-export-ui.test.mjs",
 ];
 /** 自己起服务（会先杀掉 3000）的套件 —— 必须放在最后，且要先停掉我们的服务 */
-const OWN_SERVER = ["math-plan-ai-vip-path.test.mjs"];
+const DEFAULT_OWN_SERVER = ["math-plan-ai-vip-path.test.mjs"];
+
+// 允许临时指定要跑的套件（调试单套时用）：只传文件名 = 当作「需要外部服务」那一组。
+//   & <node> tests\_run-ui-suites.mjs paper-regression.test.mjs
+//   & <node> tests\_run-ui-suites.mjs tests\paper-regression.test.mjs   ← 两种写法都要认
+// ⚠️ 统一去掉 `tests\` 前缀，因为下面 spawn 时会自己拼 `tests\`（本轮就踩到过
+//    `tests\tests\xxx` 这种路径）。
+const argv = process.argv
+  .slice(2)
+  .filter((a) => !a.startsWith("-"))
+  .map((a) => a.replace(/^\.?[\\/]?tests[\\/]/i, ""));
+const NEED_SERVER = argv.length ? argv : DEFAULT_NEED_SERVER;
+const OWN_SERVER = argv.length ? [] : DEFAULT_OWN_SERVER;
 
 const ps = (cmd) => spawnSync("powershell", ["-NoProfile", "-Command", cmd], { encoding: "utf8" }).stdout.trim();
 const listeners = () => ps("(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).OwningProcess");
@@ -52,7 +64,9 @@ const waitUp = async (secs) => {
 /** 跑一套：实时回显 + 落日志，返回 { code, summary, fails } */
 const run = (file) => new Promise((resolve) => {
   console.log(`\n########## ${file} ##########`);
-  const logPath = `${LOG_DIR}\\${file.replace(/\.mjs$/, "")}.log`;
+  // ⚠️ 日志名只用**文件名部分**：临时传 `tests\xxx.test.mjs` 进来时，
+  //    直接用原串会拼出 `...\ui-suite-logs\tests\xxx.log` → ENOENT（本轮踩到）。
+  const logPath = `${LOG_DIR}\\${file.split(/[\\/]/).pop().replace(/\.mjs$/, "")}.log`;
   const out = createWriteStream(logPath);
   const p = spawn(NODE, [`tests\\${file}`], { cwd: CWD, stdio: ["ignore", "pipe", "pipe"] });
   const summary = { line: "", fails: [] };

@@ -38,7 +38,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
 
   return (
     <>
-      <SiteHeader email={user?.email ?? null} role={role ?? "user"} current="/dashboard" />
+      <SiteHeader role={role ?? "user"} current="/dashboard" />
 
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 overflow-y-auto px-6 py-10">
         {errorMessage ? (

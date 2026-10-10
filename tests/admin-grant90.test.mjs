@@ -107,17 +107,20 @@ try {
   const api = makePageApi(cdp, sessionId);
 
   // ---------------------------------------------------------------- 1. 非管理员
-  // 用 roleb（普通用户）登录后访问 /admin → 中间件会把他重定向到 /dashboard
+  // 用 roleb（普通用户）登录后访问 /admin → 中间件会把他重定向到 /tools（个人中心）
   const okB = await api.login(userEmail, password);
   record("（准备）用普通用户 roleb 登录成功", okB);
   await sleep(800);
   const whereB = await api.ev("location.pathname + location.search");
-  // ⚠️ 只断言「进不去 /admin、被送到 /dashboard」。
+  // ⚠️ 只断言「进不去 /admin、被送到 /tools」。
   //    不要断言 `error=admin_required` 这个 query 一定在：proxy 确实会带上它
   //    （src/proxy.ts 的 ADMIN_PATHS 分支），但客户端后续导航有可能把它丢掉，
   //    把它写成硬断言会得到一条与安全无关的假红（本轮踩过）。
-  record("★非管理员访问 /admin 被挡（落到 /dashboard，不是 /admin）",
-    !/^\/admin/.test(whereB) && /^\/dashboard/.test(whereB),
+  // ⚠️ 落点 2026-10 从 `/dashboard` 改成 `/tools`：百宝箱要改成「学员档案」页，
+  //    不该再兼「非管理员的兜底落地页」。（这条断言跟着落点改，**安全含义没变**：
+  //    仍然要求「进不去 /admin」。）
+  record("★非管理员访问 /admin 被挡（落到 /tools，不是 /admin）",
+    !/^\/admin/.test(whereB) && /^\/tools/.test(whereB),
     `落在 ${whereB}`);
 
   // 再“硬试”一次：从 B 自己的会话直接提交那个 Server Action（模拟手工构造请求）

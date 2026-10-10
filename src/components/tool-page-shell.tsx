@@ -49,12 +49,12 @@ export default async function ToolPageShell({ route, skeleton }: ToolPageShellPr
     redirect(`/upgrade?tool=${encodeURIComponent(slug)}`);
   }
 
-  const { user, role } = viewer;
+  const { role } = viewer;
   const iframeSrc = resolveIframeSrc(slug);
 
   return (
     <>
-      <SiteHeader email={user?.email ?? null} role={role ?? "user"} current="/dashboard" />
+      <SiteHeader role={role ?? "user"} current="/tools" />
 
       {iframeSrc ? (
         // 单文件 HTML 工具：iframe 撑满剩余高度；传了 skeleton 就先顶着加载骨架
@@ -63,10 +63,10 @@ export default async function ToolPageShell({ route, skeleton }: ToolPageShellPr
         // 尚未接入具体实现的占位内容
         <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">
           <Link
-            href="/dashboard"
+            href="/tools"
             className="w-fit text-sm text-zinc-500 transition hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
           >
-            ← 返回百宝箱
+            ← 返回工具列表
           </Link>
 
           <header className="flex items-start gap-4">
