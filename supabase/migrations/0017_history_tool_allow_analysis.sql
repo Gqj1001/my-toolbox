@@ -23,6 +23,12 @@
 --
 -- 幂等：先 drop if exists 再 add，可重复执行。
 -- 在 Supabase Dashboard -> SQL Editor 中**整段执行**（只跑这一段，不要多跑别的）。
+--
+-- ⚠️ 线上**已执行过**：用户 2026-10 在 SQL Editor 里跑过本段 SQL
+--    （自检第 2 条当时返回 feedback=5 等分布，与执行前一致 ⇒ 只放宽了约束、没动数据）。
+--    本文件是把那次操作**固化进仓库**，免得下个会话不知道这条约束已经变了。重复执行安全。
+--    ➡️ 执行之后 `tests/student-analysis.test.mjs` 从 19 项变成 **21 项**：
+--       落库分支（saved:true + 读回 tool='analysis'）与「报告不吃自己」两条开始生效。
 -- ============================================================
 
 alter table public.feedback_history

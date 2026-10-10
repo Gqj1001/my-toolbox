@@ -69,7 +69,7 @@
 | # | 事项 | 说明 |
 |---|---|---|
 | a | ✅ 接口层的 `extra` 改成**服务端按键合并**（**已完成 2026-10 第二批**） | 合并挪进 `src/lib/feedback-db.ts` 的 `buildStudentRow()` → `mergeExtra()`：写入前读回旧 `extra`、展开、再盖本次的键。**顺带修掉一个真 bug**：paper 的 `CLOUD_STORE.saveStudent()` 从来不读旧值（只发 `{cls}`），所以以前「先 math-plan 存、再到 paper 点保存」会把 `phase/book/exam` 抹掉。规则：同名键新值赢 / 别家键保留 / **键值 `null` = 删掉该键**（整个 `extra` 传 null 或没传 = 沿用旧值）。合并前改成**直读最新行**（用户选的：每次保存 +1 次 Supabase 往返，换不丢数据）。⚠️ 工具页那句「先读旧值」**保留**（服务端是兜底）。防护：`students-unified` 新增「阶段5」8 项（64 → **72**）＋ `math-plan-students` 的「互不踩③」**翻转**成"不再被盖掉"；已用**变异测试**证明这 7 条会随合并被摘掉而变红 |
-| b | ✅ 学员档案的「**学情分析**」（**已完成 2026-10 第三批**） | 档案详情页新增区块：**统计免费**（概览 / 成绩趋势 / 课时累计 / 薄弱与失分，抽不到就在 `notes` 里明说，绝不猜）＋ **AI 报告会员专属**（`POST /api/students/analysis`，生成【整体学情】【优势】【薄弱与原因】【下一步建议】）。算法是纯函数 `src/lib/student-report.ts`（页面与 AI 接口**共用同一份**，不是两套）。报告以 `tool='analysis'` **落库成一条记录**（用户选的）。⚠️ **需要用户在 Supabase 执行迁移 `0017_history_tool_allow_analysis.sql`**（放开 `feedback_history.tool` 的 CHECK）；没执行时生成**照样成功**，只是保存会返回 409 并点名迁移文件（报告正文照常返回，不白花一次 AI 调用）。测试：`student-report` **37 项**（纯函数，**本仓库第一个直接 import `.ts` 的套件**）＋ `student-analysis` **19 项**（桩上游 + 鉴权 + 提示词护栏 + 落库） |
+| b | ✅ 学员档案的「**学情分析**」（**已完成 2026-10 第三批**） | 档案详情页新增区块：**统计免费**（概览 / 成绩趋势 / 课时累计 / 薄弱与失分，抽不到就在 `notes` 里明说，绝不猜）＋ **AI 报告会员专属**（`POST /api/students/analysis`，生成【整体学情】【优势】【薄弱与原因】【下一步建议】）。算法是纯函数 `src/lib/student-report.ts`（页面与 AI 接口**共用同一份**，不是两套）。报告以 `tool='analysis'` **落库成一条记录**（用户选的）。✅ **迁移 `0017_history_tool_allow_analysis.sql` 用户已在 Supabase 执行**（`ALLOWED_TOOLS` 同步加了 `analysis`），落库那半已实测通过。测试：`student-report` **37 项**（纯函数，**本仓库第一个直接 import `.ts` 的套件**）＋ `student-analysis` **21 项**（桩上游 + 鉴权 + 提示词护栏 + 落库 + 「报告不吃自己」）＋ `archive-students` 里 4 条真浏览器断言 |
 | c | ⚠️ **写路径的读失败会静默降级**（第二批发现的隐患，**未动**） | `upsertStudent()` 合并前那次读走 `getStudentsFresh()` → 查失败时 `softFail()` 返回空数组 → 被当成"没有旧行"，于是**没传的列会被写成 NULL**（= 退回整行覆盖），也就是**数据库抖一下可能静默抹掉别家工具的数据**。根治方向：让**写**路径的这次读失败**明确抛错**（读接口仍然不该 500，但写路径也许应该）。这是取舍，等用户定 |
 
 ---
@@ -273,7 +273,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 第三批实测，28 个套件全绿 ✅，合计 870 项断言）**：
+**全套回归现状（2026-10 三批收口，28 个套件全绿 ✅，合计 872 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -286,7 +286,7 @@ paper-analysis-students 27/27
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 72/72     date-input 15/15          admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
-student-report 37/37       student-analysis 19/19
+student-report 37/37       student-analysis 21/21
 ```
 
 > ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。第一批实测时就发现旧表有几处**过期或漏项**：
@@ -295,7 +295,8 @@ student-report 37/37       student-analysis 19/19
 >
 > ⚠️ `student-analysis` 的项数**取决于数据库状态**：`0017` 还没执行时是 **19 项**
 > （验证「生成成功 + 409 明确点名迁移文件 + 报告正文不丢」）；
-> 执行之后会走「落库成功」那条分支（另加落库读回与"报告不吃自己"共 4 条）。
+> **用户 2026-10 已在 Supabase 执行 0017** ⇒ 现在是 **21 项**（走落库成功那条分支：
+> `saved:true` + 读回 `tool='analysis'` + 「报告不吃自己」两条）。两条分支都在码里，别删。
 >
 > 变化说明（2026-10 第一批）：`date-input` **11 → 15**（非法日期「有意分歧」「反向防护」
 > 「端到端不再 500」三组）；**新增 `vision-scores` 15/15**（本地桩上游 + 分两阶段起服务）。
@@ -305,8 +306,8 @@ student-report 37/37       student-analysis 19/19
 > "服务端兜底、不再被盖掉"。
 >
 > 变化说明（2026-10 第三批）：**新增 `student-report` 37/37**（纯函数、**本仓库第一个直接
-> import `.ts` 的套件**、不需要起服务）＋ **`student-analysis` 19/19**（桩上游 +
-> 鉴权「非会员不白花一次调用」 + 提示词护栏 + 落库 / 迁移未执行时的 409 两条分支）；
+> import `.ts` 的套件**、不需要起服务）＋ **`student-analysis` 19 → 21/21**（桩上游 +
+> 鉴权「非会员不白花一次调用」 + 提示词护栏 + 落库；**0017 执行前**跑是 19 项、执行后 21 项）；
 > `archive-students` **17 → 21**（补 4 条真浏览器断言：学情分析区块渲染、得分率算对、
 > 「没抽到就如实说」、免费用户看不到生成按钮）。
 > 第二、三批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37）。
