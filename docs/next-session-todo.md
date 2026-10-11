@@ -278,7 +278,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 第八批实测，31 个套件全绿 ✅，合计 969 项断言）**：
+**全套回归现状（2026-10 第九批实测，31 个套件全绿 ✅，合计 976 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -290,7 +290,7 @@ paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
 paper-attribution-polish 23/23
 vision-paper 31/31
-school-paper 36/36
+school-paper 43/43
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15          admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
@@ -341,8 +341,13 @@ student-report 37/37       student-analysis 21/21
 > 对第七批的**范围纠正** —— 用户要的是"学校卷子 → AI 理解题目/结构"，第七批做的是
 > "学科网报告截图 → 转文字"。新路由 `vision-paper-structure` + 结构化预览 + 生成 paper；
 > 桩上游 4591、真浏览器 9494）。`vision-paper` 无变化（31）。
-> 第二～八批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37、第四批 77/81、
-> 第五批 22/23、第六批 23/24、第七批 25/29、第八批 28/36）。
+>
+> 变化说明（2026-10 第九批）：`school-paper` **36 → 43**（用户实测报的两个 bug 的防回归：
+> ① 生成结构后「📋 试卷信息」「🔎 解析结果」两个面板要展开、逐题列表要填充；
+> ② AI 估难度后「容易题满分·其余留空」要把**较易**的题置回满分、其余不动；
+> 外加"难度必须落成数字系数 0.85"这条根因断言）。
+> 第二～九批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37、第四批 77/81、
+> 第五批 22/23、第六批 23/24、第七批 25/29、第八批 28/36、第九批 40/43）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，
