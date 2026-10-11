@@ -15,7 +15,10 @@ import { getViewer } from "@/lib/viewer";
  */
 
 const DEFAULT_BASE = "https://api.deepseek.com/v1";
-const DEFAULT_MODEL = "deepseek-chat";
+/** ⚠️ 2026-10 第四批（待办 B）：默认值从已停用的 `deepseek-chat` 改成 `deepseek-flash`。
+ *  这个接口把模型名**回传给前端显示**，所以默认值写错会让界面显示一个已停用的名字
+ *  （线上有 `AI_MODEL` 覆盖，实际显示的是 `deepseek-flash`）。 */
+const DEFAULT_MODEL = "deepseek-flash";
 
 export async function GET() {
   // 用 getViewer()：它已经一次拿到 user + role + membership.status，

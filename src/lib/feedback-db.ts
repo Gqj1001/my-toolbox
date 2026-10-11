@@ -606,6 +606,26 @@ export async function getStudents(userId?: string): Promise<StudentRow[]> {
   return softFail("学生档案", () => cached(studentsCache, uid, loadStudents));
 }
 
+/**
+ * **仅供测试**：让接下来 `count` 次「读学生档案」失败（模拟数据库抖动）。
+ *
+ * 为什么需要它（2026-10 第四批，待办 A）：这次修复的语义是「**写路径**读旧行失败 → 中止」，
+ * 而"数据库读失败"在测试里没法自然造出来 —— `NEXT_PUBLIC_*` 在**构建期**就被内联进产物，
+ * 所以「build 完再改 `.env.local` 假装连不上库」是**无效**的（perf-notes 六之二实测踩过）。
+ * 于是留一个注射点，由受 `debug-gate` 保护的调试口 `/api/debug/fail-next-student-read` 控制。
+ *
+ * ⚠️ 默认 **0** ⇒ 生产行为一个字节都不变；调试口在生产默认 404（见 `src/lib/debug-gate.ts`）。
+ * ⚠️ 计数是**消费型**的：读一次减一，用完自动归零 —— 测试因此能精确控制"第几次失败"。
+ */
+let failStudentReadCount = 0;
+
+/** 设置"接下来 N 次读档案失败"；返回实际生效的次数。**只给调试口调用**。 */
+export function failNextStudentReadsForTest(count: number): number {
+  const n = Math.max(0, Math.min(100, Math.floor(Number(count) || 0)));
+  failStudentReadCount = n;
+  return n;
+}
+
 /** 实际查库（不含缓存）
  *
  *  ⚠️ **只加列，不动老列**：`id, name, subject, salutation, teacher, type, notes, updated_at`
@@ -616,8 +636,23 @@ export async function getStudents(userId?: string): Promise<StudentRow[]> {
  *
  *  ⚠️ select 必须是**一个字面量字符串**：用 `"a" + "b"` 拼接会让 PostgREST 的类型推断
  *     退化成 `GenericStringError`，编译期就报 TS2352（本轮踩过）。
- *     要和 `StudentRow` 对齐就改这一处 + 上面的类型定义。 */
+ *     要和 `StudentRow` 对齐就改这一处 + 上面的类型定义。
+ *
+ *  ⚠️ **查失败一律抛异常**（不吞错）—— 由调用方决定怎么办：
+ *     · 读接口（`getStudentsFresh` / `getStudents`）包 `softFail` → 返回空、**不 500**；
+ *     · 写路径（`loadStudentsByNameStrict`）**让它抛** → 中止写入。
+ *     这两种取舍**故意不同**，别为了"统一"把任何一边改掉。 */
 async function loadStudents(): Promise<StudentRow[]> {
+  // ⚠️ **仅供测试的注入点**（见 `failNextStudentReadsForTest`）：模拟"数据库抖动"。
+  //    它存在的唯一理由是让测试能证明「**写**路径会中止、**读**路径仍软降级」——
+  //    否则这条修复没法被自动化验到（NEXT_PUBLIC_* 在构建期就被内联，
+  //    build 完再改 .env.local 假装数据库连不通是**无效**的，见 perf-notes 六之二）。
+  //    默认值 0 ⇒ 生产行为**一个字节都不变**；只有受 debug-gate 保护的调试口能改它。
+  if (failStudentReadCount > 0) {
+    failStudentReadCount--;
+    throw new Error(`[test] 注入的读取失败（本进程还剩 ${failStudentReadCount} 次）`);
+  }
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("feedback_students")
@@ -744,21 +779,41 @@ export function pickStudentPatch(input: Record<string, unknown>): StudentPatch {
   return patch;
 }
 
+/** 写档案时「读旧行」失败 —— 必须**中止写入**，绝不降级成"没有旧行"。
+ *
+ *  ★ 2026-10 第四批（待办 A）：这是**有意的行为变更**。
+ *    以前 `upsertStudent()` 合并前读旧行走 `getStudentsFresh()` → 里面 `softFail()`
+ *    把"查失败"变成**空数组** → 于是被当成"没有旧行" → **没传的列被写成 NULL**
+ *    （等于退回整行覆盖，也就是**数据库抖一下可能静默抹掉别家工具的数据**）。
+ *    现在写路径改成**严格读**（见 `loadStudentsByNameStrict()`），失败就抛这个错：
+ *      · 接口返回 **503** + 本错的使用者可见文案（`src/app/api/students/route.ts`）；
+ *      · 学员档案页的 Server Action 也会把这句话显示出来；
+ *      · **一行数据都不会被改动**（因为根本没走到写那一步）。
+ *  ⚠️ 用户已确认这是**有意**的取舍：宁可让人重试一次，也不能静默丢别家工具的数据。
+ *  ⚠️ **读接口不跟着改**：`getStudents()` / `getStudentsFresh()` 继续 `softFail`
+ *     （查失败返回空、不 500）—— 页面能打开比"数据必须完整"更重要，两者取舍不同。 */
+export class StudentRowReadError extends Error {
+  constructor(cause?: unknown) {
+    super("读取档案失败，本次没有做任何修改，请重试。", { cause });
+    this.name = "StudentRowReadError";
+  }
+}
+
 /** 当前用户已有的档案（按姓名）——供合并写入前读取。
  *
- *  ★ **2026-10 第二批：改成直读最新行**（`getStudentsFresh()`，不走 25 秒缓存）。
+ *  ★ **2026-10 第二批：改成直读最新行**（不走 25 秒缓存）。
  *     理由：`extra` 现在是**按键合并**，正确性完全依赖「旧 `extra` 是最新的」；
  *     用缓存版的话，多实例部署时可能把别家工具刚改过的键**写回旧值**（最长 25 秒窗口）。
+ *  ★ **2026-10 第四批（待办 A）：改成"严格读"** —— 直接调 `loadStudents()`（它查失败会抛），
+ *     **不再**经过 `getStudentsFresh()` 的 `softFail()`。
+ *     原因见 `StudentRowReadError` 的注释：合并写入的正确性建立在"确实读到了旧行"之上，
+ *     读失败时**必须中止**，否则会把没传的列写成 NULL、静默抹掉别家工具的数据。
+ *
  *  ⚠️ 直读靠 **RLS** 隔离用户，所以调用方必须是**带会话**的上下文
  *     （Route Handler / Server Action）。**绝不能**从 service_role 的上下文调用 ——
- *     那会读到所有用户的档案，同名学生会串号。
- *
- *  ⚠️ 另记一个**既有**隐患（本轮不动）：`getStudentsFresh()` 查失败时走 `softFail()` →
- *     返回空数组 → 这里就当成"没有旧行"，于是「没传的列」会被写成 NULL（= 回到整行覆盖）。
- *     也就是说**数据库抖一下可能静默抹掉别家工具的数据**。要根治得让写路径的读失败**明确抛错**，
- *     那是另一个取舍（读接口不能因此 500，但**写**路径失败也许应该）。留待用户决定。 */
-async function loadStudentsByNameFresh(): Promise<Map<string, StudentRow>> {
-  const rows = await getStudentsFresh();
+ *     那会读到所有用户的档案，同名学生会串号。 */
+async function loadStudentsByNameStrict(): Promise<Map<string, StudentRow>> {
+  const rows = await loadStudents();   // ⚠️ 故意**不用** getStudentsFresh()：那个会把失败吞成空数组
   return new Map(rows.map((r) => [r.name, r]));
 }
 
@@ -829,9 +884,11 @@ function buildStudentRow(name: string, existing: StudentRow | undefined, patch: 
 /** upsert 一份档案（**合并语义**）。返回写后的行。
  *
  *  ⚠️ 顺序：**先读旧行 → 合并 → 再写**。不先读就无法区分「没传」与「传了空」。
- *  ★ 2026-10 第二批：这里的读改成**直读最新行**（见 `loadStudentsByNameFresh()`），
+ *  ★ 2026-10 第二批：这里的读改成**直读最新行**（见 `loadStudentsByNameStrict()`），
  *     不再走 25 秒缓存 —— 合并的正确性依赖旧值是最新的。
  *     代价：每次保存档案多一次 Supabase 往返（保存是低频动作，换来的是不丢数据）。
+ *  ★ 2026-10 第四批（待办 A）：这次读**必须是严格的** —— 读失败就抛 `StudentRowReadError`、
+ *     **中止写入**（`try/catch` 在下面）。绝不把"读失败"当成"没有旧行"。
  *  ⚠️ 写完必须 `invalidateStudents()`，否则最长 25 秒读到的还是旧值。
  *
  *  ⚠️ 签名 2026-10 第二批去掉了 `uid`：它以前只用来拼**缓存 key**，
@@ -842,7 +899,19 @@ export async function upsertStudent(
   patch: StudentPatch,
 ): Promise<StudentRow> {
   const supabase = await createClient();
-  const existing = (await loadStudentsByNameFresh()).get(name);
+
+  // ★ 待办 A：读旧行失败 = **中止**。这里绝不能退化成"没有旧行"——
+  //    那样 `buildStudentRow()` 会把**没传的列**写成 NULL（静默抹掉别家工具的数据）。
+  let existing: StudentRow | undefined;
+  try {
+    existing = (await loadStudentsByNameStrict()).get(name);
+  } catch (e) {
+    console.error(
+      "[students] 合并前读取旧档案失败 —— 已中止写入（**没有改动任何数据**）:",
+      e instanceof Error ? e.message : e,
+    );
+    throw new StudentRowReadError(e);
+  }
 
   const row = buildStudentRow(name, existing, patch);
 

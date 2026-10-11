@@ -32,7 +32,10 @@ import { GOAL_EXAMPLES, METHOD_STYLE_BLOCK } from "./samples";
  */
 
 const DEFAULT_BASE = "https://api.deepseek.com/v1";
-const DEFAULT_MODEL = "deepseek-chat";
+/** ⚠️ 2026-10 第四批（待办 B）：`deepseek-chat` 官方已于 2026-07-24 停用，
+ *  默认值改成现行的 `deepseek-flash`（线上一直用 Vercel 的 `AI_MODEL` 覆盖）。
+ *  详见 `docs/math-plan-handoff.md`「已知隐患：AI_MODEL 默认值」。 */
+const DEFAULT_MODEL = "deepseek-flash";
 
 /** 共同约束：保留事实与数字、不编造、只改文风 */
 const COMMON_RULE =

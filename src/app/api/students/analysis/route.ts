@@ -34,7 +34,9 @@ import { ANALYSIS_TOOL, buildStudentReport } from "@/lib/student-report";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_BASE = "https://api.deepseek.com/v1";
-const DEFAULT_MODEL = "deepseek-chat";
+/** ⚠️ 2026-10 第四批（待办 B）：默认值从已停用的 `deepseek-chat` 改成 `deepseek-flash`
+ *  （线上有 `AI_MODEL` 覆盖，行为不变；只是把兜底的名字修对）。 */
+const DEFAULT_MODEL = "deepseek-flash";
 const MAX_TOKENS = 6000;
 const TIMEOUT_MS = 120_000;
 

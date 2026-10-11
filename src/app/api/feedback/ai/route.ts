@@ -17,7 +17,11 @@ import {
  */
 
 const DEFAULT_BASE = "https://api.deepseek.com/v1";
-const DEFAULT_MODEL = "deepseek-chat";
+/** ⚠️ 2026-10 第四批（待办 B）：`deepseek-chat` 官方 **2026-07-24 已停用**（实测仍被兼容路由兜着），
+ *  当前模型名是 `deepseek-flash`。线上一直用 Vercel 的 `AI_MODEL` 覆盖，所以这次只是把
+ *  **默认值**修对 —— 行为零变化，但万一哪天环境变量丢了，兜底的名字是对的。
+ *  详见 `docs/math-plan-handoff.md`「已知隐患：AI_MODEL 默认值」。 */
+const DEFAULT_MODEL = "deepseek-flash";
 /**
  * 提示词的**服务端默认值 / 兜底**。
  *

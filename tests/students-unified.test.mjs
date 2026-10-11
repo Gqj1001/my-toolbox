@@ -456,6 +456,99 @@ try {
   await fetch(`${BASE}/api/students?name=${encodeURIComponent(EX)}`, { method: "DELETE", headers: { cookie } });
 
   // ================================================================
+  // 第 2c 组：★第四批（待办 A）—— 写路径「读旧行失败」必须**中止**，绝不静默降级
+  // ================================================================
+  // 背景：`upsertStudent()` 合并前读旧行，以前走 `getStudentsFresh()` → `softFail()`
+  //   把「查失败」变成空数组 → 被当成「没有旧行」→ **没传的列被写成 NULL**
+  //   （= 退回整行覆盖，也就是**数据库抖一下可能静默抹掉别家工具的数据**）。
+  //   现在写路径用**严格读**：读失败就抛错、**一个字都不写**，接口返回 503 + 明确提示。
+  //
+  // ⚠️ 怎么让它「真的失败」：`/api/debug/fail-next-student-read`（受 debug-gate 保护，
+  //    生产默认 404）。`NEXT_PUBLIC_*` 在**构建期**被内联，所以「改 .env.local 假装连不上库」
+  //    是无效的（perf-notes 六之二实测踩过）——没有这个注射口，这条修复只能靠肉眼 review。
+  // ⚠️ 调试口没配置时（`STUDENTS_TEST_NO_DEBUG=1`）本组**明确跳过**：不算失败，也不假装通过。
+  const A_STU = "__写失败探针";
+  await fetch(`${BASE}/api/students?name=${encodeURIComponent(A_STU)}`, { method: "DELETE", headers: { cookie } });
+
+  const dbgProbe = await fetch(`${BASE}/api/debug/fail-next-student-read`, {
+    method: "POST",
+    headers: { "x-debug-token": DEBUG_TOKEN, cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ count: 0 }),   // count:0 = 只探测口子通不通，不注入
+  }).catch(() => null);
+  const dbgProbeBody = dbgProbe ? await dbgProbe.json().catch(() => null) : null;
+  const dbgUsable = !!(dbgProbe?.ok && dbgProbeBody?.ok);
+  record(
+    `调试口 /api/debug/fail-next-student-read 探测（status=${dbgProbe?.status ?? "无响应"}）→ ` +
+      (dbgUsable ? "可用，将注入读失败验证写路径" : "未配置，**跳过故障注入**（符合预期，不算失败）"),
+    true,
+  );
+
+  if (dbgUsable) {
+    /** 注入 N 次「读学生档案失败」 */
+    const injectFail = (count) => fetch(`${BASE}/api/debug/fail-next-student-read`, {
+      method: "POST",
+      headers: { "x-debug-token": DEBUG_TOKEN, cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ count }),
+    });
+
+    // ① 先放一份「别家工具的字段」进去 —— 只有它们存在，才看得出"被静默抹掉"
+    const seedA = await studentsPost({
+      name: A_STU, grade: "高三", campus: "燕郊中学校区", teacher: "郭庆杰",
+      extra: { cls: "3班", phase: "秋" },
+    });
+    record("（准备）写失败探针：先有一份带别家工具字段（grade/campus/extra）的档案",
+      seedA.status === 200, `HTTP ${seedA.status}`);
+
+    /** 直连库把整行读回来（比对"有没有被改动"用；走接口会经过 softFail，看不出真相） */
+    const readRaw = async () => (await (await fetch(
+      `${SUPABASE_URL}/rest/v1/feedback_students?name=eq.${encodeURIComponent(A_STU)}&select=*`,
+      { headers: H },
+    )).json())[0];
+    const beforeRow = await readRaw();
+    record("（准备）直连库读回这一行，作为「未被改动」的对照",
+      !!beforeRow && beforeRow.extra?.cls === "3班" && beforeRow.grade === "高三",
+      `extra=${JSON.stringify(beforeRow?.extra)} grade=${JSON.stringify(beforeRow?.grade)}`);
+
+    // ② 注入 1 次读失败 → 保存必须**失败**
+    await injectFail(1);
+    const failSave = await studentsPost({ name: A_STU, notes: "这次写入必须被拒绝" });
+    const failSaveBody = await failSave.json().catch(() => null);
+    record("★读旧行失败 → 保存**明确失败**（503，而不是 200 假装成功）",
+      failSave.status === 503, `HTTP ${failSave.status} ${JSON.stringify(failSaveBody)}`);
+    record("★失败提示是给人看的，且写清「本次没有做任何修改」+「请重试」",
+      /没有做任何修改/.test(failSaveBody?.error ?? "") && /重试/.test(failSaveBody?.error ?? ""),
+      JSON.stringify(failSaveBody?.error));
+    record("★提示**不泄露**数据库细节（表名 / Postgres 错误码 / 列名 / 注入字样）",
+      !/feedback_students|23502|23514|PGRST|注入|injection/.test(JSON.stringify(failSaveBody)),
+      JSON.stringify(failSaveBody));
+
+    const afterRow = await readRaw();
+    record("★★核心：库里的行**逐字段一字未改**（notes 没被写进去、别的列也没被 NULL 掉）",
+      JSON.stringify(afterRow) === JSON.stringify(beforeRow),
+      `notes=${JSON.stringify(afterRow?.notes)}（应为 null）extra=${JSON.stringify(afterRow?.extra)} `
+        + `grade=${JSON.stringify(afterRow?.grade)} campus=${JSON.stringify(afterRow?.campus)}`);
+
+    // ③ 同样读失败时，**读接口**仍然不 500 —— 两种取舍**故意不同**，别顺手"统一"掉
+    await injectFail(1);
+    const readDuringFail = await studentsApi(`?name=${encodeURIComponent(A_STU)}`);
+    const readDuringFailBody = await readDuringFail.json().catch(() => null);
+    record("★读接口不跟着改：同样读失败时 GET 仍返回 200（软降级返回空，不 500）",
+      readDuringFail.status === 200,
+      `HTTP ${readDuringFail.status} student=${JSON.stringify(readDuringFailBody?.student)}`);
+
+    // ④ 注入用完（消费型计数）→ 同一个保存恢复成功，且**不覆盖**别家工具的键
+    const okSave = await studentsPost({ name: A_STU, notes: "重试后写进去了" });
+    const okSaveBody = await okSave.json().catch(() => null);
+    record("★注入消耗完后同一个保存**成功**（说明失败是暂时的、重试是安全的），且别家键没丢",
+      okSave.status === 200 && okSaveBody?.student?.notes === "重试后写进去了" &&
+        okSaveBody?.student?.extra?.cls === "3班" && okSaveBody?.student?.extra?.phase === "秋" &&
+        okSaveBody?.student?.grade === "高三" && okSaveBody?.student?.campus === "燕郊中学校区",
+      `HTTP ${okSave.status} ${JSON.stringify(okSaveBody?.student)?.slice(0, 180)}`);
+
+    await fetch(`${BASE}/api/students?name=${encodeURIComponent(A_STU)}`, { method: "DELETE", headers: { cookie } });
+  }
+
+  // ================================================================
   // 第 3 组：红线2 —— 跨账号隔离（A 存的学生，B 看不到）
   // ================================================================
   // roster：rolea-* = 免费/管理员（当前用），roleb-* = 另一位

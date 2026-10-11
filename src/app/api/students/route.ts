@@ -9,6 +9,7 @@ import {
   invalidateHistory,
   pickHistoryPatch,
   pickStudentPatch,
+  StudentRowReadError,
   studentsByName,
   upsertStudent,
 } from "@/lib/feedback-db";
@@ -243,6 +244,12 @@ export async function POST(request: NextRequest) {
     // 返回结构与本接口的 GET 一致（同一个装配函数），前端只认一种形状
     return NextResponse.json({ ok: true, student: studentsByName([row])[name] });
   } catch (e) {
+    // ★ 待办 A：合并前读旧行失败 = **本次一个字都没写**。
+    //    这种情况必须**说清楚**（503 + 「读取档案失败，本次没有做任何修改，请重试。」），
+    //    而不是丢一句"操作失败"——老师需要知道"重试是安全的、数据没被动过"。
+    if (e instanceof StudentRowReadError) {
+      return NextResponse.json({ ok: false, error: e.message }, { status: 503 });
+    }
     return dbError("保存档案", e);
   }
 }
