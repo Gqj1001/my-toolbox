@@ -296,6 +296,16 @@ try {
     record("工具页有「上传图片 / 截图识别」按钮与多选文件框", hasBtn?.btn === true && hasBtn?.input === true,
       JSON.stringify(hasBtn));
 
+    // ★ pdf.js 必须是**懒加载**：打开页面时不能已经把它拉下来（1.4MB，不用识别时不该付这个代价）
+    const lazy0 = await inTool(`
+      const sc = w.document.querySelector('script[data-src="vendor/pdf.min.js"]');
+      const all = [...w.document.querySelectorAll('script[src]')].map(s => s.getAttribute('src'));
+      return { pdfScriptTag: !!sc, pdfLib: !!w.pdfjsLib, scripts: all };
+    `);
+    record("★懒加载①：刚打开工具页时**没有**加载 pdf.js（index.html 里没有它的 <script>）",
+      lazy0?.pdfScriptTag === false && lazy0?.pdfLib === false,
+      `脚本=[${(lazy0?.scripts ?? []).join(", ")}]`);
+
     // ★ 让桩返回**工具自带的示例报告**（而不是我编的极简文本）：
     //   这样后面"解析成功"这条链路是真实的；极简合成文本会在算分表那一步暴露缺口（本轮踩到）。
     const demoText = await inTool(`
@@ -399,6 +409,15 @@ try {
       return 'started';
     `);
     if (!String(pdfStarted).startsWith("started")) record("（准备）上传扫描版 PDF", false, JSON.stringify(pdfStarted));
+
+    // 走到这里已经做过一次**图片**识别了：pdf.js 仍然不该被加载（只有 PDF 才需要它）
+    const lazyAfterImage = await inTool(`
+      const sc = w.document.querySelector('script[data-src="vendor/pdf.min.js"]');
+      return { pdfScriptTag: !!sc, pdfLib: !!w.pdfjsLib };
+    `);
+    record("★懒加载②：做过图片识别之后**仍然没有**加载 pdf.js（只有 PDF 那条路才需要它）",
+      lazyAfterImage?.pdfScriptTag === false && lazyAfterImage?.pdfLib === false,
+      JSON.stringify(lazyAfterImage));
 
     let pdfPreview = null;
     for (let i = 0; i < 60; i++) {
