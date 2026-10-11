@@ -607,14 +607,31 @@ async function handleFile(file){
     if(API.mode !== 'server'){
       box.innerHTML = '<div class="errbox">这个格式需要服务器帮忙解析。<br>'
         + '当前是<b>本机版</b>（直接双击打开的），能本地处理的只有 <b>.docx</b>。<br>'
-        + '解决办法：① 把内容复制粘贴进来；② 或把文件放到服务器上访问后用「上传文件解析」。</div>';
+        + '解决办法：① 把内容复制粘贴进来；② 或把文件放到服务器上访问后用「上传文件解析」'
+        + '（<b>PDF 与图片识别都要用服务器上的模型</b>）。</div>';
       return;
     }
     const data = await toDataUrl(file);
     const d = await apiFetch(API_BASE + '/parse-file', { method:'POST', body:{ name:file.name, data } });
     if(!d || !d.ok) throw new Error(d && d.error ? d.error : '服务器解析失败');
+    const gotText = String(d.text || '').trim();
+
+    // ★ 扫描版 PDF：服务器抽不到文字（或只抽到零星几个字）→ **在浏览器里**用 pdf.js 逐页渲图，
+    //    再走视觉识别那条统一管线（用户 2026-10 选了"引入 pdf.js 把扫描版 PDF 也做上"）。
+    //    ⚠️ 阈值 120 字：真扫描版是 0 字；个别 PDF 只嵌了几个字（页眉）也算没文字层。
+    if(d.kind === 'pdf' && gotText.length < 120){
+      hint.innerHTML = 'ℹ️ 这份 PDF 没有（或几乎没有）文字层，按 <b>扫描版</b>处理：正在逐页渲染后识别…';
+      const r = await pdfToPageSources(file, (i, t) => {
+        $('#visionPreview').innerHTML = '<div class="tip">⏳ 正在渲染第 ' + i + '/' + t + ' 页…</div>';
+      });
+      if(!r.sources.length) throw new Error('这份 PDF 里没有可渲染的页面');
+      if(r.truncated) toast('这份 PDF 共 ' + r.total + ' 页，本次只识别前 ' + PDF_MAX_PAGES + ' 页', 3600);
+      await runVisionSources(r.sources);
+      return;
+    }
+
     if(d.note) hint.innerHTML = 'ℹ️ ' + esc(d.note);
-    if(d.text && d.text.trim()){
+    if(gotText){
       if(!adoptPaperText(d.text, file.name)){
         box.innerHTML += '<details class="cat"><summary><span class="arw">▶</span>查看从文件里抽到的文本</summary>'
           + '<div class="body"><pre style="white-space:pre-wrap;font-size:12px;max-height:300px;overflow:auto">'
@@ -646,6 +663,67 @@ async function handleFile(file){
 const VISION_MAX_SIDE = 1600;   // 长边上限（够认字，又不至于太大）
 const VISION_QUALITY = 0.82;
 
+/* ---- 扫描版 PDF：用 pdf.js 在**浏览器里**逐页渲成图（★ 2026-10 第七批） ----
+   ⚠️ 为什么要把库放进仓库（`vendor/`）：本工具一直坚持"双击 HTML 就能离线用"，
+      所以**不走 CDN**；这两个文件来自 `pdfjs-dist@3.11.174`（Apache-2.0），
+      升级时整包替换即可（`build/pdf.min.js` + `build/pdf.worker.min.js`）。
+   ⚠️ 路径用**相对**的（与 `js/app.js` 同样的基准），
+      这样服务器上（/tools/paper-analysis/index.html）和本机双击（file://）都能加载。 */
+const PDFJS_SRC = 'vendor/pdf.min.js';
+const PDFJS_WORKER = 'vendor/pdf.worker.min.js';
+/** 一次最多渲染/识别多少页（与"单次最多 10 页"的口径一致；超了明确提示，不静默截断） */
+const PDF_MAX_PAGES = 10;
+
+/** 只注入一次的 <script>（pdf.js 约 320KB，**只有真要渲染 PDF 时才拉**，平时不影响打开速度） */
+function loadScriptOnce(src){
+  return new Promise((resolve, reject) => {
+    const exists = document.querySelector('script[data-src="' + src + '"]');
+    if(exists){
+      if(exists.dataset.loaded) return resolve();
+      exists.addEventListener('load', () => resolve());
+      exists.addEventListener('error', () => reject(new Error('加载 ' + src + ' 失败')));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = src;
+    s.dataset.src = src;
+    s.onload = () => { s.dataset.loaded = '1'; resolve(); };
+    s.onerror = () => reject(new Error('加载 ' + src + ' 失败'));
+    document.head.appendChild(s);
+  });
+}
+
+async function ensurePdfjs(){
+  if(!window.pdfjsLib) await loadScriptOnce(PDFJS_SRC);
+  if(!window.pdfjsLib) throw new Error('pdf.js 加载后仍不可用');
+  try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; } catch(e){ /* 忽略 */ }
+  return window.pdfjsLib;
+}
+
+/** 扫描版 PDF → 每页一张 JPEG（长边约 1600）。
+ *  返回 { sources:[{label,dataUrl}], total, truncated }；**渲不出的页会明确报错**，不静默跳过。 */
+async function pdfToPageSources(file, onProgress){
+  const pdfjs = await ensurePdfjs();
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  const total = doc.numPages;
+  const n = Math.min(total, PDF_MAX_PAGES);
+  const sources = [];
+  for(let i = 1; i <= n; i++){
+    if(onProgress) onProgress(i, n);
+    const page = await doc.getPage(i);
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.min(3, Math.max(1, VISION_MAX_SIDE / Math.max(base.width, base.height)));
+    const vp = page.getViewport({ scale });
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(vp.width));
+    cv.height = Math.max(1, Math.round(vp.height));
+    await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+    sources.push({ label: '第 ' + i + ' 页', dataUrl: cv.toDataURL('image/jpeg', VISION_QUALITY) });
+  }
+  return { sources, total, truncated: total > n };
+}
+
 /** 图片压到「长边 ≤1600 + JPEG 0.82」：省流量、省费用、避免撞 4MB 上限。
  *  ⚠️ 压不动（解码失败等）就**原样返回**，让服务端去判断，不要在这里静默失败。 */
 async function compressImageFile(file){
@@ -676,6 +754,7 @@ async function compressImageFile(file){
 let visionPages = [];
 let visionBusy = false;
 
+/** 图片文件 → 识别（先逐张压缩，再走统一的识别管线） */
 async function visionRun(files){
   const list = Array.from(files || []);
   const box = $('#visionPreview');
@@ -687,19 +766,44 @@ async function visionRun(files){
     return;
   }
   if(visionBusy){ toast('上一批还在识别，请稍等'); return; }
+  const sources = [];
+  for(let i = 0; i < list.length; i++){
+    box.innerHTML = '<div class="tip">⏳ 正在处理第 ' + (i + 1) + '/' + list.length + ' 张…</div>';
+    const c = await compressImageFile(list[i]);
+    sources.push({ label: (list[i].name || ('第 ' + (i + 1) + ' 张')), dataUrl: c.dataUrl });
+  }
+  await runVisionSources(sources);
+}
+
+/** **统一的识别管线**：sources = [{label, dataUrl}]（来自图片文件，或扫描版 PDF 的逐页渲染）。
+ *  ⚠️ 图片与 PDF 共用这一条路：识别 → 预览（可改）→ 填进导入框。
+ *     新增来源（比如将来的截图粘贴）也应当走这里，不要另写一套。 */
+async function runVisionSources(sources){
+  const box = $('#visionPreview');
+  if(!sources.length) return;
+  if(API.mode !== 'server'){
+    box.innerHTML = '<div class="errbox">识别要用服务器上的视觉模型。<br>'
+      + '当前是<b>本机版</b>：请改用「粘贴文字」，或访问线上站点里的试卷分析工具再试。</div>';
+    return;
+  }
+  if(visionBusy){ toast('上一批还在识别，请稍等'); return; }
   visionBusy = true;
   visionPages = [];
   try{
-    for(let i = 0; i < list.length; i++){
-      box.innerHTML = '<div class="tip">⏳ 正在识别第 ' + (i + 1) + '/' + list.length + ' 张…（每张几秒）</div>';
-      const c = await compressImageFile(list[i]);
-      const d = await apiFetch(API_BASE + '/vision-paper', { method:'POST', body:{ image: c.dataUrl } });
+    for(let i = 0; i < sources.length; i++){
+      box.innerHTML = '<div class="tip">⏳ 正在识别 ' + esc(sources[i].label) + '（' + (i + 1) + '/' + sources.length + '）…</div>';
+      const d = await apiFetch(API_BASE + '/vision-paper', { method:'POST', body:{ image: sources[i].dataUrl } });
       if(!d || !d.ok) throw new Error((d && d.error) || '识别失败');
-      visionPages.push({ name: list[i].name || ('第' + (i + 1) + '张'), text: d.text || '', empty: !!d.empty, uncertain: !!d.uncertain });
+      visionPages.push({
+        label: sources[i].label,
+        text: d.text || '',
+        empty: !!d.empty,
+        uncertain: !!d.uncertain,
+      });
     }
     renderVisionPreview();
   }catch(e){
-    box.innerHTML = '<div class="errbox">图片识别失败：' + esc(e.message) + '</div>';
+    box.innerHTML = '<div class="errbox">识别失败：' + esc(e.message) + '</div>';
   }finally{
     visionBusy = false;
   }
@@ -716,7 +820,7 @@ function renderVisionPreview(){
     + (emptyN ? '<b>有 ' + emptyN + ' 张一个字都没认出来（可能太模糊或拍歪）</b>。' : '')
     + '</p>';
   visionPages.forEach((p, i) => {
-    html += '<div class="f" style="margin-top:8px"><label>第 ' + (i + 1) + ' 张：' + esc(p.name)
+    html += '<div class="f" style="margin-top:8px"><label>' + esc(p.label || ('第 ' + (i + 1) + ' 张'))
       + (p.uncertain ? ' ⚠️ 含「[看不清]」' : '') + (p.empty ? ' ⚠️ 没认出文字' : '') + '</label>'
       + '<textarea data-vision="' + i + '" style="min-height:130px">' + esc(p.text) + '</textarea></div>';
   });
@@ -733,7 +837,7 @@ function adoptVisionText(){
   const merged = visionPages.map((p, i) => {
     const el = document.querySelector('[data-vision="' + i + '"]');
     const t = (el ? el.value : p.text) || '';
-    return (visionPages.length > 1 ? '--- 第 ' + (i + 1) + ' 张 ---\n' : '') + t.trim();
+    return (visionPages.length > 1 ? '--- ' + (p.label || ('第 ' + (i + 1) + ' 张')) + ' ---\n' : '') + t.trim();
   }).join('\n\n').trim();
 
   if(!merged){ toast('识别结果是空的，没有可填入的内容'); return; }

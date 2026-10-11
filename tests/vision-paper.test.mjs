@@ -56,6 +56,30 @@ const REPORT_TEXT = [
 ].join("\n");
 
 const ps = (cmd) => spawnSync("powershell", ["-NoProfile", "-Command", cmd], { encoding: "utf8" }).stdout.trim();
+
+/** 造一份**真的没有文字层**的最小 PDF（只有一页 + 一个黑色方块，没有任何文字操作符）。
+ *  用途：验证客户端「服务器抽不到文字 → 用 pdf.js 逐页渲染 → 走视觉识别」这条回退路径。
+ *  ⚠️ xref 的字节偏移必须算对，否则 pdf.js 可能拒绝解析 —— 这里逐对象累加长度算出来的。 */
+function buildScannedPdf() {
+  const content = "0.1 0.1 0.1 rg 20 20 260 360 re f\n";
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << >> /Contents 4 0 R >>",
+    `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  objs.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, "latin1");
+}
 const killPort3000 = () => {
   const pid = ps("(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).OwningProcess");
   if (pid) ps(`Stop-Process -Id ${pid} -Force`);
@@ -228,6 +252,23 @@ try {
   }
 
   /* ======================================================================
+     ★ 扫描版 PDF 的前置事实：服务器**抽不到文字**（这正是客户端要回退的原因）
+     ====================================================================== */
+  const scannedPdf = buildScannedPdf();
+  const scannedDataUrl = "data:application/pdf;base64," + scannedPdf.toString("base64");
+  {
+    const r = await fetch(`${BASE}/api/paper-analysis/parse-file`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: freeCookie },
+      body: JSON.stringify({ name: "扫描版.pdf", data: scannedDataUrl }),
+    });
+    const j = await r.json().catch(() => null);
+    record("（前置）这份测试 PDF 确实**没有文字层**：parse-file 认出 kind=pdf 但抽不到文字",
+      r.status === 200 && j?.kind === "pdf" && !String(j?.text ?? "").trim(),
+      `kind=${j?.kind} text 长度=${String(j?.text ?? "").length} note=${JSON.stringify(String(j?.note ?? "").slice(0, 60))}`);
+  }
+
+  /* ======================================================================
      ★ 真浏览器：选图 → 逐张识别 → 预览核对（可改）→ 填进导入框
      ====================================================================== */
   {
@@ -340,6 +381,56 @@ try {
         /解析成功|没能自动解析|没有解析到题目/.test(String(adopted?.resultHtml ?? "")),
       `innerText=${JSON.stringify(String(adopted?.result ?? "").slice(0, 80))} `
         + `innerHTML=${JSON.stringify(String(adopted?.resultHtml ?? "").slice(0, 80))} step=${adopted?.stepOn} `
+        + `页面异常=${JSON.stringify(pageErrors.slice(0, 2))}`);
+
+    /* ------------------------------------------------------------------
+       ★ 扫描版 PDF：上传 → 服务器抽不到文字 → **pdf.js 逐页渲染** → 视觉识别 → 预览
+       ------------------------------------------------------------------ */
+    const pdfStarted = await inTool(`
+      const bin = atob(${JSON.stringify(scannedPdf.toString("base64"))});
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const f = new w.File([arr], '扫描版.pdf', { type: 'application/pdf' });
+      const dt = new w.DataTransfer();
+      dt.items.add(f);
+      const inp = w.document.getElementById('fileInput');
+      inp.files = dt.files;
+      inp.dispatchEvent(new w.Event('change'));
+      return 'started';
+    `);
+    if (!String(pdfStarted).startsWith("started")) record("（准备）上传扫描版 PDF", false, JSON.stringify(pdfStarted));
+
+    let pdfPreview = null;
+    for (let i = 0; i < 60; i++) {
+      await sleep(500);
+      pdfPreview = await inTool(`
+        const ta = w.document.querySelector('[data-vision="0"]');
+        const lbl = ta ? (ta.parentElement.querySelector('label') || {}).innerText : null;
+        const sc = w.document.querySelector('script[data-src="vendor/pdf.min.js"]');
+        return ta ? { text: ta.value, label: lbl, pdfjsLoaded: !!(sc && sc.dataset.loaded),
+                      loaded: !!(w.pdfjsLib) } : null;
+      `);
+      if (pdfPreview) break;
+    }
+    record("★扫描版 PDF：**真的加载了本地 pdf.js**（vendor/pdf.min.js 已注入并 load 完成）",
+      pdfPreview?.pdfjsLoaded === true && pdfPreview?.loaded === true,
+      `script.loaded=${pdfPreview?.pdfjsLoaded} window.pdfjsLib=${pdfPreview?.loaded}`);
+    record("★扫描版 PDF：逐页渲染后走识别，预览面板按**页**标注（第 1 页）",
+      !!pdfPreview && /第 1 页/.test(String(pdfPreview.label ?? "")) && String(pdfPreview.text).length > 200,
+      `label=${JSON.stringify(pdfPreview?.label)} 文本长度=${String(pdfPreview?.text ?? "").length}`);
+    record("★扫描版 PDF：识别文本与桩返回一致（渲染出来的图确实被送去识别了）",
+      String(pdfPreview?.text ?? "").slice(0, 40) === String(demoFull).slice(0, 40) &&
+        String(pdfPreview?.label ?? "").length > 0,
+      JSON.stringify(String(pdfPreview?.text ?? "").slice(0, 60)));
+
+    const pdfAdopted = await inTool(`
+      w.document.getElementById('btnVisionAdopt').click();
+      return { result: w.document.getElementById('parseResult').innerText.slice(0, 120),
+               pv: w.document.getElementById('visionPreview').innerHTML.length };
+    `);
+    record("★扫描版 PDF：确认后同样走通原有解析（解析成功 + 预览收起）",
+      /解析成功/.test(String(pdfAdopted?.result ?? "")) && pdfAdopted?.pv === 0,
+      `结果=${JSON.stringify(String(pdfAdopted?.result ?? "").slice(0, 80))} 面板=${pdfAdopted?.pv} `
         + `页面异常=${JSON.stringify(pageErrors.slice(0, 2))}`);
 
     try { await cdp.send("Browser.close"); } catch { /* ignore */ }
