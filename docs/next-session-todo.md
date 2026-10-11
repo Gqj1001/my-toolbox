@@ -254,7 +254,8 @@
    `archive-students`、**`vision-scores`（起两次服务）**、
    **`student-analysis`（桩上游 4588）**、
    **`paper-attribution-polish`（桩上游 4589 + Edge 9491）**、
-   **`vision-paper`（起两次服务，桩上游 4590 + Edge 9492）**。
+   **`vision-paper`（起两次服务，桩上游 4590 + Edge 9492）**、
+   **`school-paper`（起一次服务，桩上游 4591 + Edge 9494）**。
    （`student-report` **不需要服务**：纯函数 + 直接 import `.ts`，秒级跑完。）
 5. **`tests/step7-ui.test.mjs` 隔离弱点**：按关键词查全表，会被上次运行遗留数据污染。
 6. **Edge 调试端口会被「幽灵监听者」占住**（2026-10 踩过一次）：
@@ -277,7 +278,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 第七批实测，30 个套件全绿 ✅，合计 933 项断言）**：
+**全套回归现状（2026-10 第八批实测，31 个套件全绿 ✅，合计 969 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -288,7 +289,8 @@ paper-analysis 56/56       paper-regression 23/23    paper-score-edit 59/59
 paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
 paper-attribution-polish 23/23
-vision-paper 29/29
+vision-paper 31/31
+school-paper 36/36
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15          admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
@@ -331,10 +333,16 @@ student-report 37/37       student-analysis 21/21
 >
 > 变化说明（2026-10 第七批）：`vision-paper` **24 → 29**（新增**扫描版 PDF** 那 5 条：
 > 前置断言"测试 PDF 真的没有文字层"、**浏览器真的加载了本地 pdf.js**、逐页渲染后按「第 1 页」
-> 标注、识别文本与桩一致、确认后照样解析成功）。**没有新增第三方依赖之外的表/接口** ——
+> 标注、识别文本与桩一致、确认后照样解析成功）；随后又补了**懒加载两条** → **31**。
+> **没有新增第三方依赖之外的表/接口** ——
 > 只有 `public/tools/paper-analysis/vendor/` 下多了 pdf.js 两个文件（Apache-2.0，见交接文档）。
-> 第二～七批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37、第四批 77/81、
-> 第五批 22/23、第六批 23/24、第七批 25/29）。
+>
+> 变化说明（2026-10 第八批）：**新增 `school-paper` 36/36**（🏫 **学校卷子**识别：
+> 对第七批的**范围纠正** —— 用户要的是"学校卷子 → AI 理解题目/结构"，第七批做的是
+> "学科网报告截图 → 转文字"。新路由 `vision-paper-structure` + 结构化预览 + 生成 paper；
+> 桩上游 4591、真浏览器 9494）。`vision-paper` 无变化（31）。
+> 第二～八批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37、第四批 77/81、
+> 第五批 22/23、第六批 23/24、第七批 25/29、第八批 28/36）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，
