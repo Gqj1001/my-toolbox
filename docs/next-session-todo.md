@@ -278,7 +278,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 第九批实测，31 个套件全绿 ✅，合计 976 项断言）**：
+**全套回归现状（2026-10 第十批实测，31 个套件全绿 ✅，合计 988 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -288,7 +288,7 @@ step7-api 39/39            step7-ui 36/36            ai-thinking-mode 11/11
 paper-analysis 56/56       paper-regression 23/23    paper-score-edit 59/59
 paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
-paper-attribution-polish 23/23
+paper-attribution-polish 35/35
 vision-paper 31/31
 school-paper 43/43
 feedback-data-cache 26/26  feedback-client-cache 51/51
@@ -346,8 +346,14 @@ student-report 37/37       student-analysis 21/21
 > ① 生成结构后「📋 试卷信息」「🔎 解析结果」两个面板要展开、逐题列表要填充；
 > ② AI 估难度后「容易题满分·其余留空」要把**较易**的题置回满分、其余不动；
 > 外加"难度必须落成数字系数 0.85"这条根因断言）。
-> 第二～九批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37、第四批 77/81、
-> 第五批 22/23、第六批 23/24、第七批 25/29、第八批 28/36、第九批 40/43）。
+>
+> 变化说明（2026-10 第十批）：`paper-attribution-polish` **23 → 35**（报告头「✨ AI 润色」
+> 合并成"一次点完建议段+错因列"：点一次上游被调 2 次 / 两部分都润 /
+> **失败那步重试一次后成功** / 只成功一半时保留另一部分 / **非会员一次都不调且标「未执行」**）。
+> ⚠️ 这条合并**必须串行**——两个函数都是"读整篇→改自己→整篇写回"，并行会互相覆盖
+> （变异测试验过：改并行 → 33/35，红的正是"两部分都润色"）。
+> 第二～十批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37、第四批 77/81、
+> 第五批 22/23、第六批 23/24、第七批 25/29、第八批 28/36、第九批 40/43、第十批 33/35）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，
