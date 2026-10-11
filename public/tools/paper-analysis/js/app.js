@@ -628,9 +628,130 @@ async function handleFile(file){
   }
 }
 
+/* ==========================================================================
+   ③ 图片 / 截图识别（★ 2026-10 第六批）
+   --------------------------------------------------------------------------
+   干什么：把**学科网报告的截图 / 拍照**交给服务端视觉模型**逐字抄录**，拿回文本后
+   先给老师**核对（可编辑）**，再一键填进导入框走原有解析流程。
+
+   ⚠️ 用户 2026-10 定的四条口径（改之前先看这里）：
+     1. **一页一张、分别识别再合并**（不拼长图，避免小字糊掉；也让失败那页可单独重试）；
+     2. **尽力识别 + 标出不确定的地方**（服务端提示词要求把看不清处写成「[看不清]」，
+        这里据此给 ⚠️ 提示，绝不假装那几处是准的）；
+     3. **先预览核对、再一键填进导入框**（不直接生成报告）；
+     4. **免费**（服务端只校验"登录+未封禁"，不是会员专属）。
+   ⚠️ **扫描版 PDF 不支持**：浏览器里没有 PDF 渲染器（本工具坚持零第三方依赖），
+      所以提示老师把 PDF 每页截图后按图片上传。要做需要引入 pdf.js（另议）。
+   ========================================================================== */
+const VISION_MAX_SIDE = 1600;   // 长边上限（够认字，又不至于太大）
+const VISION_QUALITY = 0.82;
+
+/** 图片压到「长边 ≤1600 + JPEG 0.82」：省流量、省费用、避免撞 4MB 上限。
+ *  ⚠️ 压不动（解码失败等）就**原样返回**，让服务端去判断，不要在这里静默失败。 */
+async function compressImageFile(file){
+  const raw = await toDataUrl(file);
+  try{
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error('图片解码失败'));
+      i.src = raw;
+    });
+    const scale = Math.min(1, VISION_MAX_SIDE / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+    const w = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
+    const h = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    cv.getContext('2d').drawImage(img, 0, 0, w, h);
+    let out = cv.toDataURL('image/jpeg', VISION_QUALITY);
+    // 还太大就降一档（服务端上限 4MB，这里留足余量）
+    if(out.length > 2600000) out = cv.toDataURL('image/jpeg', 0.6);
+    return { dataUrl: out, w, h, scaled: scale < 1 };
+  }catch(e){
+    return { dataUrl: raw, w: 0, h: 0, scaled: false, err: String((e && e.message) || e) };
+  }
+}
+
+/** 本批识别的结果（顺序 = 上传顺序） */
+let visionPages = [];
+let visionBusy = false;
+
+async function visionRun(files){
+  const list = Array.from(files || []);
+  const box = $('#visionPreview');
+  if(!list.length) return;
+  if(API.mode !== 'server'){
+    box.innerHTML = '<div class="errbox">图片识别要用服务器上的视觉模型。<br>'
+      + '当前是<b>本机版</b>（直接双击打开的 HTML）：请改用「粘贴文字」，'
+      + '或访问线上站点里的试卷分析工具再试。</div>';
+    return;
+  }
+  if(visionBusy){ toast('上一批还在识别，请稍等'); return; }
+  visionBusy = true;
+  visionPages = [];
+  try{
+    for(let i = 0; i < list.length; i++){
+      box.innerHTML = '<div class="tip">⏳ 正在识别第 ' + (i + 1) + '/' + list.length + ' 张…（每张几秒）</div>';
+      const c = await compressImageFile(list[i]);
+      const d = await apiFetch(API_BASE + '/vision-paper', { method:'POST', body:{ image: c.dataUrl } });
+      if(!d || !d.ok) throw new Error((d && d.error) || '识别失败');
+      visionPages.push({ name: list[i].name || ('第' + (i + 1) + '张'), text: d.text || '', empty: !!d.empty, uncertain: !!d.uncertain });
+    }
+    renderVisionPreview();
+  }catch(e){
+    box.innerHTML = '<div class="errbox">图片识别失败：' + esc(e.message) + '</div>';
+  }finally{
+    visionBusy = false;
+  }
+}
+
+function renderVisionPreview(){
+  const box = $('#visionPreview');
+  const uncertainN = visionPages.filter(p => p.uncertain).length;
+  const emptyN = visionPages.filter(p => p.empty).length;
+  let html = '<div style="margin-top:12px;border:1px dashed var(--line,#d4d4d8);border-radius:8px;padding:10px">'
+    + '<b>🔍 识别结果（请对照原图核对，可直接改，确认后再填进导入框）</b>'
+    + '<p class="tip">共 ' + visionPages.length + ' 张。'
+    + (uncertainN ? '<b>有 ' + uncertainN + ' 张里出现了「[看不清]」—— 那几处必须你补</b>。' : '没有标出看不清的地方。')
+    + (emptyN ? '<b>有 ' + emptyN + ' 张一个字都没认出来（可能太模糊或拍歪）</b>。' : '')
+    + '</p>';
+  visionPages.forEach((p, i) => {
+    html += '<div class="f" style="margin-top:8px"><label>第 ' + (i + 1) + ' 张：' + esc(p.name)
+      + (p.uncertain ? ' ⚠️ 含「[看不清]」' : '') + (p.empty ? ' ⚠️ 没认出文字' : '') + '</label>'
+      + '<textarea data-vision="' + i + '" style="min-height:130px">' + esc(p.text) + '</textarea></div>';
+  });
+  html += '<div class="btn-row" style="margin-top:8px">'
+    + '<button class="btn btn-pri" id="btnVisionAdopt">✅ 确认填进导入框</button>'
+    + '<button class="btn btn-gh" id="btnVisionCancel">取消</button></div></div>';
+  box.innerHTML = html;
+  $('#btnVisionAdopt').onclick = adoptVisionText;
+  $('#btnVisionCancel').onclick = () => { box.innerHTML = ''; visionPages = []; };
+}
+
+/** 把（老师改过的）识别文本合并后填进导入框并解析 */
+function adoptVisionText(){
+  const merged = visionPages.map((p, i) => {
+    const el = document.querySelector('[data-vision="' + i + '"]');
+    const t = (el ? el.value : p.text) || '';
+    return (visionPages.length > 1 ? '--- 第 ' + (i + 1) + ' 张 ---\n' : '') + t.trim();
+  }).join('\n\n').trim();
+
+  if(!merged){ toast('识别结果是空的，没有可填入的内容'); return; }
+  const box = $('#parseResult');
+  // ⚠️ 解析失败**不丢文本**：直接把识别结果摊开给老师复制（否则这一段白识别了）
+  if(!adoptPaperText(merged, '图片识别')){
+    box.innerHTML = '<div class="warnbox">识别出的文字没能自动解析成试卷结构（可能这不是学科网那份报告，或排版差异较大）。'
+      + '下面是识别原文，可以复制到「粘贴文字」里手工整理。</div>'
+      + '<details class="cat" open><summary><span class="arw">▶</span>识别出的文字</summary>'
+      + '<div class="body"><pre style="white-space:pre-wrap;font-size:12px;max-height:320px;overflow:auto">'
+      + esc(merged.slice(0, 8000)) + '</pre></div></details>';
+  }
+  $('#visionPreview').innerHTML = '';
+  visionPages = [];
+}
+
 /** 计算并渲染分值分配 */
-function computeScores(){
-  if(!paper) return;
+function computeScores(){  if(!paper) return;
   const total = num($('#examTotal').value) || 150;
   const preset = $('#examPreset').value || '';
   scoreAssign = PaperParser.assignScores(paper.typeDist, total, preset);
@@ -1731,6 +1852,9 @@ function bind(){
   $('#btnParse').onclick = parsePaper;
   $('#btnUpload').onclick = () => $('#fileInput').click();
   $('#fileInput').onchange = e => { const f = e.target.files[0]; if(f) handleFile(f); e.target.value = ''; };
+  // ★ 图片/截图识别（可一次选多张，逐张识别后合并）
+  $('#btnVision').onclick = () => $('#visionInput').click();
+  $('#visionInput').onchange = e => { visionRun(e.target.files); e.target.value = ''; };
   $('#btnPasteToggle').onclick = () => {
     const b = $('#pasteBox');
     const show = b.style.display === 'none';

@@ -34,20 +34,24 @@
       <h2>📥 从学科网导入试卷 <span class="sp" id="paperHint">未导入</span></h2>
       <div class="pad">
         <p class="tip">
-          三种方式任选：<b>① 上传文件</b>（推荐，.docx 最准）→ <b>② 粘贴文字</b>（从 Word 全选复制）→ <b>③ 上传截图</b>（需要配置视觉模型）。<br>
+          三种方式任选：<b>① 上传文件</b>（推荐，.docx 最准）→ <b>② 粘贴文字</b>（从 Word 全选复制）→ <b>③ 上传图片/截图识别</b>（学科网报告的截图、拍照）。<br>
           要导入的是学科网那份含<b>「整体难度／试卷题型／试卷难度／细目表分析／知识点分析」</b>的报告。
         </p>
         <div class="btn-row">
           <input type="file" id="fileInput" accept=".docx,.doc,.pdf,.txt,image/*" style="display:none">
+          <input type="file" id="visionInput" accept="image/*" multiple style="display:none">
           <button class="btn btn-pri" id="btnUpload">📎 上传文件解析</button>
+          <button class="btn btn-pri" id="btnVision">📷 上传图片 / 截图识别</button>
           <button class="btn btn-gh" id="btnPasteToggle">⌨️ 改用粘贴文字</button>
           <button class="btn btn-gh" id="btnDemo">载入示例</button>
           <button class="btn btn-gh" id="btnClearPaper">清空</button>
         </div>
         <p class="tip" id="uploadHint">
-          支持 <b>.docx</b>（直接解包抽文本，最准）、<b>.doc</b>、<b>.pdf</b>、<b>截图</b>。
-          截图与扫描版 PDF 需要先在「服务器与AI设置」里配置视觉模型。
+          支持 <b>.docx</b>（直接解包抽文本，最准）、<b>.doc</b>、<b>有文字层的 .pdf</b>、以及
+          <b>图片</b>（截图 / 拍照，逐张识别，<b>识别完先给你核对再填进来</b>）。
+          ⚠️ <b>扫描版 PDF</b> 目前请先把每页截图，再按图片上传。
         </p>
+        <div id="visionPreview"></div>
         <div id="pasteBox" style="display:none">
           <textarea id="paperPaste" placeholder="在此粘贴学科网「试卷分析报告」的全部文字…"></textarea>
           <div class="btn-row" style="margin-top:8px">
