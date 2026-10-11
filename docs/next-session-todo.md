@@ -277,7 +277,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 第六批实测，30 个套件全绿 ✅，合计 928 项断言）**：
+**全套回归现状（2026-10 第七批实测，30 个套件全绿 ✅，合计 933 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -288,7 +288,7 @@ paper-analysis 56/56       paper-regression 23/23    paper-score-edit 59/59
 paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
 paper-attribution-polish 23/23
-vision-paper 24/24
+vision-paper 29/29
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15          admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
@@ -328,8 +328,13 @@ student-report 37/37       student-analysis 21/21
 > 变化说明（2026-10 第六批）：**新增 `vision-paper` 24/24**（图片/截图 → 视觉模型逐字抄录：
 > 两阶段起服务验「未配模型 503」、**免费用户也能用**（口径）、`uncertain`/`empty` 语义、
 > 上游异常、入参；**真浏览器把 File 塞进 input → 预览 → 改文本 → 确认 → 解析出 23 道题**）。
-> 第二～六批都用**变异测试**自证过断言真会红
-> （第二批 66/72 与 36/37、第四批 77/81、第五批 22/23、第六批 23/24）。
+>
+> 变化说明（2026-10 第七批）：`vision-paper` **24 → 29**（新增**扫描版 PDF** 那 5 条：
+> 前置断言"测试 PDF 真的没有文字层"、**浏览器真的加载了本地 pdf.js**、逐页渲染后按「第 1 页」
+> 标注、识别文本与桩一致、确认后照样解析成功）。**没有新增第三方依赖之外的表/接口** ——
+> 只有 `public/tools/paper-analysis/vendor/` 下多了 pdf.js 两个文件（Apache-2.0，见交接文档）。
+> 第二～七批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37、第四批 77/81、
+> 第五批 22/23、第六批 23/24、第七批 25/29）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，
