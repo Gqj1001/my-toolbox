@@ -253,7 +253,8 @@
    `middleware-cache`、`math-plan-students`、`date-input`、`paper-analysis-students`、
    `archive-students`、**`vision-scores`（起两次服务）**、
    **`student-analysis`（桩上游 4588）**、
-   **`paper-attribution-polish`（桩上游 4589 + Edge 9491）**。
+   **`paper-attribution-polish`（桩上游 4589 + Edge 9491）**、
+   **`vision-paper`（起两次服务，桩上游 4590 + Edge 9492）**。
    （`student-report` **不需要服务**：纯函数 + 直接 import `.ts`，秒级跑完。）
 5. **`tests/step7-ui.test.mjs` 隔离弱点**：按关键词查全表，会被上次运行遗留数据污染。
 6. **Edge 调试端口会被「幽灵监听者」占住**（2026-10 踩过一次）：
@@ -276,7 +277,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 第五批实测，29 个套件全绿 ✅，合计 904 项断言）**：
+**全套回归现状（2026-10 第六批实测，30 个套件全绿 ✅，合计 928 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -287,6 +288,7 @@ paper-analysis 56/56       paper-regression 23/23    paper-score-edit 59/59
 paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
 paper-attribution-polish 23/23
+vision-paper 24/24
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15          admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
@@ -322,8 +324,12 @@ student-report 37/37       student-analysis 21/21
 >
 > 变化说明（2026-10 第五批）：**新增 `paper-attribution-polish` 23/23**（错因列 AI 润色：
 > 桩上游 + 段数契约 + 提示词口径 + 非会员 403 不白花调用 + **真浏览器点击后只动最后一列**）。
-> 第二、三、四、五批都用**变异测试**自证过断言真会红
-> （第二批 66/72 与 36/37、第四批 77/81、第五批 22/23）。
+>
+> 变化说明（2026-10 第六批）：**新增 `vision-paper` 24/24**（图片/截图 → 视觉模型逐字抄录：
+> 两阶段起服务验「未配模型 503」、**免费用户也能用**（口径）、`uncertain`/`empty` 语义、
+> 上游异常、入参；**真浏览器把 File 塞进 input → 预览 → 改文本 → 确认 → 解析出 23 道题**）。
+> 第二～六批都用**变异测试**自证过断言真会红
+> （第二批 66/72 与 36/37、第四批 77/81、第五批 22/23、第六批 23/24）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，
