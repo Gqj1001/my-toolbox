@@ -1653,10 +1653,21 @@ function updateReportMeta(name, ctx){
 /* ==========================================================================
    AI：① 重写「教学辅导建议」段  ② 润色【错题分析】的「原因」列
    ========================================================================== */
-async function aiAdvice(){
-  if(!lastAdviceCtx){ toast('请先生成报告'); return; }
+/**
+ * AI 改写「教学辅导建议与安排」段（会员专属）
+ *
+ * @param opts 可选 `{ btn, silent }`：
+ *   · `btn`    用**哪个按钮**显示"⏳ 生成中"（默认老按钮 `#btnAIAdvice`）。
+ *              合并到报告头那个「✨ AI 润色」之后，点谁谁转圈（老版本载入态打在了另一个按钮上，
+ *              从报告头点进去看着像没反应）。
+ *   · `silent` 不弹自己的 toast（由调用方给一条汇总）——`polishAll()` 用。
+ * @returns `{ ok:true }` 或 `{ ok:false, error }`（**不再只靠 toast**，调用方才能决定重试与汇总）
+ */
+async function aiAdvice(opts){
+  const o = (opts && (opts.btn || opts.silent)) ? opts : {};
+  if(!lastAdviceCtx){ toast('请先生成报告'); return { ok:false, error:'请先生成报告' }; }
   const { name, ctx, attitude } = lastAdviceCtx;
-  const btn = $('#btnAIAdvice'); const old = btn.textContent;
+  const btn = o.btn || $('#btnAIAdvice'); const old = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ AI 生成中';
 
   // 给 AI 的输入：已经算好的结构化诊断结论（不让它猜数据）
@@ -1703,9 +1714,11 @@ async function aiAdvice(){
     $('#reportText').textContent = merged;
     lastReport = merged;
     $('#stChars').textContent = merged.length;
-    toast('建议段已由 AI 重写，可继续手动修改');
+    if(!o.silent) toast('建议段已由 AI 重写，可继续手动修改');
+    return { ok:true };
   }catch(e){
-    toast('AI 生成失败：' + e.message, 3400);
+    if(!o.silent) toast('AI 生成失败：' + e.message, 3400);
+    return { ok:false, error:e.message };
   }finally{
     btn.disabled = false; btn.textContent = old;
   }
@@ -1752,12 +1765,22 @@ function pickAttrReasons(text){
   return { lines, targets };
 }
 
-async function aiPolishAttribution(){
-  const btn = $('#btnAIPolishAttr'); const old = btn.textContent;
+/**
+ * AI 润色【错题分析】表的最后一列「失分情况及原因分析」（会员专属）
+ *
+ * @param opts 同 `aiAdvice()`：`{ btn, silent }`（合并后点谁谁转圈；silent 时由调用方汇总）
+ * @returns `{ ok:true, count }` 或 `{ ok:false, error }`
+ */
+async function aiPolishAttribution(opts){
+  const o = (opts && (opts.btn || opts.silent)) ? opts : {};
+  const btn = o.btn || $('#btnAIPolishAttr'); const old = btn.textContent;
   const cur = $('#reportText').textContent;
-  if(!cur.trim()){ toast('请先生成报告'); return; }
+  if(!cur.trim()){ toast('请先生成报告'); return { ok:false, error:'请先生成报告' }; }
   const { lines, targets } = pickAttrReasons(cur);
-  if(!targets.length){ toast('没有需要润色的错因（全对、或还没填失分题）'); return; }
+  if(!targets.length){
+    toast('没有需要润色的错因（全对、或还没填失分题）');
+    return { ok:false, error:'没有需要润色的错因（全对、或还没填失分题）' };
+  }
 
   btn.disabled = true; btn.textContent = '⏳ 润色中';
   try{
@@ -1796,12 +1819,61 @@ async function aiPolishAttribution(){
     $('#reportText').textContent = merged;
     lastReport = merged;
     $('#stChars').textContent = merged.length;
-    toast('错因列已润色 ' + out.length + ' 处（分数与题号未动），可继续手动修改');
+    if(!o.silent) toast('错因列已润色 ' + out.length + ' 处（分数与题号未动），可继续手动修改');
+    return { ok:true, count: out.length };
   }catch(e){
-    toast('错因润色失败：' + e.message, 3600);
+    if(!o.silent) toast('错因润色失败：' + e.message, 3600);
+    return { ok:false, error:e.message };
   }finally{
     btn.disabled = false; btn.textContent = old;
   }
+}
+
+/* ==========================================================================
+   ✨ 报告头那个「AI 润色」：**一次点击，串行润两部分**（★ 2026-10 第十批，用户定的）
+   --------------------------------------------------------------------------
+   用户口径（2026-10 明确）：
+     ① 点**一次** = 「建议段」+「错因列」都润；面板里那两个单独按钮**保留**（想只润一个就点它）；
+     ② **串行**两步 —— 两个函数都是"读整篇报告 → 改自己那部分 → 整篇写回"，
+        **并行会互相覆盖**（后写回的会用旧文本盖掉前者的成果），所以不能图快并行；
+     ③ 失败策略：**失败的那一步自动重试一次**；仍失败就**保留另一步的成果**并如实说明，
+        **绝不整篇回滚** —— 回滚等于白花已经付钱的那次调用；
+     ④ 非会员：第一步就会被拒（403「AI 建议为会员专属功能」）→ **不重试、也不再打第二步**
+        （省一次一定失败的调用）。
+   ========================================================================== */
+async function polishAll(){
+  const btn = $('#btnPolishAll'); const old = btn.textContent;
+  if(!lastAdviceCtx){ toast('请先生成报告'); return; }
+  if(!$('#reportText').textContent.trim()){ toast('请先生成报告'); return; }
+  btn.disabled = true;
+
+  /** 跑一步：失败自动重试一次；会员/封禁类错误不重试（重试也没用） */
+  const step = async (label, fn) => {
+    btn.textContent = '⏳ ' + label + '…';
+    let r = await fn();
+    if(!r.ok && !/会员|封禁/.test(String(r.error || ''))){
+      btn.textContent = '⏳ ' + label + '（重试一次）…';
+      const again = await fn();
+      if(again.ok){ r = again; r.retried = true; }
+    }
+    return Object.assign({ label }, r);
+  };
+
+  const a = await step('① 润色建议段 1/2', () => aiAdvice({ btn, silent:true }));
+  const b = /会员|封禁/.test(String(a.ok ? '' : a.error || ''))
+    ? { ok:false, error:'未执行（先把会员开通后再点）', count:0 }
+    : await step('② 润色错因列 2/2', () => aiPolishAttribution({ btn, silent:true }));
+
+  btn.disabled = false;
+  const calls = [a, b].reduce((n, x) => n + (x.ok ? 1 : 0) + (x.retried ? 1 : 0), 0);
+  const mark = (x) => x.ok ? (x.retried ? '已润色（重试后成功）' : '已润色') : '没成：' + (x.error || '未知原因');
+  const summary = '建议段' + mark(a) + '；错因列' + mark(b) + (b.ok ? '（' + b.count + ' 处）' : '');
+  const allOk = a.ok && b.ok;
+  toast((allOk ? '✅ AI 润色完成：' : '⚠️ 只完成了一部分：') + summary
+    + '（本次 ' + calls + ' 次 AI 调用）' + (allOk ? '' : '　已成功的那部分保留着，可再点一次重跑'),
+    allOk ? 4200 : 8000);
+  btn.title = '上次润色：' + summary;
+  btn.textContent = allOk ? old : '✨ AI 润色（有一步没成，可再点）';
 }
 
 /** 本机模式（BYOK）下「建议段」的 system 提示词 —— 与服务端 ADVICE_PROMPT 同一口径 */
@@ -2465,9 +2537,13 @@ function bind(){
   // ③ 报告
   $('#btnGen').onclick = generateReport;
   $('#btnGenMobile').onclick = generateReport;
-  $('#btnAIAdvice').onclick = aiAdvice;
-  $('#btnAIPolishAttr').onclick = aiPolishAttribution;
-  $('#btnPolishAll').onclick = aiAdvice;
+  // ⚠️ 三个 AI 润色入口（★ 2026-10 第十批）：
+  //    · 报告头「✨ AI 润色」→ polishAll()：**一次点击串行润两部分**（用户定的行为）
+  //    · 面板里「✨ AI 改写建议段」「✍️ AI 润色错因列」→ 各自单独润（保留，想只润一个就点它）
+  //    用箭头函数包一层，避免把 MouseEvent 当成 opts 传进去（里面对 opts 做了判断，但别依赖它）
+  $('#btnAIAdvice').onclick = () => aiAdvice();
+  $('#btnAIPolishAttr').onclick = () => aiPolishAttribution();
+  $('#btnPolishAll').onclick = () => polishAll();
   $('#btnCopy').onclick = copyReport;
   $('#btnCopy2').onclick = copyReport;
   $('#btnDocx').onclick = exportDocx;

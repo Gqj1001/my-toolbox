@@ -185,7 +185,7 @@
         <span class="meta" id="pvMeta"></span>
         <span class="spacer"></span>
         <button class="btn btn-pri btn-xs" id="btnGen">✨ 生成报告</button>
-        <button class="btn btn-ok btn-xs" id="btnPolishAll">✨ AI 润色</button>
+        <button class="btn btn-ok btn-xs" id="btnPolishAll" title="一次点完：建议段 + 错因列（会调用 2 次 AI）">✨ AI 润色（建议段+错因列）</button>
         <button class="btn btn-gh btn-xs" id="btnRestore">↺ 还原</button>
       </div>
       <div class="preview" id="reportText" contenteditable="true"></div>
@@ -214,7 +214,9 @@
           <b>建议段</b>和<b>「失分情况及原因分析」这一列</b>交给 AI 润色会更像你亲手写的。
           AI 拿到的是已经算好的内容，<b>不会改你的数据与分数</b>。<br>
           错因那一列的原文偏"诊断口气"（例如"知识体系尚未建立"），润色会把它改成
-          <b>面向家长、措辞温和、不下定论</b>的说法。
+          <b>面向家长、措辞温和、不下定论</b>的说法。<br>
+          💡 报告右上角的「<b>✨ AI 润色（建议段+错因列）</b>」<b>一次点完两部分</b>
+          （<b>会调用 2 次 AI</b>，串行执行）；想只润其中一部分，就用下面这两个单独的按钮。
         </p>
         <div class="btn-row">
           <button class="btn btn-ok btn-sm" id="btnAIAdvice">✨ AI 改写建议段</button>

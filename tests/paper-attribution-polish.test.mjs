@@ -47,8 +47,12 @@ const killPort3000 = () => {
    桩上游：按输入段落数返回同样多的行（这样"段数一致"这条契约才能被验到）
    ========================================================================== */
 const calls = [];
-/** ok = 正常返回 N 行；short = 少返回一行（验段数不一致被拒）；upstream500 = 上游报错 */
+/** ok = 正常返回 N 行；short = 少返回一行（验段数不一致被拒）；
+ *  shortOnce = **只第一次**少一行（验"合并按钮失败自动重试一次"）；
+ *  upstream500 = 上游报错 */
 let stubMode = "ok";
+/** 错因列被调了几次（`shortOnce` 要靠它区分第一次/第二次） */
+let attrCalls = 0;
 
 const stub = createServer((req, res) => {
   let raw = "";
@@ -68,8 +72,12 @@ const stub = createServer((req, res) => {
     // 从 user 内容里解出段落（服务端发的是 JSON：{context, paragraphs}）
     let paragraphs = [];
     try { paragraphs = JSON.parse(body?.messages?.[1]?.content ?? "{}").paragraphs ?? []; } catch { /* 忽略 */ }
+    if (paragraphs.length) attrCalls++;
     let lines = paragraphs.map((p, i) => `润色后第${i + 1}段：${String(p).slice(0, 8)}（面向家长的说法）`);
-    if (stubMode === "short" && lines.length > 1) lines = lines.slice(0, lines.length - 1);
+    const dropLine =
+      (stubMode === "short" && lines.length > 1) ||
+      (stubMode === "shortOnce" && attrCalls === 1 && lines.length > 1);
+    if (dropLine) lines = lines.slice(0, lines.length - 1);
     // ⚠️ 老路径（建议段）发的是结构化诊断 JSON，**没有 paragraphs** —— 那种请求要回一段正文，
     //    否则本套件第 6 条（"老路径没被改坏"）会因为桩返回空串而假红。
     const content = paragraphs.length
@@ -116,6 +124,41 @@ const post = (cookie, body) =>
   });
 
 const P3 = ["含参分类讨论不完整，知识体系尚未建立", "联立与韦达定理运算能力不足", "事件设定与步骤书写不规范"];
+
+/** 浏览器里"造一份真实报告"的公共步骤（VIP / 非会员两段都用，**只写一份**）：
+ *  载入示例 → 解析 → 填姓名 → 让 3 道题得 0 分（这样报告里才有【错题分析】行可润）→ 生成报告 */
+const BROWSER_SETUP = `
+  w.document.getElementById('btnDemo').click();
+  w.document.getElementById('btnParse').click();
+  w.document.getElementById('stuName').value = '探针同学';
+  let zeroed = 0;
+  for (const no of [1, 2, 3]) {
+    const el = w.document.querySelector('#scoreList input[data-got="' + no + '"]');
+    if (el) { el.value = '0'; el.dispatchEvent(new w.Event('input', { bubbles: true })); zeroed++; }
+  }
+  w.document.getElementById('btnGen').click();
+  const t = w.document.getElementById('reportText').textContent;
+  return { zeroed, hasAttr: t.includes('【错题分析】'), hasAdvice: t.includes('【教学辅导建议/安排】'),
+           rows: t.split('\\n').filter(l => /^[0-9]+ \\| /.test(l)).length };
+`;
+
+/** 读报告：建议段是否已是桩文本、错题分析有几行被润色 / 仍是原文；按钮的文案与 title */
+const BROWSER_READ = `
+  const t = w.document.getElementById('reportText').textContent;
+  const all = t.split('\\n');
+  const rows = all.filter(l => /^[0-9]+ \\| /.test(l));
+  const btn = w.document.getElementById('btnPolishAll');
+  const i = t.indexOf('【错题分析】');
+  return { adviceIsAI: /桩上游返回的建议段正文/.test(t),
+           attrIsAI: rows.filter(l => /润色后第/.test(l)).length,
+           // "没被润色" = 这一行的最后一列**不是**桩返回的润色文案
+           // ⚠️ 别去匹配具体的诊断措辞：真实报告的原因文字是叙述者按规则生成的
+           //    （合成报告里那几句只在第 7 节出现过），匹配措辞会假红
+           attrRaw: rows.filter(l => !/润色后第/.test(l)).length,
+           rows: rows.length, rowSample: rows.slice(0, 1).join('').slice(0, 90),
+           attrArea: i < 0 ? '(没有错题分析段)' : t.slice(i, i + 160),
+           label: btn.textContent.trim(), title: btn.title };
+`;
 
 let edge = null;
 try {
@@ -307,7 +350,100 @@ try {
     record("★找不到可润色的段时：**报告一个字都不改**（只提示，不弄乱）",
       String(afterBad) === BEFORE, JSON.stringify(String(afterBad).slice(0, 80)));
 
+    /* ==================================================================
+       ★ 合并按钮（第十批）：报告头「✨ AI 润色」= 建议段 + 错因列，**串行**两步
+       ⚠️ 用工具自带的示例报告走**真实**的生成流程：合并按钮要润"建议段"，
+          而建议段依赖生成报告时算好的诊断数据（`lastAdviceCtx`），
+          所以不能像上面那样只塞一段合成文本。
+       ================================================================== */
+    const SETUP = BROWSER_SETUP;
+    const READ = BROWSER_READ;
+    const setup = await inTool(SETUP);
+    record("（准备）生成一份真实报告（3 道错题，含错题分析表与建议段）",
+      setup?.hasAttr === true && setup?.hasAdvice === true && setup?.zeroed === 3,
+      JSON.stringify(setup));
+
+    const polishBtn = await inTool(`
+      const b = w.document.getElementById('btnPolishAll');
+      return { label: b.textContent.trim(), title: b.title,
+               hasAttrBtn: !!w.document.getElementById('btnAIPolishAttr'),
+               hasAdviceBtn: !!w.document.getElementById('btnAIAdvice') };
+    `);
+    record("★报告头按钮文案写明「建议段+错因列」，且两个单独按钮都还在（想只润一个就点它）",
+      /建议段\+错因列/.test(String(polishBtn?.label ?? "")) &&
+        polishBtn?.hasAttrBtn === true && polishBtn?.hasAdviceBtn === true,
+      JSON.stringify(polishBtn));
+
+    /** 读报告：建议段是否已是桩文本、错因列有几行被润色（公共实现见文件上方 BROWSER_READ） */
+
+    // ① 正常：一次点击 → 两次调用 → 两部分都变
+    stubMode = "ok"; attrCalls = 0; calls.length = 0;
+    await inTool(`w.document.getElementById('btnPolishAll').click(); return 'clicked';`);
+    await sleep(3000);
+    const both = await inTool(READ);
+    record("★★合并按钮：点一次 → 上游被调 **2 次**（建议段 + 错因列各一次，串行）",
+      calls.length === 2, `实际 ${calls.length} 次`);
+    record("★★合并按钮：**两部分都润色了**（建议段换成 AI 文本；**有原因的那 3 道错题**最后一列都换成润色文案）",
+      both?.adviceIsAI === true && both?.attrIsAI === 3,
+      JSON.stringify({ 建议段是AI: both?.adviceIsAI, 润色行数: both?.attrIsAI, 表格总行数: both?.rows }));
+
+    // ② 失败自动重试一次：让桩**第一次**少返回一行（段数不符 → 客户端重试 → 第二次成功）
+    stubMode = "shortOnce"; attrCalls = 0; calls.length = 0;
+    await inTool(`w.document.getElementById('btnGen').click(); return 'regenerated';`);   // 报告恢复成"没润过"
+    await inTool(`w.document.getElementById('btnPolishAll').click(); return 'clicked';`);
+    await sleep(4500);
+    const retried = await inTool(READ);
+    record("★★合并按钮：失败的那一步**自动重试一次**后成功（错因列被调 2 次、最终两部分都润色）",
+      retried?.adviceIsAI === true && retried?.attrIsAI === 3 && attrCalls === 2 && calls.length === 3,
+      JSON.stringify({ 上游总调用: calls.length, 错因列调用: attrCalls, 润色行数: retried?.attrIsAI }));
+
+    // ③ 一半失败：错因列重试后仍失败 → **保留建议段的成果**，并如实告知
+    stubMode = "short";
+    await inTool(`w.document.getElementById('btnGen').click(); return 'regenerated';`);
+    calls.length = 0;
+    await inTool(`w.document.getElementById('btnPolishAll').click(); return 'clicked';`);
+    await sleep(5500);
+    const half = await inTool(READ);
+    record("★★合并按钮：只成功一半时**保留成功的那部分**（建议段已是 AI 文本），错因列**一行都没动**",
+      half?.adviceIsAI === true && half?.attrIsAI === 0 && half?.rows === 23,
+      JSON.stringify({ 建议段是AI: half?.adviceIsAI, 润色行数: half?.attrIsAI, 表格行数: half?.rows,
+                       首行: half?.rowSample }));
+    record("★合并按钮：按钮上写明「有一步没成」且 title 里记着上次结果（用户知道下一步该做什么）",
+      /没成/.test(String(half?.label ?? "")) && /建议段/.test(String(half?.title ?? "")) &&
+        /错因列/.test(String(half?.title ?? "")),
+      JSON.stringify({ label: half?.label, title: half?.title }));
+    stubMode = "ok";
+
     try { await cdp.send("Browser.close"); } catch { /* ignore */ }
+  }
+
+  /* ======================================================================
+     8. ★ 非会员点合并按钮：第一步就 403 → **不重试、也不再打第二步**（不白花调用）
+     ====================================================================== */
+  {
+    const b2 = await startBrowser(CDP_PORT, "D:/my-website/.edge-profile-attr-free");
+    edge = b2.edge;
+    const { cdp: cdp2, sessionId: sid2 } = b2;
+    const { inTool: inTool2, goto: goto2, login: login2 } = makePageApi(cdp2, sid2);
+
+    record("免费账号在浏览器里登录成功", await login2(adminEmail, password));
+    await goto2("/tools/paper-analysis", 5000);
+    const setup2 = await inTool2(BROWSER_SETUP);
+    record("（准备·免费账号）同样生成一份真实报告", setup2?.zeroed === 3, JSON.stringify(setup2));
+
+    stubMode = "ok"; calls.length = 0;
+    await inTool2(`w.document.getElementById('btnPolishAll').click(); return 'clicked';`);
+    await sleep(3000);
+    const free = await inTool2(BROWSER_READ);
+    record("★★非会员点合并按钮：**上游一次都没被调**（第一步就被会员校验拦下，不重试也不打第二步）",
+      calls.length === 0, `实际 ${calls.length} 次`);
+    record("★非会员：报告一个字没改（AI 润色被拒不会弄乱报告）",
+      free?.adviceIsAI === false && free?.attrIsAI === 0 && free?.rows === 23,
+      JSON.stringify({ 建议段是AI: free?.adviceIsAI, 润色行数: free?.attrIsAI, 表格行数: free?.rows }));
+    record("★非会员：错因列那一步被明确标成「未执行」（不让老师以为重试过了）",
+      /未执行/.test(String(free?.title ?? "")), JSON.stringify(free?.title));
+
+    try { await cdp2.send("Browser.close"); } catch { /* ignore */ }
   }
 } catch (e) {
   record("测试执行未异常中断", false, String(e && e.message ? e.message : e));
