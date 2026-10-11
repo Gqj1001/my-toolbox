@@ -70,7 +70,7 @@
 |---|---|---|
 | a | ✅ 接口层的 `extra` 改成**服务端按键合并**（**已完成 2026-10 第二批**） | 合并挪进 `src/lib/feedback-db.ts` 的 `buildStudentRow()` → `mergeExtra()`：写入前读回旧 `extra`、展开、再盖本次的键。**顺带修掉一个真 bug**：paper 的 `CLOUD_STORE.saveStudent()` 从来不读旧值（只发 `{cls}`），所以以前「先 math-plan 存、再到 paper 点保存」会把 `phase/book/exam` 抹掉。规则：同名键新值赢 / 别家键保留 / **键值 `null` = 删掉该键**（整个 `extra` 传 null 或没传 = 沿用旧值）。合并前改成**直读最新行**（用户选的：每次保存 +1 次 Supabase 往返，换不丢数据）。⚠️ 工具页那句「先读旧值」**保留**（服务端是兜底）。防护：`students-unified` 新增「阶段5」8 项（64 → **72**）＋ `math-plan-students` 的「互不踩③」**翻转**成"不再被盖掉"；已用**变异测试**证明这 7 条会随合并被摘掉而变红 |
 | b | ✅ 学员档案的「**学情分析**」（**已完成 2026-10 第三批**） | 档案详情页新增区块：**统计免费**（概览 / 成绩趋势 / 课时累计 / 薄弱与失分，抽不到就在 `notes` 里明说，绝不猜）＋ **AI 报告会员专属**（`POST /api/students/analysis`，生成【整体学情】【优势】【薄弱与原因】【下一步建议】）。算法是纯函数 `src/lib/student-report.ts`（页面与 AI 接口**共用同一份**，不是两套）。报告以 `tool='analysis'` **落库成一条记录**（用户选的）。✅ **迁移 `0017_history_tool_allow_analysis.sql` 用户已在 Supabase 执行**（`ALLOWED_TOOLS` 同步加了 `analysis`），落库那半已实测通过。测试：`student-report` **37 项**（纯函数，**本仓库第一个直接 import `.ts` 的套件**）＋ `student-analysis` **21 项**（桩上游 + 鉴权 + 提示词护栏 + 落库 + 「报告不吃自己」）＋ `archive-students` 里 4 条真浏览器断言 |
-| c | ⚠️ **写路径的读失败会静默降级**（第二批发现的隐患，**未动**） | `upsertStudent()` 合并前那次读走 `getStudentsFresh()` → 查失败时 `softFail()` 返回空数组 → 被当成"没有旧行"，于是**没传的列会被写成 NULL**（= 退回整行覆盖），也就是**数据库抖一下可能静默抹掉别家工具的数据**。根治方向：让**写**路径的这次读失败**明确抛错**（读接口仍然不该 500，但写路径也许应该）。这是取舍，等用户定 |
+| c | ✅ **写路径的读失败改成明确报错**（**已完成 2026-10 第四批，待办 A**） | `upsertStudent()` 合并前那次读以前走 `getStudentsFresh()` → `softFail()` 把"查失败"变成空数组 → 被当成"没有旧行" → **没传的列写成 NULL**（实测：接口 `200 ok:true` 而库里 `grade/campus` 被抹成 null = 静默数据丢失）。现在改成**严格读**（`loadStudentsByNameStrict()` → 直接调会抛异常的 `loadStudents()`），失败就抛 `StudentRowReadError` → **中止写入、一个字都不改**，接口返回 **503** + 「读取档案失败，本次没有做任何修改，请重试。」；学员档案页的 Server Action 同样显示这句。**读接口故意不跟着改**（仍软降级、不 500）。防护：`students-unified` 新增「第 2c 组」9 项（72 → **81**），含**故障注入**调试口 `POST /api/debug/fail-next-student-read`（受 debug-gate 保护、生产默认 404、默认计数 0 ⇒ 行为不变）与**变异自证**（把严格读改回软降级 → 4 条红，其中"逐字段一字未改"直接演示了数据被抹）。⚠️ **用户已确认这是有意取舍**：数据库真抖时保存会显示"失败，请重试" |
 
 ---
 
@@ -226,7 +226,7 @@
 | 8 | few-shot 效果评估 | 触发条件：累计用 AI 润色 20–30 次后 |
 | 9 | 深度优化 AI 润色（调温度/prompt） | 可选 |
 | 11 | feedback 离线模式入口 | 可选（现在云端拉不到就是空页面，是**有意**的） |
-| 12 | `DEFAULT_MODEL = "deepseek-chat"` 改 `deepseek-flash` | 已用 Vercel 的 `AI_MODEL` 覆盖，属技术债清理 |
+| 12 | ✅ `DEFAULT_MODEL = "deepseek-chat"` 改 `deepseek-flash`（**已完成 2026-10 第四批，待办 B**） | 5 个 AI 路由都改了（`feedback/ai`、`math-plan/ai-sections`、`paper-analysis/ai-advice`、`paper-analysis/mode`、`students/analysis`）。线上一直用 Vercel 的 `AI_MODEL` 覆盖，所以**行为零变化**，只是把兜底修对（`deepseek-chat` 官方 2026-07-24 已停用）。⚠️ 剩一处**不在本次范围**：`public/tools/*.html` 里"本机模式"的默认模型名也写着 `deepseek-chat`（那是**工具会话**的地盘，没动） |
 
 **长期（现在不做）**：自动支付、会员使用统计、全站数据导出、多老师团队模式、更换服务器架构（国内备案）。
 
@@ -275,7 +275,7 @@
 | 三份交接文档 | `docs/project-overview.md`、`docs/dsh-work-guide.md`、`docs/perf-notes.md` |
 | 本文件 | `docs/next-session-todo.md` |
 
-**全套回归现状（2026-10 三批收口，28 个套件全绿 ✅，合计 872 项断言）**：
+**全套回归现状（2026-10 第四批实测，28 个套件全绿 ✅，合计 881 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -286,7 +286,7 @@ paper-analysis 56/56       paper-regression 23/23    paper-score-edit 59/59
 paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
 paper-analysis-students 27/27
 feedback-data-cache 26/26  feedback-client-cache 51/51
-students-unified 72/72     date-input 15/15          admin-grant90 18/18
+students-unified 81/81     date-input 15/15          admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
 student-report 37/37       student-analysis 21/21
 ```
@@ -312,7 +312,12 @@ student-report 37/37       student-analysis 21/21
 > 鉴权「非会员不白花一次调用」 + 提示词护栏 + 落库；**0017 执行前**跑是 19 项、执行后 21 项）；
 > `archive-students` **17 → 21**（补 4 条真浏览器断言：学情分析区块渲染、得分率算对、
 > 「没抽到就如实说」、免费用户看不到生成按钮）。
-> 第二、三批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37）。
+>
+> 变化说明（2026-10 第四批，待办 A+B）：`students-unified` **72 → 81**（新增「第 2c 组」9 项：
+> 故障注入 → 写路径**明确失败 503**、提示说明「没做任何修改」、**库里逐字段一字未改**、
+> 读接口仍 200、注入用完后保存恢复成功；故障注入口是 `/api/debug/fail-next-student-read`）。
+> B 只改默认模型名，**不新增断言**（线上有 `AI_MODEL` 覆盖，行为零变化）。
+> 第二、三、四批都用**变异测试**自证过断言真会红（第二批 66/72 与 36/37、第四批 77/81）。
 
 > ⚠️ **一次只跑一个 runner；看到「端口类失败」先怀疑端口被抢**。
 > 本轮我同时起了两个 runner，`ai-thinking-mode` 直接变 **0/11**（请求被别人的服务回答，

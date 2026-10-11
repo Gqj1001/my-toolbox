@@ -309,7 +309,8 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 - 模板是否补「咨询师」标签（见第三节末）。**需先定需求**：保持留白给老师手填，还是补标签格。
   改模板要连带重跑 `build-template.py` + `math-plan-template` 套件。
   **（用户已决定：保持留白，不做。）**
-- **AI 模型名隐患**：`DEFAULT_MODEL = "deepseek-chat"` 官方已停用但实测仍兼容
+- ~~**AI 模型名隐患**：`DEFAULT_MODEL = "deepseek-chat"` 官方已停用但实测仍兼容~~
+  → ✅ **已修（2026-10 第四批）**：5 个 AI 路由的默认值都改成 `deepseek-flash`，见下文该小节。
   （`route.ts:29`，**核对过仍未被改**）—— 详见第九节「已知隐患」。**AI 突然报 502 时先查这一行。**
   推荐做法：在 Vercel 加环境变量 `AI_MODEL=deepseek-flash`（代码是 `process.env.AI_MODEL ?? DEFAULT_MODEL`），
   以后换模型连代码都不用动。**（用户自己去 Vercel 加，不改代码。）**
@@ -403,29 +404,25 @@ AI 分区润色仍走 `/api/math-plan/ai-sections` 的 `requireVip()` —— 即
 | GitHub 网络 | `github.com:443` 偶发连接重置（`api.github.com` 正常），push 需重试 |
 | **Git 可执行文件** | **`D:\my-website\.tools\git\cmd\git.exe`**（v2.56.0）。**不在 PATH 上** —— 直接敲 `git` 会报 `CommandNotFound`，必须写全路径调用 |
 
-### 已知隐患：`AI_MODEL` 默认值 `deepseek-chat` 已被官方停用（但实测仍能用）
+### ✅ 已修复（2026-10 第四批）：`AI_MODEL` 默认值曾是被官方停用的 `deepseek-chat`
 
 | 项 | 内容 |
 |---|---|
-| 位置 | `src/app/api/math-plan/ai-sections/route.ts` → `const DEFAULT_MODEL = "deepseek-chat"` |
+| 原位置 | `src/app/api/math-plan/ai-sections/route.ts` 等 **5 个 AI 路由** → `const DEFAULT_MODEL = "deepseek-chat"` |
 | 官方口径 | DeepSeek 更新日志：`deepseek-chat` / `deepseek-reasoner` 已于 **2026-07-24 停止使用**（2026-04-24 公告、三个月后生效）。当前模型名是 **`deepseek-flash`**（V4.1 Flash）与 `deepseek-v4-pro`；官方只承诺兼容路由 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`，**没有承诺兼容 `deepseek-chat`** |
-| 线上实况 | Vercel 上**只设了 `AI_KEY`**，没有 `AI_MODEL`、也没有 `AI_BASE_URL` → 实际走的就是这个默认值 |
-| 实测 | **目前 AI 功能仍能正常使用** → `deepseek-chat` 事实上仍被上游兼容路由（属未公告的兼容） |
-| 结论 | **暂不改**（能用就先不动）。但这条兼容随时可能被撤，故记为已知隐患 |
+| 线上实况（**2026-10 实查，与本文档旧版写的不同**） | 旧版写「Vercel 上只设了 `AI_KEY`，没有 `AI_MODEL`」——**那句已过期**。现在实查 `/api/paper-analysis/mode` 返回 `model: "deepseek-flash"`，说明 **`AI_MODEL` 已经设上了**（否则会返回代码里的默认值） |
+| 改了什么 | 5 个路由的 `DEFAULT_MODEL` 全部改成 `"deepseek-flash"`（`feedback/ai`、`math-plan/ai-sections`、`paper-analysis/ai-advice`、`paper-analysis/mode`、`students/analysis`）。线上有 `AI_MODEL` 覆盖 ⇒ **行为零变化**，只是把兜底修对 |
+| 还剩什么 | **无**（本隐患已消除）。⚠️ 唯一没动的是 `public/tools/*.html` 里"**本机模式**"（BYOK）的默认模型名 —— 那属**工具会话**地盘，且只影响老师自己填 Key 的本机用法 |
 
-**⚠️ 排查口诀：如果哪天 AI 润色突然开始报 502「AI 服务暂时不可用」，第一件事就是检查这一行，改成 `deepseek-flash`。**
+**⚠️ 排查口诀（仍然有效）：如果哪天 AI 润色突然开始报 502「AI 服务暂时不可用」，先看服务端日志
+`[math-plan/ai-sections] 上游返回 <状态码>`；若怀疑模型名，检查 Vercel 的 `AI_MODEL`
+以及代码里的 `DEFAULT_MODEL`（现在两处都是 `deepseek-flash`）。**
 
-改法（只改一个字符串）：
-
-```ts
-const DEFAULT_MODEL = "deepseek-flash";   // 原值 "deepseek-chat"（已于 2026-07-24 官方停用）
-```
-
-或者更稳：**在 Vercel 上加环境变量 `AI_MODEL=deepseek-flash`** ——
-代码里是 `process.env.AI_MODEL ?? DEFAULT_MODEL`，会优先用环境变量，以后换模型连代码都不用动。
-
+> 更稳的做法一直是：**在 Vercel 上设 `AI_MODEL`** —— 代码里是 `process.env.AI_MODEL ?? DEFAULT_MODEL`，
+> 优先用环境变量，以后换模型连代码都不用动。
+>
 > 注意：502 不只这一个原因，也可能是 `AI_KEY` 失效/欠费，或上游故障。
-> 服务端日志 `[math-plan/ai-sections] 上游返回 <状态码>` 会记录真实原因（前端看不到，是故意的）。
+> 服务端日志会记录真实原因（前端看不到，是故意的）。
 
 ### 工具链注意事项（本仓库特有，踩过）
 
