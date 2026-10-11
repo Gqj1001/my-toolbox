@@ -880,6 +880,30 @@ const SCHOOL_MAX_PAGES = 20;
 const SCHOOL_BATCH_SIZE = 10;
 const SCHOOL_TYPES = ['单选题', '多选题', '填空题', '判断题', '解答题', '其他'];
 
+/**
+ * AI 估的难度档位 → **代表系数**（★ 2026-10 第九批修 bug 加的关键一步）
+ *
+ * ⚠️ 为什么必须映射成数字：工具里「难度」的**唯一权威是数字系数 `coeff`**，
+ *    `difficulty`（标签）与 `grade`（档位）都由它派生（`PaperParser.coeffToLabel/coeffToGrade`）。
+ *    只写标签不写系数，会让**所有按系数判断的功能静默失效** ——
+ *    「容易题满分·其余留空」按钮就是这么坏的（用户实测：AI 估了难度，点按钮没反应）。
+ *
+ * 取值与 `paper-parser.js` 的 `DIFF_LEVELS` 阈值**对齐**：≥0.80 较易 / ≥0.50 中等 /
+ * ≥0.30 较难 / <0.30 难（取各档中值附近，保证 `coeffToLabel(映射值)` 能还原回原档位，
+ * 这一点有测试钉住）。⚠️ 这是"档位换算"不是"测出来的系数"，界面上仍标 🤖 并在报告里注明"仅供参考"。
+ */
+const SCHOOL_LEVEL_COEFF = { '较易': 0.85, '中等': 0.65, '较难': 0.40, '难': 0.20 };
+
+/** 难度输入（档位文字，或老师直接打的数字/百分数）→ 数字系数；认不出返回 null */
+function coeffOfLabel(label){
+  const s = String(label == null ? '' : label).trim();
+  if(!s) return null;
+  if(SCHOOL_LEVEL_COEFF[s] != null) return SCHOOL_LEVEL_COEFF[s];
+  const v = parseFloat(s.replace('%', ''));
+  if(isNaN(v)) return null;
+  return /%$/.test(s) ? round2(v / 100) : v;
+}
+
 let schoolBusy = false;
 /** 识别出来的结构（预览里改过之后会先回写到这里，再建 paper） */
 let schoolStructure = null;
@@ -1062,8 +1086,9 @@ function renderSchoolPreview(rawPages){
       + '<td style="padding:3px 6px"><input data-sq="knowledge" data-i="' + i + '" type="text" value="' + esc((q.knowledge || []).join('；')) + '" style="width:100%"></td>'
       + '<td style="padding:3px 6px;color:#71717a">' + esc(moduleOf(q.knowledge) || '—') + '</td>'
       + '<td style="padding:3px 6px"><input data-sq="got" data-i="' + i + '" type="text" value="' + (q.got != null ? q.got : '') + '" placeholder="没批改留空" style="width:70px"></td>'
-      // 难度：**默认留空，你可以手打**；点了「让 AI 估每题难度」才会被填上（并标 🤖）
-      + '<td style="padding:3px 6px"><input data-sq="difficulty" data-i="' + i + '" type="text" value="' + esc(q.difficulty || '') + '" placeholder="留空" style="width:60px" title="' + (q.aiDifficulty ? 'AI 估计，可改' : '可以自己填（较易/中等/较难/难）') + '"></td>'
+      // 难度：**默认留空，你可以手打**（档位「较易/中等/较难/难」或直接写系数如 0.85）；
+      // 点了「让 AI 估每题难度」才会被填上（并标 🤖）。生成的 paper 里会换算成数字系数。
+      + '<td style="padding:3px 6px"><input data-sq="difficulty" data-i="' + i + '" type="text" value="' + esc(q.difficulty || '') + '" placeholder="留空" style="width:60px" title="' + (q.aiDifficulty ? 'AI 估计，可改' : '可填 较易/中等/较难/难，或直接写系数') + (coeffOfLabel(q.difficulty) != null ? '（按系数 ' + coeffOfLabel(q.difficulty) + ' 计）' : '') + '"></td>'
       + '<td style="padding:3px 6px">' + (q.uncertain ? '⚠️' : '') + (q.aiDifficulty ? '🤖' : '') + '</td>'
       + '</tr>';
   });
@@ -1127,13 +1152,19 @@ function buildSchoolPaper(){
   const typeDist = SCHOOL_TYPES.filter(t => cnt[t]).map(t => ({ type: t, count: cnt[t] }));
 
   // ② 题目（形状与 PaperParser.parse 的产出**完全一致**，下游一行都不用改）
-  const questions = rows.map(r => ({
-    no: r.no, section: r.type,
-    coeff: null,
-    difficulty: r.difficulty || '',      // 你手打的，或点了「让 AI 估每题难度」估的（都可改）
-    grade: '',
-    knowledge: r.knowledge,
-  }));
+  const questions = rows.map(r => {
+    // ⚠️ 难度落成**数字系数**（见 SCHOOL_LEVEL_COEFF 的说明）：标签与档位都由系数派生，
+    //    这样「容易题满分」「难度分布」「系数列」等所有按系数判断的功能一起生效。
+    //    老师在预览里手打的档位（较易/中等…）或直接打的数字都走这里。
+    const coeff = coeffOfLabel(r.difficulty);
+    return {
+      no: r.no, section: r.type,
+      coeff,
+      difficulty: coeff == null ? '' : PaperParser.coeffToLabel(coeff),
+      grade: coeff == null ? '' : PaperParser.coeffToGrade(coeff),
+      knowledge: r.knowledge,
+    };
+  });
 
   paper = {
     title, overallDifficulty: '', scope: [],
@@ -1188,6 +1219,22 @@ function buildSchoolPaper(){
   }
   if(paper.warnings.length) html += '<div class="warnbox">⚠ ' + paper.warnings.map(esc).join('<br>⚠ ') + '</div>';
   $('#parseResult').innerHTML = html;
+
+  // ⑥ 页面状态：★ 2026-10 第九批修 bug —— 这一路以前**漏了这几步**，
+  //    结果老师只看到"已生成题目结构"那句话，「📋 试卷信息」和「🔎 解析结果」两个面板
+  //    因为默认 display:none 一直不出现，看起来"缺了一块"（用户实测反馈）。
+  //    ⚠️ 与 `adoptPaperText()`（学科网那条路）保持**同一套收尾步骤**，以后改这里先看那边。
+  $('#paperPanel').style.display = '';
+  $('#qPanel').style.display = '';
+  $('#paperHint').textContent = rows.length + ' 题 · ' + (title || '').slice(0, 14);
+  renderQuestionList();   // 填「🔎 解析结果」面板（题号/题型/难度系数/难度/知识点）
+  renderScoreList();      // 逐题得分区（批改卷预填的得分也在这里显示）
+
+  // ⚠️ **刻意不写 K_PAPER**：那个键的形状是 `{ text, meta }`，`text` 是恢复时的唯一来源
+  //    （见 init() 里的 `if(saved && saved.text)`）。这一路没有"粘贴的文字"，
+  //    存空 text 会把老师上一份报告的文字抹掉，且恢复时什么也还原不了。
+  //    ⇒ 学校卷子这条路目前**刷新后需要重识别**（已知限制，记在交接文档里）。
+
   $('#schoolPreview').innerHTML = '';
   schoolStructure = null;
   toast('已生成题目结构，请核对分值后继续录入得分');
@@ -1527,7 +1574,13 @@ function fillAll(mode){
     const r = records[q.no]; if(!r) return;
     if(mode === 'full') r.got = r.full;
     else if(mode === 'zero') r.got = 0;
-    else if(mode === 'easy') r.got = (q.grade === 'easy') ? r.full : r.got;
+    else if(mode === 'easy'){
+      // ⚠️ 兜底（2026-10 第九批）：难度档位**首选** q.grade（由数字系数派生，正常路径都有）；
+      //    万一某个来源只写了文字难度没写系数，就用现成的 labelToGrade 现算一次 ——
+      //    这样"容易题满分"不会因为来源不同而静默失效（这正是用户踩到的那个 bug）。
+      const g = q.grade || PaperParser.labelToGrade(q.difficulty);
+      r.got = (g === 'easy') ? r.full : r.got;
+    }
   });
   renderScoreList();
   toast(mode === 'full' ? '已全部按满分' : mode === 'zero' ? '已全部清零' : '容易题已置满分');

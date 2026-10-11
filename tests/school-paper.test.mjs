@@ -108,7 +108,9 @@ const stub = createServer((req, res) => {
       let nos = [];
       try { nos = (JSON.parse(userText).questions || []).map((q) => q.no); } catch { /* 忽略 */ }
       content = JSON.stringify({
-        difficulties: nos.map((no, i) => ({ no, level: i === 0 ? "中等" : "超级难" })),   // 第二个是坏值，必须被丢掉
+        // 第 1 题给「较易」（→ 系数 0.85 → grade easy），用来验「容易题满分」按钮；
+        // 第 2 题故意给坏值，必须被丢掉
+        difficulties: nos.map((no, i) => ({ no, level: i === 0 ? "较易" : "超级难" })),
       });
     } else {
       // ⚠️ 页码要从**数组里的 text 块**取（本轮踩到：直接 String(数组) 得到 "[object Object]"，
@@ -238,7 +240,7 @@ try {
     const j = await r.json().catch(() => null);
     const userMsg = calls.at(-1)?.body?.messages?.[1]?.content;
     record("★估难度：200 且只回**合法难度档**（坏值「超级难」被丢掉）",
-      r.status === 200 && j?.ok === true && j.difficulties.length === 1 && j.difficulties[0].level === "中等",
+      r.status === 200 && j?.ok === true && j.difficulties.length === 1 && j.difficulties[0].level === "较易",
       JSON.stringify(j?.difficulties));
     record("估难度是**纯文本**任务：这次请求里没有图片（不白花一次视觉调用）",
       typeof userMsg === "string" && !userMsg.includes("image_url"),
@@ -358,8 +360,8 @@ try {
       `);
       if (diffAfter) break;
     }
-    record("★「让 AI 估每题难度」：点完难度列被填上（AI 给的「中等」），且可手改",
-      diffAfter === "中等", JSON.stringify(diffAfter));
+    record("★「让 AI 估每题难度」：点完难度列被填上（AI 给的「较易」），且可手改",
+      diffAfter === "较易", JSON.stringify(diffAfter));
     const diffCount = await inTool(`
       return [...w.document.querySelectorAll('[data-sq="difficulty"]')].filter(e => e.value).length;
     `);
@@ -378,6 +380,7 @@ try {
       const items = [...w.document.querySelectorAll('#scoreList .qitem')];
       const tagOf = (no) => { const it = items.find(x => x.dataset.no === String(no)); return it ? it.innerText.replace(/\\s+/g,' ') : null; };
       const gotOf = (no) => { const el = w.document.querySelector('#scoreList input[data-got="'+no+'"]'); return el ? el.value : null; };
+      const vis = (id) => { const el = w.document.getElementById(id); return !!el && el.style.display !== 'none'; };
       return {
         qitems: items.length,
         title: w.document.getElementById('paperTitle').textContent,
@@ -385,6 +388,12 @@ try {
         preview: w.document.getElementById('schoolPreview').innerHTML.length,
         q2: tagOf(2), got1: gotOf(1), got17: gotOf(17), got19: gotOf(19), got2: gotOf(2),
         total: w.document.getElementById('examTotal').value,
+        // ★ Bug1：两个面板必须跟着出现（以前这一步漏了，用户看到"缺一块"）
+        paperPanelVisible: vis('paperPanel'),
+        qPanelVisible: vis('qPanel'),
+        qListRows: w.document.querySelectorAll('#qListWrap tbody tr').length,
+        qListText: w.document.getElementById('qListWrap').innerText.replace(/\\s+/g,' ').slice(0, 200),
+        paperHint: w.document.getElementById('paperHint').textContent,
       };
     `);
     record("★生成结构：逐题得分区出现 **5 行**（每个题一行，与题号对应）",
@@ -401,6 +410,41 @@ try {
     record("★生成后预览面板收起 + 结果区给出汇总（含知识点归类到哪些模块）",
       built?.preview === 0 && /已生成题目结构/.test(String(built?.result ?? "")),
       `面板=${built?.preview} 结果=${JSON.stringify(String(built?.result ?? "").slice(0, 120))}`);
+
+    /* ---- ★ Bug1（2026-10 用户实测）：生成结构后「试卷信息」「解析结果」两个面板要跟着出现 ---- */
+    record("★★Bug1：「📋 试卷信息」面板展开了（以前默认 display:none，用户以为丢了东西）",
+      built?.paperPanelVisible === true, `visible=${built?.paperPanelVisible}`);
+    record("★★Bug1：「🔎 解析结果」面板展开了，且**逐题列表已填充**（5 行：题号/题型/难度系数/难度/知识点）",
+      built?.qPanelVisible === true && built?.qListRows === 5 &&
+        /集合的交集运算/.test(String(built?.qListText ?? "")),
+      `visible=${built?.qPanelVisible} 行数=${built?.qListRows} 内容=${JSON.stringify(String(built?.qListText ?? "").slice(0, 100))}`);
+    record("★Bug1：步骤条上的试卷提示也更新了（N 题 · 标题）",
+      /5 题/.test(String(built?.paperHint ?? "")), JSON.stringify(built?.paperHint));
+    record("★难度落成了**数字系数**（解析结果面板里第 1 题显示 0.85 / 较易）—— 这是 Bug2 的根因所在",
+      /0\.85/.test(String(built?.qListText ?? "")) && /较易/.test(String(built?.qListText ?? "")),
+      JSON.stringify(String(built?.qListText ?? "").slice(0, 160)));
+
+    /* ---- ★ Bug2（用户最高优先级）：AI 估难度后「容易题满分·其余留空」必须生效 ---- */
+    const fillEasy = await inTool(`
+      const w2 = w;
+      // 先把所有题清零（模拟"老师逐题录完，错题留 0"的状态）
+      w2.document.getElementById('btnFillZero').click();
+      const afterZero = { 1: w2.document.querySelector('#scoreList input[data-got="1"]').value,
+                          2: w2.document.querySelector('#scoreList input[data-got="2"]').value };
+      // 再点「容易题满分·其余留空」：第 1 题是 AI 估的「较易」→ 应该回到满分
+      w2.document.getElementById('btnFillEasy').click();
+      const got = (no) => { const el = w2.document.querySelector('#scoreList input[data-got="'+no+'"]'); return el ? el.value : null; };
+      return { afterZero, got1: got(1), got2: got(2), got17: got(17), got19: got(19),
+               tag1: (w2.document.querySelector('#scoreList .qitem[data-no="1"]') || {}).innerText };
+    `);
+    record("★★Bug2：AI 估难度后点「容易题满分·其余留空」→ **较易的第 1 题被置回满分**（5 分）",
+      fillEasy?.afterZero?.["1"] === "0" && fillEasy?.got1 === "5",
+      JSON.stringify({ 清零后: fillEasy?.afterZero, 点按钮后: { got1: fillEasy?.got1, got2: fillEasy?.got2 } }));
+    record("★★Bug2：**非较易的题不受影响**（第 2 题手打「较难」、第 17 题「中等」仍是 0，没被误置满分）",
+      fillEasy?.got2 === "0" && fillEasy?.got17 === "0" && fillEasy?.got19 === "0",
+      JSON.stringify({ got2: fillEasy?.got2, got17: fillEasy?.got17, got19: fillEasy?.got19 }));
+    record("★Bug2：第 1 题的难度在逐题区显示为「较易」（系数→档位→标签一路都对上了）",
+      /较易/.test(String(fillEasy?.tag1 ?? "")), JSON.stringify(String(fillEasy?.tag1 ?? "").slice(0, 80)));
 
     // ---- ④ 超过 20 页 → 明确拒绝 ----
     await inTool(`w.document.getElementById('btnSchoolClear').click(); return 'cleared';`);
