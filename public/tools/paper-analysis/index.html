@@ -181,15 +181,18 @@
     </div>
 
     <div class="panel" style="margin-top:14px">
-      <h2>🧠 AI 只重写「教学辅导建议」段 <span class="sp">可选</span></h2>
+      <h2>🧠 AI 润色（建议段 / 错因列） <span class="sp">可选</span></h2>
       <div class="pad">
         <p class="tip">
           报告里的<b>表格数据</b>（试卷信息、题型分布、逐题分析）由程序按规则生成，保证准确；
-          <b>建议段</b>交给 AI 润色会更像你亲手写的。点一下按钮即可，AI 拿到的是已经算好的诊断结论，
-          不会改你的数据。
+          <b>建议段</b>和<b>「失分情况及原因分析」这一列</b>交给 AI 润色会更像你亲手写的。
+          AI 拿到的是已经算好的内容，<b>不会改你的数据与分数</b>。<br>
+          错因那一列的原文偏"诊断口气"（例如"知识体系尚未建立"），润色会把它改成
+          <b>面向家长、措辞温和、不下定论</b>的说法。
         </p>
         <div class="btn-row">
           <button class="btn btn-ok btn-sm" id="btnAIAdvice">✨ AI 改写建议段</button>
+          <button class="btn btn-ok btn-sm" id="btnAIPolishAttr">✍️ AI 润色错因列</button>
           <button class="btn btn-gh btn-sm" id="btnServer">⚙️ AI 设置</button>
         </div>
       </div>

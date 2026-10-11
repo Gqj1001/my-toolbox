@@ -991,7 +991,7 @@ function updateReportMeta(name, ctx){
 }
 
 /* ==========================================================================
-   AI：只重写建议段
+   AI：① 重写「教学辅导建议」段  ② 润色【错题分析】的「原因」列
    ========================================================================== */
 async function aiAdvice(){
   if(!lastAdviceCtx){ toast('请先生成报告'); return; }
@@ -1051,22 +1051,134 @@ async function aiAdvice(){
   }
 }
 
-/** 本机模式：直接用浏览器里的 Key 调 OpenAI 兼容接口 */
-async function callAI(userContent){
+/* ==========================================================================
+   AI ②：只润色【错题分析】表的「失分情况及原因分析」列（★ 2026-10 第五批）
+   --------------------------------------------------------------------------
+   为什么只润色这一列：报告里其它内容（分数、题型分布、逐题分值）都是**算出来的**，
+   不能碰；而这一列是程序按规则生成的**原始诊断口气**，会冒出"知识体系尚未建立"
+   "能力严重不足"这类**重话** —— 直接给家长看很扎人。
+   用户 2026-10 的要求：不只是改通顺，**还要把口吻改对**（面向家长、措辞温和、不下定论）。
+
+   ⚠️ 三条硬约束（做错任何一条都会毁掉报告或错位）：
+     1. **只动最后一格**：按 ` | ` 切开后前 6 列原样拼回去，分数与题号一个不碰；
+     2. **段数必须一致**：服务端已经强制校验，本机模式这边再校验一次；
+     3. **失败不动原文**：任何一步抛错都只 toast，报告保持原样（宁可不润色，不能弄乱）。
+   ========================================================================== */
+const ATTR_MARK = '【错题分析】';
+
+/** 从报告文本里挑出「需要润色」的原因单元格。
+ *  返回 { lines, targets:[{lineIdx, reason}] }；全对的题程序写的是「无」，不润色。
+ *  ⚠️ 只认**表头之后、下一个【…】或签字行之前**的行 —— 报告里别的表格也有 ` | `。 */
+function pickAttrReasons(text){
+  const lines = String(text || '').split('\n');
+  const start = lines.findIndex(l => l.trim() === ATTR_MARK);
+  if(start < 0) return { lines, targets: [] };
+  let end = lines.length;
+  for(let i = start + 1; i < lines.length; i++){
+    const t = lines[i].trim();
+    if(t.startsWith('【') || t.startsWith('分析人：')){ end = i; break; }
+  }
+  const targets = [];
+  for(let i = start + 1; i < end; i++){
+    const raw = lines[i];
+    if(raw.indexOf(' | ') < 0) continue;
+    const parts = raw.split(' | ');
+    if(parts.length < 7) continue;
+    if(parts[0].trim() === '题号') continue;        // 表头
+    const reason = parts.slice(6).join(' | ').trim();
+    if(!reason || reason === '无') continue;
+    targets.push({ lineIdx: i, reason });
+  }
+  return { lines, targets };
+}
+
+async function aiPolishAttribution(){
+  const btn = $('#btnAIPolishAttr'); const old = btn.textContent;
+  const cur = $('#reportText').textContent;
+  if(!cur.trim()){ toast('请先生成报告'); return; }
+  const { lines, targets } = pickAttrReasons(cur);
+  if(!targets.length){ toast('没有需要润色的错因（全对、或还没填失分题）'); return; }
+
+  btn.disabled = true; btn.textContent = '⏳ 润色中';
+  try{
+    const paragraphs = targets.map(t => t.reason);
+    let out = [];
+    if(API.mode === 'server' && API.serverCfg.hasKey){
+      const d = await apiFetch(API_BASE + '/ai-advice', { method:'POST', body:{
+        section: 'attribution',
+        paragraphs,
+        context: { subject: val('stuSubject') || '数学', examName: val('examName') || '' },
+      }});
+      if(!d || !d.ok) throw new Error(d && d.error ? d.error : '服务器未返回内容');
+      out = d.lines || [];
+    }else{
+      const txt = await callAI(JSON.stringify({ paragraphs }), {
+        system: LOCAL_ATTR_SYS, temperature: 0.3, maxTokens: 4000,
+      });
+      out = String(txt || '').split(/\r?\n/)
+        .map(s => s.trim().replace(/^[*\-–—•]\s*/, '').replace(/^\d+[.、)]\s*/, '').replace(/^["“”']|["“”']$/g, '').trim())
+        .filter(Boolean);
+    }
+    if(out.length !== paragraphs.length){
+      throw new Error('返回段落数与原文不一致（' + out.length + '/' + paragraphs.length + '），请重试');
+    }
+
+    // 逐行替换：**只换最后一格**，前 6 列原样拼回
+    targets.forEach((t, i) => {
+      const parts = lines[t.lineIdx].split(' | ');
+      const head = parts.slice(0, 6).join(' | ');
+      // ⚠️ 防一手：AI 万一在正文里写了 ` | `，会把这一行多切出一列、破坏表格
+      const safe = String(out[i]).replace(/\s*\|\s*/g, '／').trim();
+      lines[t.lineIdx] = head + ' | ' + safe;
+    });
+
+    const merged = lines.join('\n');
+    $('#reportText').textContent = merged;
+    lastReport = merged;
+    $('#stChars').textContent = merged.length;
+    toast('错因列已润色 ' + out.length + ' 处（分数与题号未动），可继续手动修改');
+  }catch(e){
+    toast('错因润色失败：' + e.message, 3600);
+  }finally{
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+/** 本机模式（BYOK）下「建议段」的 system 提示词 —— 与服务端 ADVICE_PROMPT 同一口径 */
+const DEFAULT_ADVICE_SYS = '你是一位有十几年经验的高中数学教师，正在给学生家长写《试卷分析表》里的「教学辅导建议与安排」。'
+  + '请严格依据我提供的结构化诊断数据来写，不要编造数据，不要改动任何分数与题号。'
+  + '文风要求：先给阶段性定性，再讲优势，然后按题型/模块点出短板与归因，最后给分阶段的、可执行的教学安排与预期分数。'
+  + '要具体到"哪道题、哪个模块、什么原因、下一步怎么做"，多用"首先/其次/第三/第四"这样的层次词，'
+  + '篇幅 800–1400 字，直接输出正文，不要标题、不要 markdown 符号。';
+
+/** 本机模式（BYOK）下「错因列润色」的 system 提示词 —— 与服务端 ATTRIBUTION_PROMPT 同一口径。
+ *  ⚠️ 两处必须保持同一口径（服务端那份在 `src/app/api/paper-analysis/ai-advice/route.ts`）：
+ *     改一处就要改另一处，否则"云端模式"和"本机模式"给家长的措辞会不一样。 */
+const LOCAL_ATTR_SYS = '你是一位有十几年经验的高中数学教师，正在润色《试卷分析表》里「错题分析」表中「失分情况及原因分析」这一列的文字。这份表会交给学生家长看。'
+  + '我会给你若干段程序生成的原始表述，请逐段改写。'
+  + '必须保留每一段里的全部事实：知识点名称、题型、错误类型、失分表现、具体做法要求；一个都不能删、不能改、不能新增；不要写分数与题号。'
+  + '要改的是口吻：面向家长、客观、专业、措辞温和，不下定论 ——'
+  + '不要用「能力严重缺失／能力差／知识体系尚未建立／态度有问题／不用心」这类给孩子贴标签的说法，'
+  + '改成描述当前状态并且可改进的表述（例如「这一块目前还不够稳定」）；不做性格与智力评价；不用「孩子」这类口语称呼；不夸大也不淡化。'
+  + '每段 40–90 字，一句话说清「错在哪 + 下一步怎么改」。'
+  + '输出格式：输入的每一段对应输出的一行，行数必须与输入完全一致、顺序不变；只输出这些行，不要编号、不要题号、不要小标题、不要 markdown 符号。';
+
+/** 本机模式：直接用浏览器里的 Key 调 OpenAI 兼容接口
+ *  @param userContent 发给模型的 user 内容
+ *  @param opts        可选覆盖：{ system, temperature, maxTokens }（默认值 = 老行为，一字不变） */
+async function callAI(userContent, opts){
   const cfg = loadApiCfg();
   if(!cfg.apiKey){ toast('请先配置 API Key（点「服务器与AI设置」）'); openServerModal(); throw new Error('未配置 API Key'); }
-  const sys = '你是一位有十几年经验的高中数学教师，正在给学生家长写《试卷分析表》里的「教学辅导建议与安排」。'
-    + '请严格依据我提供的结构化诊断数据来写，不要编造数据，不要改动任何分数与题号。'
-    + '文风要求：先给阶段性定性，再讲优势，然后按题型/模块点出短板与归因，最后给分阶段的、可执行的教学安排与预期分数。'
-    + '要具体到"哪道题、哪个模块、什么原因、下一步怎么做"，多用"首先/其次/第三/第四"这样的层次词，'
-    + '篇幅 800–1400 字，直接输出正文，不要标题、不要 markdown 符号。';
+  const sys = (opts && opts.system) || DEFAULT_ADVICE_SYS;
+  const temperature = (opts && typeof opts.temperature === 'number') ? opts.temperature : 0.7;
+  const maxTokens = (opts && typeof opts.maxTokens === 'number') ? opts.maxTokens : 2500;
   const r = await fetch(cfg.apiBase.replace(/\/+$/,'') + '/chat/completions', {
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer ' + cfg.apiKey},
     body: JSON.stringify({
       model: cfg.model,
       messages: [{ role:'system', content: sys }, { role:'user', content: userContent }],
-      temperature: 0.7, max_tokens: 2500
+      temperature, max_tokens: maxTokens
     })
   });
   if(!r.ok) throw new Error('接口返回 ' + r.status);
@@ -1687,6 +1799,7 @@ function bind(){
   $('#btnGen').onclick = generateReport;
   $('#btnGenMobile').onclick = generateReport;
   $('#btnAIAdvice').onclick = aiAdvice;
+  $('#btnAIPolishAttr').onclick = aiPolishAttribution;
   $('#btnPolishAll').onclick = aiAdvice;
   $('#btnCopy').onclick = copyReport;
   $('#btnCopy2').onclick = copyReport;
