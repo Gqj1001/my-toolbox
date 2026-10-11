@@ -61,6 +61,29 @@
       </div>
     </div>
 
+    <!-- ★ 2026-10 第七批：学校卷子（空白卷/批改卷）——与上面「学科网报告」彻底分开 -->
+    <div class="panel" style="margin-top:14px">
+      <h2>🏫 识别学校卷子 <span class="sp">照片 / 扫描件 / 扫描版 PDF</span></h2>
+      <div class="pad">
+        <p class="tip">
+          学校自己的卷子（<b>空白卷</b>或<b>批改过的卷子</b>）没有学科网那份分析报告，所以走这个入口：
+          AI 会<b>看懂卷子</b>，给出<b>题型分布 + 逐题知识点</b>；卷面印了分值的会一并读出来，
+          <b>批改卷还会读出每题得分</b>。<br>
+          ⚠️ 识别结果<b>先给你核对、可以直接改</b>，确认后才生成题目结构；没印分值的题按题型惯例先分配，可在下方分值表微调。
+        </p>
+        <div class="btn-row">
+          <input type="file" id="schoolInput" accept="image/*,.pdf" multiple style="display:none">
+          <button class="btn btn-pri" id="btnSchool">📷 选照片 / 扫描件 / PDF</button>
+          <button class="btn btn-gh" id="btnSchoolClear">清空识别结果</button>
+        </div>
+        <p class="tip" id="schoolHint">
+          一次最多 <b>20 页</b>；超过 10 页会<b>自动分批</b>推进（你不用管）。
+          <b>每页一次 AI 调用</b>，页数越多越慢也越费。
+        </p>
+        <div id="schoolPreview"></div>
+      </div>
+    </div>
+
     <div class="panel" id="paperPanel" style="display:none">
       <h2>📋 试卷信息 <span class="sp" id="paperTitle"></span></h2>
       <div class="pad">

@@ -701,13 +701,15 @@ async function ensurePdfjs(){
 }
 
 /** 扫描版 PDF → 每页一张 JPEG（长边约 1600）。
- *  返回 { sources:[{label,dataUrl}], total, truncated }；**渲不出的页会明确报错**，不静默跳过。 */
-async function pdfToPageSources(file, onProgress){
+ *  返回 { sources:[{label,dataUrl}], total, truncated }；**渲不出的页会明确报错**，不静默跳过。
+ *  @param limit 最多渲染多少页（学科网报告那条路用默认 10；学校卷子那条路按上限 20 调） */
+async function pdfToPageSources(file, onProgress, limit){
+  const max = Math.max(1, Number(limit) || PDF_MAX_PAGES);
   const pdfjs = await ensurePdfjs();
   const buf = await file.arrayBuffer();
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
   const total = doc.numPages;
-  const n = Math.min(total, PDF_MAX_PAGES);
+  const n = Math.min(total, max);
   const sources = [];
   for(let i = 1; i <= n; i++){
     if(onProgress) onProgress(i, n);
@@ -852,6 +854,386 @@ function adoptVisionText(){
   }
   $('#visionPreview').innerHTML = '';
   visionPages = [];
+}
+
+/* ==========================================================================
+   🏫 学校卷子识别（★ 2026-10 第七批）
+   --------------------------------------------------------------------------
+   与「📥 从学科网导入试卷」**彻底分开**：学校卷子（空白卷/批改卷）没有学科网那份
+   「整体难度／细目表分析」报告，走报告解析器只会得到"没有解析到题目"。
+   这一条是让 AI **看懂卷子**，直接产出**题目结构**（题型分块 + 逐题知识点 +
+   卷面印着的分值 + 批改卷的得分），再交给**现有**机制去算分值、统计、生成报告。
+
+   ⚠️ 用户 2026-10 定的口径（改之前先看）：
+     1. **免费**（服务端只校验登录+未封禁）；
+     2. **知识点由 AI 自由写**，前端用**已有的** `KnowledgeClassifier` 归类到模块
+        （预览里会显示每题落到哪个模块 —— 落到「其他」太多的题要留意）；
+     3. **多页上限 20 页**：1–10 页一个批次，11–20 页自动分批推进，**用户无感**；
+        超过 20 页明确拒绝，提示分两次上传；
+     4. **每页一次调用**（不是"一批一次"）：一批 10 页塞进一次请求，
+        JSON 会有 200+ 题、必然超过输出上限被截断（一断整批就废），图加起来也可能撞 4MB 请求体。
+        批次只影响**推进与进度显示**，**合并只有一份实现**（mergeStructures）。
+     5. 难度：**默认不让 AI 估**（逐题留空 + 用界面上的"整卷难度"，你可手打）；
+        想估就点那个按钮，结果标 🤖 并注明"仅供参考"。
+   ========================================================================== */
+const SCHOOL_MAX_PAGES = 20;
+const SCHOOL_BATCH_SIZE = 10;
+const SCHOOL_TYPES = ['单选题', '多选题', '填空题', '判断题', '解答题', '其他'];
+
+let schoolBusy = false;
+/** 识别出来的结构（预览里改过之后会先回写到这里，再建 paper） */
+let schoolStructure = null;
+
+function setSchoolStatus(html){
+  const box = $('#schoolPreview');
+  if(box) box.innerHTML = '<div class="tip">' + html + '</div>';
+}
+
+/** 文件（图片 / 扫描版 PDF）→ 题目结构 */
+async function schoolRun(files){
+  const list = Array.from(files || []);
+  if(!list.length) return;
+  if(API.mode !== 'server'){
+    setSchoolStatus('这个功能要用服务器上的视觉模型。<br>当前是<b>本机版</b>（直接双击打开的 HTML）：'
+      + '请访问线上站点里的试卷分析工具再试，或改用「粘贴文字」。');
+    return;
+  }
+  if(schoolBusy){ toast('上一批还在识别，请稍等'); return; }
+  schoolBusy = true;
+  schoolStructure = null;
+  try{
+    // ---------- ① 先把文件变成"每页一张图" ----------
+    const pages = [];
+    for(const f of list){
+      const isPdf = /\.pdf$/i.test(f.name || '') || f.type === 'application/pdf';
+      if(isPdf){
+        // ⚠️ 学校卷子的 PDF **一律渲染成图**再识别：即使它有文字层，那也不是学科网报告格式，
+        //    交给报告解析器一样认不出（实测过）。
+        const r = await pdfToPageSources(f, (i, t) => setSchoolStatus('🖨 正在渲染 PDF 第 ' + i + '/' + t + ' 页…'), SCHOOL_MAX_PAGES);
+        if(r.truncated) toast('这份 PDF 共 ' + r.total + ' 页，本次只处理前 ' + SCHOOL_MAX_PAGES + ' 页', 4000);
+        r.sources.forEach(s => pages.push({ label: s.label + '（' + (f.name || 'PDF') + '）', dataUrl: s.dataUrl }));
+      }else{
+        const c = await compressImageFile(f);
+        pages.push({ label: f.name || ('图片 ' + (pages.length + 1)), dataUrl: c.dataUrl });
+      }
+    }
+    if(!pages.length) throw new Error('没有可识别的页面');
+    if(pages.length > SCHOOL_MAX_PAGES){
+      throw new Error('这份共 ' + pages.length + ' 页，超过上限 ' + SCHOOL_MAX_PAGES + ' 页，请分两次上传。');
+    }
+
+    // ---------- ② 分批推进（每批 ≤10 页，**批内逐页调用**） ----------
+    const parts = [];
+    const rawPages = [];
+    for(let start = 0; start < pages.length; start += SCHOOL_BATCH_SIZE){
+      const batch = pages.slice(start, start + SCHOOL_BATCH_SIZE);
+      for(let i = 0; i < batch.length; i++){
+        const idx = start + i;
+        const batchNote = pages.length > SCHOOL_BATCH_SIZE
+          ? '（第 ' + (Math.floor(idx / SCHOOL_BATCH_SIZE) + 1) + ' 批 / 共 ' + Math.ceil(pages.length / SCHOOL_BATCH_SIZE) + ' 批）'
+          : '';
+        setSchoolStatus('🔍 正在识别第 ' + (idx + 1) + '/' + pages.length + ' 页…' + batchNote);
+        const d = await apiFetch(API_BASE + '/vision-paper-structure', {
+          method:'POST',
+          body:{ image: batch[i].dataUrl, page: idx + 1, totalPages: pages.length },
+        });
+        if(!d || !d.ok) throw new Error((d && d.error) || '识别失败');
+        if(d.structure) parts.push(d.structure);
+        else if(d.raw) rawPages.push({ page: idx + 1, raw: d.raw });
+      }
+    }
+
+    schoolStructure = mergeStructures(parts);
+    if(!schoolStructure.questions.length){
+      const box = $('#schoolPreview');
+      box.innerHTML = '<div class="warnbox">没有认出任何题目。可能是：① 图太模糊/拍歪；② 这不是卷子（比如是学生成绩单）；'
+        + '③ 整页都是答题卡而没有题干。<br>建议重拍一张更清晰的，或改用「粘贴文字」。</div>'
+        + (rawPages.length ? '<details class="cat" open><summary><span class="arw">▶</span>AI 返回的原文（不是合法 JSON 时才有）</summary>'
+            + '<div class="body"><pre style="white-space:pre-wrap;font-size:12px;max-height:300px;overflow:auto">'
+            + esc(rawPages.map(p => '--- 第 ' + p.page + ' 页 ---\n' + p.raw).join('\n\n')) + '</pre></div></details>' : '');
+      return;
+    }
+    renderSchoolPreview(rawPages);
+  }catch(e){
+    setSchoolStatus('识别失败：' + esc(e.message) + '<br>可以重试，或换一张更清晰的图；也可以改用「粘贴文字」。');
+  }finally{
+    schoolBusy = false;
+  }
+}
+
+/** 多页/多批的**唯一**合并实现（分批只影响循环，不影响这里）
+ *  规则（都写死，别在别处再写一套）：
+ *   · 同一题号出现多次（跨页重复、或两页拍到同一题）→ **合并知识点**，取第一个非空的分值/得分
+ *   · 按题号升序排列（题号缺失的排在最后，保持原顺序）
+ *   · blocks 按题型累计题量；title/totalScore 取第一个非空；uncertainNotes 拼接、去重
+ */
+function mergeStructures(parts){
+  const list = (parts || []).filter(Boolean);
+  const byNo = new Map();
+  const noOrder = [];
+  const notes = [];
+  let title = '', totalScore = null;
+  const blockCount = {};
+
+  list.forEach(p => {
+    if(!title && p.title) title = p.title;
+    if(totalScore == null && p.totalScore) totalScore = p.totalScore;
+    (p.uncertainNotes || []).forEach(n => { if(n && notes.indexOf(n) < 0) notes.push(n); });
+    (p.blocks || []).forEach(b => { blockCount[b.type] = (blockCount[b.type] || 0) + (Number(b.count) || 0); });
+    (p.questions || []).forEach(q => {
+      const key = q.no == null ? ('?' + noOrder.length) : String(q.no);
+      if(!byNo.has(key)){
+        byNo.set(key, { no: q.no, type: q.type, knowledge: (q.knowledge || []).slice(), score: q.score, got: q.got, uncertain: !!q.uncertain });
+        noOrder.push(key);
+      }else{
+        const old = byNo.get(key);
+        (q.knowledge || []).forEach(k => { if(old.knowledge.indexOf(k) < 0) old.knowledge.push(k); });
+        if(old.score == null && q.score != null) old.score = q.score;
+        if(old.got == null && q.got != null) old.got = q.got;
+        old.uncertain = old.uncertain || !!q.uncertain;
+      }
+    });
+  });
+
+  const questions = noOrder.map(k => byNo.get(k));
+  questions.sort((a, b) => {
+    const an = a.no == null ? Infinity : Number(a.no);
+    const bn = b.no == null ? Infinity : Number(b.no);
+    return an - bn;
+  });
+
+  // 题型分块：优先用模型给的 count（多页累计），缺失时按题目实际数量算
+  let blocks = Object.keys(blockCount).length
+    ? SCHOOL_TYPES.filter(t => blockCount[t]).map(t => ({ type: t, count: blockCount[t], perScore: null }))
+    : [];
+  if(!blocks.length){
+    const c = {};
+    questions.forEach(q => { c[q.type] = (c[q.type] || 0) + 1; });
+    blocks = SCHOOL_TYPES.filter(t => c[t]).map(t => ({ type: t, count: c[t], perScore: null }));
+  }
+  return { title, totalScore, blocks, questions, uncertainNotes: notes };
+}
+
+/** 渲染结构化预览（可改）。这是"先给你核对再生成"的那一步。 */
+function renderSchoolPreview(rawPages){
+  const s = schoolStructure;
+  const box = $('#schoolPreview');
+  // 归类统计：AI 自由写的知识点落到「其他」的有多少（太多了说明该补词典或换措辞）
+  const moduleOf = (kps) => {
+    const names = [];
+    (kps || []).forEach(k => {
+      const n = KnowledgeClassifier.classifyName(k);
+      if(n && names.indexOf(n) < 0) names.push(n);
+    });
+    return names.join('、');
+  };
+  let otherCount = 0;
+  s.questions.forEach(q => {
+    const ms = moduleOf(q.knowledge).split('、').filter(Boolean);
+    if(ms.length && ms.every(m => m === '其他')) otherCount++;
+  });
+
+  let html = '<div style="margin-top:12px;border:1px dashed var(--line,#d4d4d8);border-radius:8px;padding:10px">'
+    + '<b>🔍 识别结果（请对着卷子核对，可直接改；确认后再生成题目结构）</b>'
+    + '<div class="f2" style="margin-top:8px">'
+    + '<div class="f"><label>卷子标题</label><input type="text" id="schoolTitle" value="' + esc(s.title || '') + '"></div>'
+    + '<div class="f"><label>卷面总分（没印就留空）</label><input type="text" id="schoolTotal" value="' + (s.totalScore != null ? s.totalScore : '') + '"></div>'
+    + '</div>'
+    + '<p class="tip">共 <b>' + s.questions.length + '</b> 道题；题型分块：'
+    + (s.blocks.map(b => esc(b.type) + ' ' + (b.count != null ? b.count : '?') + ' 题').join('、') || '（未识别到分块）')
+    + (otherCount ? '；⚠️ <b>' + otherCount + ' 道题的知识点没能归类到模块（落到「其他」）</b>，倒数第二列请留意' : '')
+    + '</p>';
+  if(s.uncertainNotes.length){
+    html += '<div class="warnbox">⚠️ AI 标出这些看不清的地方：<br>' + s.uncertainNotes.map(esc).join('<br>') + '</div>';
+  }
+
+  html += '<div style="overflow:auto;max-height:420px;border:1px solid var(--line,#e4e4e7);border-radius:6px">'
+    + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<thead><tr>'
+    + ['题号','题型','分值','知识点（可改，多个用；分隔）','归类模块','得分（批改卷）','难度','⚠'].map(h => '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--line,#e4e4e7)">' + h + '</th>').join('')
+    + '</tr></thead><tbody>';
+  s.questions.forEach((q, i) => {
+    html += '<tr>'
+      + '<td style="padding:3px 6px"><input data-sq="no" data-i="' + i + '" type="text" value="' + (q.no != null ? q.no : '') + '" style="width:52px"></td>'
+      + '<td style="padding:3px 6px"><select data-sq="type" data-i="' + i + '">'
+      + SCHOOL_TYPES.map(t => '<option value="' + t + '"' + (t === q.type ? ' selected' : '') + '>' + t + '</option>').join('')
+      + '</select></td>'
+      + '<td style="padding:3px 6px"><input data-sq="score" data-i="' + i + '" type="text" value="' + (q.score != null ? q.score : '') + '" placeholder="按惯例" style="width:56px"></td>'
+      + '<td style="padding:3px 6px"><input data-sq="knowledge" data-i="' + i + '" type="text" value="' + esc((q.knowledge || []).join('；')) + '" style="width:100%"></td>'
+      + '<td style="padding:3px 6px;color:#71717a">' + esc(moduleOf(q.knowledge) || '—') + '</td>'
+      + '<td style="padding:3px 6px"><input data-sq="got" data-i="' + i + '" type="text" value="' + (q.got != null ? q.got : '') + '" placeholder="没批改留空" style="width:70px"></td>'
+      // 难度：**默认留空，你可以手打**；点了「让 AI 估每题难度」才会被填上（并标 🤖）
+      + '<td style="padding:3px 6px"><input data-sq="difficulty" data-i="' + i + '" type="text" value="' + esc(q.difficulty || '') + '" placeholder="留空" style="width:60px" title="' + (q.aiDifficulty ? 'AI 估计，可改' : '可以自己填（较易/中等/较难/难）') + '"></td>'
+      + '<td style="padding:3px 6px">' + (q.uncertain ? '⚠️' : '') + (q.aiDifficulty ? '🤖' : '') + '</td>'
+      + '</tr>';
+  });
+  html += '</tbody></table></div>';
+
+  html += '<div class="btn-row" style="margin-top:8px">'
+    + '<button class="btn btn-pri" id="btnSchoolBuild">✅ 生成题目结构</button>'
+    + '<button class="btn btn-gh" id="btnSchoolDiff">🤖 让 AI 估每题难度</button>'
+    + '<button class="btn btn-gh" id="btnSchoolCancel">取消</button>'
+    + '</div>'
+    + '<p class="tip">难度默认<b>不估</b>（留空；整卷难度用下面的输入框，你可以手打）。'
+    + '点「让 AI 估每题难度」才走 AI，结果会标 🤖 并可再改。</p></div>';
+
+  if(rawPages && rawPages.length){
+    html += '<details class="cat"><summary><span class="arw">▶</span>有 ' + rawPages.length + ' 页 AI 没按 JSON 返回（原文在此，可复制）</summary>'
+      + '<div class="body"><pre style="white-space:pre-wrap;font-size:12px;max-height:300px;overflow:auto">'
+      + esc(rawPages.map(p => '--- 第 ' + p.page + ' 页 ---\n' + p.raw).join('\n\n')) + '</pre></div></details>';
+  }
+
+  box.innerHTML = html;
+  $('#btnSchoolBuild').onclick = buildSchoolPaper;
+  $('#btnSchoolDiff').onclick = schoolEstimateDifficulty;
+  $('#btnSchoolCancel').onclick = clearSchool;
+}
+
+/** 把预览里（老师改过的）表格读回来 */
+function readSchoolRows(){
+  const rows = schoolStructure.questions.map((q, i) => {
+    const val = (key) => {
+      const el = document.querySelector('[data-sq="' + key + '"][data-i="' + i + '"]');
+      return el ? String(el.value || '').trim() : '';
+    };
+    const noRaw = val('no');
+    const scoreRaw = val('score');
+    const gotRaw = val('got');
+    return {
+      no: noRaw === '' ? q.no : Number(noRaw),
+      type: val('type') || q.type,
+      score: scoreRaw === '' ? null : Number(scoreRaw),
+      knowledge: val('knowledge').split(/[；;]/).map(s => s.trim()).filter(Boolean),
+      got: gotRaw === '' ? null : Number(gotRaw),
+      /** 难度：**你手打的优先**；没打就用 AI 估的（或空） */
+      difficulty: val('difficulty') || q.difficulty || '',
+      uncertain: q.uncertain,
+    };
+  });
+  return rows.filter(r => r.type);
+}
+
+/** 预览 → 真正的 paper 对象 → 交给**现有**流程（分值分配、逐题得分、报告） */
+function buildSchoolPaper(){
+  const rows = readSchoolRows();
+  if(!rows.length){ toast('没有题目，无法生成'); return; }
+  const title = String(($('#schoolTitle') || {}).value || '').trim();
+  const totalRaw = String(($('#schoolTotal') || {}).value || '').trim();
+  const total = Number(totalRaw);
+
+  // ① 题型分块（按题目实际数量算，顺序固定，保证报告里的题型顺序稳定）
+  const cnt = {};
+  rows.forEach(r => { cnt[r.type] = (cnt[r.type] || 0) + 1; });
+  const typeDist = SCHOOL_TYPES.filter(t => cnt[t]).map(t => ({ type: t, count: cnt[t] }));
+
+  // ② 题目（形状与 PaperParser.parse 的产出**完全一致**，下游一行都不用改）
+  const questions = rows.map(r => ({
+    no: r.no, section: r.type,
+    coeff: null,
+    difficulty: r.difficulty || '',      // 你手打的，或点了「让 AI 估每题难度」估的（都可改）
+    grade: '',
+    knowledge: r.knowledge,
+  }));
+
+  paper = {
+    title, overallDifficulty: '', scope: [],
+    typeDist, diffDist: [], questions, knowledgeGroups: [], warnings: [],
+  };
+  if(schoolStructure && schoolStructure.aiDifficulty){
+    paper.warnings.push('逐题难度由 AI 估计，仅供参考（可在报告里手动改）');
+  }
+  $('#paperTitle').textContent = title;
+  if(title && title.length <= 20) $('#examName').value = title;
+  if(Number.isFinite(total) && total > 0) $('#examTotal').value = total;
+  // ⚠️ 刻意**不清空** #paperPaste：这一路不是"粘贴/上传报告"来的，
+  //    留空更诚实（老师若点「解析文字」会明确得到"没有解析到题目"，而不是解析出一份假结构）。
+
+  computeScores();   // → scoreAssign（按题型惯例分配逐题分值）+ seedRecords()
+
+  // ③ 卷面印了分值的题：走**现成的** applyTypeCell（spread 是唯一权威源）
+  const seen = {};
+  let scoreN = 0;
+  rows.forEach(r => {
+    if(!(r.score > 0)) return;
+    seen[r.type] = seen[r.type] || 0;
+    const idx = seen[r.type]++;
+    applyTypeCell(r.type, idx, r.score);
+    scoreN++;
+  });
+
+  // ④ 批改卷的得分：预填 records[no].got（与「拍照识别答题卡」同一套数据模型）
+  let gotN = 0;
+  rows.forEach(r => {
+    if(r.got == null || !records[r.no]) return;
+    const full = num(records[r.no].full);
+    let got = num(r.got);
+    if(!(got >= 0)) got = 0;
+    if(got > full) got = full;
+    records[r.no].got = got;
+    gotN++;
+  });
+  if(gotN) renderScoreList();
+
+  // ⑤ 汇总反馈
+  const mods = {};
+  rows.forEach(r => r.knowledge.forEach(k => { const n = KnowledgeClassifier.classifyName(k); mods[n] = (mods[n] || 0) + 1; }));
+  const modList = Object.keys(mods).sort((a, b) => mods[b] - mods[a]);
+  let html = '<div class="okbox">✅ 已生成题目结构：共 <b>' + rows.length + '</b> 道题，'
+    + '题型：' + typeDist.map(t => esc(t.type) + ' ' + t.count + ' 题').join('、') + '；'
+    + (scoreN ? '其中 <b>' + scoreN + '</b> 道题的分值来自卷面；' : '')
+    + (gotN ? '<b>' + gotN + '</b> 道题已预填批改得分（请核对）；' : '')
+    + '没印分值的题已按题型惯例分配，可在下方分值表逐题微调。</div>';
+  if(modList.length){
+    html += '<p class="tip">知识点归到这些模块：' + modList.map(m => esc(m) + '（' + mods[m] + '）').join('、') + '</p>';
+  }
+  if(paper.warnings.length) html += '<div class="warnbox">⚠ ' + paper.warnings.map(esc).join('<br>⚠ ') + '</div>';
+  $('#parseResult').innerHTML = html;
+  $('#schoolPreview').innerHTML = '';
+  schoolStructure = null;
+  toast('已生成题目结构，请核对分值后继续录入得分');
+}
+
+/** 让 AI 估每题难度（**点了才走**；默认不估）
+ *  ⚠️ 这是**文本**任务（只给题号/题型/知识点，不发图），但同样走免费口径与护栏；
+ *     结果标 `aiDifficulty`（预览里显示 🤖、报告里带一条"仅供参考"的提示）。 */
+async function schoolEstimateDifficulty(){
+  if(!schoolStructure) return;
+  const btn = $('#btnSchoolDiff'); const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ 估计中…';
+  try{
+    // 先把你已经改过的表格读回来，避免估完难度把你的修改冲掉
+    const rows = readSchoolRows();
+    schoolStructure.questions = schoolStructure.questions.map((q, i) => {
+      const r = rows[i];
+      return r ? { ...q, no: r.no, type: r.type, knowledge: r.knowledge, score: r.score, got: r.got } : q;
+    });
+    const d = await apiFetch(API_BASE + '/vision-paper-structure', {
+      method:'POST',
+      body:{ mode:'difficulty', questions: rows.map(r => ({ no:r.no, type:r.type, knowledge:r.knowledge })) },
+    });
+    if(!d || !d.ok) throw new Error((d && d.error) || '估计失败');
+    const map = {};
+    (d.difficulties || []).forEach(x => { map[String(x.no)] = String(x.level || '').trim(); });
+    let n = 0;
+    schoolStructure.questions.forEach(q => {
+      const lv = map[String(q.no)];
+      if(lv){ q.difficulty = lv; q.aiDifficulty = true; n++; }
+    });
+    if(!n) throw new Error(d.note || 'AI 没给出可用的难度');
+    schoolStructure.aiDifficulty = true;
+    renderSchoolPreview([]);
+    toast('已按 AI 估计填入 ' + n + ' 题的难度（标了 🤖，可手改）', 4000);
+  }catch(e){
+    toast('难度估计失败：' + e.message, 3600);
+  }finally{
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+function clearSchool(){
+  schoolStructure = null;
+  const box = $('#schoolPreview');
+  if(box) box.innerHTML = '';
 }
 
 /** 计算并渲染分值分配 */
@@ -1959,6 +2341,10 @@ function bind(){
   // ★ 图片/截图识别（可一次选多张，逐张识别后合并）
   $('#btnVision').onclick = () => $('#visionInput').click();
   $('#visionInput').onchange = e => { visionRun(e.target.files); e.target.value = ''; };
+  // ★ 学校卷子（照片/扫描件/扫描版 PDF）→ 题目结构
+  $('#btnSchool').onclick = () => $('#schoolInput').click();
+  $('#schoolInput').onchange = e => { schoolRun(e.target.files); e.target.value = ''; };
+  $('#btnSchoolClear').onclick = clearSchool;
   $('#btnPasteToggle').onclick = () => {
     const b = $('#pasteBox');
     const show = b.style.display === 'none';
