@@ -390,6 +390,52 @@ docx / doc / 有文字层的 PDF。这一批补上那半边：把图交给视觉
 
 ---
 
+### 7. 🏢 公司模板导出（★ 2026-10 第十二批，**新增模块**）
+
+**背景**：公司发下新模板（三个附件），要求各学科最终都按这个格式交。
+方案见 [`docs/company-export-plan.md`](company-export-plan.md)，模板分析见
+[`docs/company-template-analysis.md`](company-template-analysis.md)。
+
+⚠️ **红线**：**不动现有生成逻辑**（`paper-parser` / `narrator` / `error-engine` /
+`report-template` / `report-docx` 一行没改）。导出是**读现有数据、输出 docx**。
+
+| 件 | 说明 |
+|---|---|
+| `docs/company-template/公司模板-原件.docx` | 公司原件（格式的最终依据） |
+| `docs/company-template/附件{1,2,3}.docx` | **切分好的三个模板**（`scripts/split-company-template.py` 生成；只删不属于该附件的块，styles/theme/sectPr 原样保留） |
+| `public/tools/company-template/template-data.js` | 模板零件（base64 内嵌，**自动生成勿手改**；`scripts/build-company-template.py` 重新生成） |
+| `public/tools/company-template/company-docx.js` | **填充引擎**：`CompanyDocx.build('附件2', data)` → Uint8Array |
+| `public/tools/paper-analysis/index.html` + `js/app.js` | 面板「🏢 公司模板导出」+ `collectCompanyData()` / `exportCompany()`（③ 生成报告页） |
+
+**引擎的三条红线**（都写进代码注释了，改动前必读）：
+1. **不新建文档拼表格** —— 只改 `word/document.xml` 的文字，其余零件原样带回 ⇒ 格式零走形；
+2. **样例不许漏出去** —— 模板里的语文样例必须被替换或清空。附件3 是"**整表只留标签**"，
+   不能"按标签清那一行"（学情分析/措施/预期效果这三块的**子行首格是纵向合并的延续格**，
+   按标签只会命中每组第一行，其余行的语文样例会漏进导出件 —— 实测踩过）；
+3. **不按写死的行号/列号填** —— 一律**按标签定位**，定位不到**抛错**；
+   附件2 错题行的列位从**表头行现算**（表头首格是纵向合并的标签列、数据行首格是它的**延续格**，
+   写死 0/1/2/3 会把题号写进延续格、错因留在原位 —— 实测踩过）。
+
+**另外两个坑**：
+- **`replaceCells` 只许删 `<w:tc>`**，行里其余 XML（尤其 `<w:tblPrEx>`，Word 把行级边框放这儿）
+  必须原样保留 —— 丢掉它表格线就没了（第一次实现就丢了，是测试的"格式指纹"断言抓住的）；
+- python 在 Windows 下默认按 GBK 写 stdout，Node 按 UTF-8 读会乱码 ⇒ 测试里跑 python 必须带
+  `PYTHONIOENCODING=utf-8`（否则所有中文断言假红）。
+
+**口径**（用户 2026-10 七条）：附件2「题目」列 = **知识点顶替**（工具里没有题干）；
+考试类型 = **下拉**；排名 / 已学课时 / 学校 = **手填**；**过程列与签字栏一律留空**。
+
+**测试**：`tests/company-export.test.mjs`（**42 项**）：三个附件逐格核对（**用 python-docx
+独立解析导出件**，不拿自己的解析器自证）+ 固定文字按附件逐条核对 + **语文样例泄漏扫描** +
+**格式指纹**（tblBorders / tblPrEx / gridSpan / vMerge / tcBorders / 页面边距）+ 取值合成边界 +
+浏览器接线。**变异自证 38/42**（① 丢 `w:tblPrEx`、② 错题列号写死、③ 附件3 只清前 5 行
+⇒ 分别红了格式、逐格、泄漏断言）。
+
+**尚未做**：附件3 的 UI（数据源在 math-plan，下一批）· 题干字段（**建议先不做**，等用户定）·
+过程记录（二期，**挂在方案那条 history 上**、不是学生身上；届时先问用户再动表结构）。
+
+---
+
 ### 6c. ★ 第九批：学校卷子识别上线后修的两个**实测 bug**
 
 用户试完反馈"整体满意，但有两个问题"，都是真 bug：
