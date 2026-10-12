@@ -2059,6 +2059,88 @@ function exportDocx(){
   }
 }
 
+/* ==========================================================================
+   🏢 公司模板导出（★ 2026-10 第十二批，**新增模块**）
+   --------------------------------------------------------------------------
+   红线（用户 2026-10 明确）：**不动现有生成逻辑**。这里只"读现有数据、输出 docx"。
+   数据全部来自已经算好的东西：`lastAdviceCtx.ctx`（生成报告时的诊断）+ 表单 + 档案字段。
+   底稿是公司原件切分出来的三个模板（`public/tools/company-template/templates/`），
+   填充引擎在 `../company-template/company-docx.js`（按标签定位、只改文字）。
+
+   用户定的口径（7 条，改之前先看 `docs/company-export-plan.md`）：
+     ① 以公司模板为底、只替换文字；三个附件各一个 docx；附件1/2 导出时选（旧导出保留）
+     ② 考试类型 = 下拉（校考/月考/期中/期末/内部考）
+     ③ 排名 = 手填（有就填、没有留空）
+     ④ 附件2「题目」列 = **用知识点顶替**（工具里没有题干）
+     ⑤ 过程列（三次课后/阶段总结/效果评估）**一期留空**，老师在 Word 里写
+     ⑥ 「已学课时」= 手填（实际已上，不是计划）
+     ⑦ 签字栏留空（打印后手写）
+   ========================================================================== */
+
+/** 从页面与已生成的报告里取数据（**只读**，不改任何现有状态） */
+function collectCompanyData(){
+  const ctx = lastAdviceCtx && lastAdviceCtx.ctx ? lastAdviceCtx.ctx : null;
+  // 错题行：直接用报告里已经算好的逐题行（no/full/got/knowledge/reason），不重算
+  const rows = (ctx && ctx.questionRows ? ctx.questionRows : [])
+    .filter(r => num(r.got) < num(r.full))
+    .map(r => ({
+      no: r.no,
+      topic: (r.knowledge || '').split(/[；;,，]/)[0].trim(),   // 「题目」列 = 知识点（用户口径④）
+      point: r.knowledge || '',
+      reason: r.reason || (records[r.no] && records[r.no].note) || '',
+    }));
+  const curScore = String($('#coCurrentScore').value || '').trim() ||
+    String(round2(Object.values(records).reduce((a, r) => a + num(r.got), 0)));
+  return {
+    student: val('stuName'), school: $('#coSchool').value.trim(), grade: val('stuGrade'),
+    teacher: val('stuTeacher') || '郭庆杰', subject: val('stuSubject') || '数学',
+    learnedHours: $('#coLearnedHours').value.trim(), totalHours: $('#coTotalHours').value.trim(),
+    examType: $('#coExamType').value,
+    entryScore: $('#coEntryScore').value.trim(), entryRank: $('#coEntryRank').value.trim(),
+    currentScore: curScore, currentRank: $('#coCurrentRank').value.trim(),
+    wrongRows: rows,
+    longTexts: {},        // 一期留空：六段长文由老师在 Word 里写（口径⑤）
+  };
+}
+
+/** 导出所选附件 → 下载 .docx */
+function exportCompany(){
+  const att = ($('#coAtt2') && $('#coAtt2').checked) ? '附件2' : '附件1';
+  if(!window.CompanyDocx || !window.CompanyTemplateData){
+    toast('导出模块没加载，请刷新页面'); return;
+  }
+  if(!lastAdviceCtx){ toast('请先「✨ 生成报告」，导出要用报告里算好的错题与原因'); return; }
+  if(!val('stuName')){ toast('请先填学生姓名'); return; }
+  let bin;
+  try{
+    bin = window.CompanyDocx.build(att, collectCompanyData());
+  }catch(e){
+    toast('导出失败：' + e.message, 4200); return;
+  }
+  const blob = new Blob([bin], { type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${val('stuName')}-${att}-${(val('examName') || '试卷分析').replace(/[\\/:*?"<>|]/g,'')}.docx`;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1200);
+  const blank = att === '附件2'
+    ? '（附件2：抬头 + 逐题错题表已填；三段措施、签字栏留空）'
+    : '（附件1：抬头已填；六段归因/措施、签字栏留空）';
+  $('#coHint').textContent = `已导出 ${att} ${blank}`;
+  toast(`已按公司模板导出 ${att}`, 3600);
+}
+
+/** 测试钩子（与 math-plan 的 MathPlanHooks 同一做法）：让测试能拿到字节与数据 */
+window.CompanyExportHooks = {
+  collect: () => collectCompanyData(),
+  buildBytes: (att) => {
+    if(!window.CompanyDocx) return null;
+    const a = att || (($('#coAtt2') && $('#coAtt2').checked) ? '附件2' : '附件1');
+    const bytes = window.CompanyDocx.build(a, collectCompanyData());
+    return { att: a, bytes: Array.prototype.slice.call(bytes) };
+  },
+};
+
 function copyReport(){
   const txt = $('#reportText').innerText;
   if(!txt.trim()){ toast('还没有生成报告'); return; }
@@ -2547,6 +2629,8 @@ function bind(){
   $('#btnCopy').onclick = copyReport;
   $('#btnCopy2').onclick = copyReport;
   $('#btnDocx').onclick = exportDocx;
+  // ★ 公司模板导出（新增模块，不动上面的生成逻辑）
+  $('#btnCompanyExport').onclick = exportCompany;
   $('#btnExport').onclick = exportDocx;
   $('#btnExport2').onclick = exportWord;
   $('#btnPrint').onclick = () => window.print();

@@ -206,6 +206,44 @@
       </div>
     </div>
 
+    <!-- ★ 2026-10 第十二批：公司模板导出（新增模块，不动上面的生成逻辑） -->
+    <div class="panel" style="margin-top:14px" id="companyPanel">
+      <h2>🏢 公司模板导出 <span class="sp">附件1 / 附件2</span></h2>
+      <div class="pad">
+        <p class="tip">
+          用<b>公司发下来的模板原件</b>做底、只把文字换掉（字体、表格线、合并格、行高一律照抄），
+          导出后是<b>一个附件一个 .docx</b>，可直接交公司。
+          ⚠️ <b>「三次课后 / 阶段总结 / 效果评估」这类过程内容本期留空</b>，请你在 Word 里写；
+          <b>签字栏一律留空</b>（打印后手写）。
+        </p>
+        <div class="btn-row">
+          <label class="tip" style="margin:0"><input type="radio" name="coAtt" id="coAtt1" value="附件1"> 附件1（文字式：归因 + 措施）</label>
+          <label class="tip" style="margin:0"><input type="radio" name="coAtt" id="coAtt2" value="附件2" checked> 附件2（表格式：逐题错题表）</label>
+        </div>
+        <div class="f3">
+          <div class="f"><label>学校</label><input type="text" id="coSchool" placeholder="如 天津一中"></div>
+          <div class="f"><label>考试类型</label><select id="coExamType">
+            <option value="">（留空）</option>
+            <option>校考</option><option>月考</option><option>期中</option><option>期末</option><option>内部考</option>
+          </select></div>
+          <div class="f"><label>单科总课时</label><input type="text" id="coTotalHours" placeholder="如 40小时"></div>
+        </div>
+        <div class="f3">
+          <div class="f"><label>入学成绩</label><input type="text" id="coEntryScore" placeholder="如 90分"></div>
+          <div class="f"><label>入学排名</label><input type="text" id="coEntryRank" placeholder="如 500名（没有就留空）"></div>
+          <div class="f"><label>已学课时</label><input type="text" id="coLearnedHours" placeholder="如 10小时（实际已上）"></div>
+        </div>
+        <div class="f2">
+          <div class="f"><label>本次成绩</label><input type="text" id="coCurrentScore" placeholder="默认取本次得分"></div>
+          <div class="f"><label>本次排名</label><input type="text" id="coCurrentRank" placeholder="如 12名（没有就留空）"></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-pri" id="btnCompanyExport">⬇ 导出所选附件（公司模板）</button>
+        </div>
+        <p class="tip" id="coHint"></p>
+      </div>
+    </div>
+
     <div class="panel" style="margin-top:14px">
       <h2>🧠 AI 润色（建议段 / 错因列） <span class="sp">可选</span></h2>
       <div class="pad">
@@ -314,6 +352,9 @@
 <script src="js/template-data.js"></script>
 <script src="js/report-template.js"></script>
 <script src="js/report-docx.js"></script>
+<!-- ★ 公司模板导出（新增模块）：模板零件 + 填充引擎（共用，在 tools 下一级） -->
+<script src="../company-template/template-data.js"></script>
+<script src="../company-template/company-docx.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
