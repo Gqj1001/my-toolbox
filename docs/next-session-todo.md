@@ -33,6 +33,11 @@
 
 ### 1b. ✅ 已拍板 / ⏳ 等触发的事
 
+> 🔴 **需要你在 Supabase 做一次**：执行 **`supabase/migrations/0018_feature_flags.sql`**
+> （管理后台「功能开关」用的那张表）。**不执行也安全** —— 所有功能保持开启，后台会明确提示
+> "表还没建 + 要跑这个迁移"；执行之后 `tests/admin-feature-flags.test.mjs` 会自动从"分支 A"
+> 切到"分支 B"（真正测开关的关/开、以及工具页参数是否拼上）。
+
 | # | 事项 | 状态 |
 |---|---|---|
 | a | **附件2「题目」列要不要改成读题干** | ✅ **用户 2026-10 已定：先不做（列为"等触发"）**。理由：**学科网报告里根本没有题干**（只有题号/知识点/难度/细目表）⇒ 对主力路径**零收益**；而"抄错题干"会把错的原文写进**要交公司**的表，风险高于"题目列与考点列重复"。<br>**触发条件**（满足再谈）：出现明确的"拍整张卷子导入"使用场景，或用户主动提出。成本约 **+0.003–0.006 元/页**（每题多 30–60 字输出）。完整评估见 `docs/company-export-plan.md` §6 |
@@ -119,7 +124,7 @@
   `middleware-cache`、`math-plan-students`、`date-input`、`paper-analysis-students`、
   `archive-students`、`vision-scores`（起两次服务）、`student-analysis`（桩 4588）、
   `paper-attribution-polish`（桩 4589 + Edge 9491）、`vision-paper`（起两次服务，桩 4590 + Edge 9492）、
-  `school-paper`（桩 4591 + Edge 9494）、**`company-export`（起服务 + Edge 9495；自带 python 校验）**。
+  `school-paper`（桩 4591 + Edge 9494）、**`company-export`（起服务 + Edge 9495；自带 python 校验）**、**`admin-feature-flags`（起服务 + Edge 9496）**。
   （`student-report` **不需要服务**：纯函数 + 直接 import `.ts`，秒级跑完。）
 - 需要外部服务的 6 套 + 自带服务的 1 套已固化成脚本（会先等 3000 空出来）：
   ```powershell
@@ -159,7 +164,7 @@
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
 
-**全套回归现状（2026-10 第十二批实测，32 个套件全绿 ✅，合计 1037 项断言）**：
+**全套回归现状（2026-10 第十三批实测，33 个套件全绿 ✅，合计 1047 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -176,6 +181,7 @@ students-unified 81/81     date-input 15/15          admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
 student-report 37/37       student-analysis 21/21
 company-export 49/49
+admin-feature-flags 10/10
 ```
 
 > ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。第一批实测时就发现旧表有几处**过期或漏项**：

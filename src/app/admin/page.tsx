@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { fetchAllUsers } from "@/app/admin/membership-actions";
+import FeatureFlagList from "@/components/feature-flag-list";
 import MemberActions from "@/components/member-actions";
 import RoleSelect from "@/components/role-select";
 import SiteHeader from "@/components/site-header";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
+import { getFeatureFlags } from "@/lib/feature-flags";
 import { PLAN_LABELS, STATUS_LABELS, remainingDays } from "@/lib/membership-types";
 
 function formatTime(value: string | null) {
@@ -35,6 +37,9 @@ export default async function AdminPage() {
   const adminCount = users.filter((item) => item.role === "admin").length;
   const vipCount = users.filter((item) => item.vipActive).length;
   const bannedCount = users.filter((item) => item.status === "banned").length;
+
+  // 功能开关（读不到表时 ready=false，功能一律保持开启）
+  const flagState = await getFeatureFlags();
 
   return (
     <>
@@ -173,6 +178,24 @@ export default async function AdminPage() {
             </table>
           </div>
         )}
+
+        {/* ⚙️ 功能开关：初版功能的"一键关掉"（关掉的是**入口**，代码与数据都不变） */}
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+              功能开关
+            </h2>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              给"初版功能"留的一键开关：关掉后对应入口消失，<b>代码与数据都不变</b>，
+              最多 30 秒全站生效（不用重新部署）。开关清单登记在{" "}
+              <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">
+                src/lib/feature-flags.ts
+              </code>
+              。
+            </p>
+          </div>
+          <FeatureFlagList ready={flagState.ready} error={flagState.error} flags={flagState.flags} />
+        </section>
 
         <div className="flex flex-col gap-1 text-xs text-zinc-400 dark:text-zinc-500">
           <p>

@@ -123,6 +123,9 @@
 
 ### 8.2 一键关掉（不用回退代码、不用改数据库）
 
+> ⭐ **平时请用「后台开关」（见 §8.5）**：管理后台 `/admin` → 「功能开关」→ 关掉。
+> 不用改代码、不用等部署、最多 30 秒生效。下面三种是**应急/兜底**手段（后台开关表没建时也能用）。
+
 关掉后：**「🏢 公司模板导出」那块面板消失、导出按钮点不动；其它一切照常**
 （表单、报告、AI 润色、旧导出、学校卷子识别…都不受影响）。
 
@@ -187,6 +190,36 @@ tests/company-export.test.mjs        # 本模块的测试
 1. 打开 `/tools/paper-analysis` → 「🏢 公司模板导出」面板**不出现**；
 2. 同页「⬇ 导出 Word 表格（.docx）」**照常可用**（旧路径不受影响）；
 3. F12 控制台**没有红色报错**（尤其不能有 `companyExportDisabled is not defined` 之类）。
+
+---
+
+### 8.5 后台开关（管理后台「功能开关」）—— **平时用这个**
+
+用户 2026-10 提的："这个开关能不能放到 admin 管理后台" —— 能，已经做成**通用机制**（不只管这一个功能）。
+
+| 件 | 说明 |
+|---|---|
+| 表 | **`public.feature_flags`**（`key` / `enabled` / `label` / `note` / `updated_at` / `updated_by`）<br>迁移：**`supabase/migrations/0018_feature_flags.sql`** —— ⚠️ **要用户在 Supabase SQL Editor 执行一次**（重复执行安全） |
+| 后台 UI | `/admin` 底部的「**功能开关**」区块：一行一个开关（名字 / 说明 / 已开启·已关闭 / 「关掉这个功能」按钮 / 最后改动人与时间） |
+| 代码登记 | `src/lib/feature-flags.ts` 的 **`FEATURE_FLAG_REGISTRY`** —— **代码是"谁受影响"的唯一来源**，表里只存状态 |
+| 怎么送到工具页 | `ToolPageShell`（服务端）读开关 → 关掉时把参数拼到 **iframe 的 src** 上（如 `?nocompanyexport=1`）⇒ **工具页一行代码都不用改**（它的 `companyExportDisabled()` 本来就读这个参数） |
+| 生效速度 | **最多 30 秒全站生效**（进程内缓存，与 `tools` 表同一套做法）；**不用重新部署** |
+| 读不到表时 | **一律当"开启"**（DB 抖一下不该悄悄干掉功能），后台会显示"表还没建 + 要跑哪个迁移" |
+| 优先级 | **URL 参数（含后台拼的）> 代码常量**：后台关掉＝一定关；改常量不会把它意外打开 |
+| 护栏 | Server Action 里 `requireAdmin()`（前端藏按钮不算安全边界）+ **白名单**（只允许改 registry 里登记过的 key） |
+
+**新增一个开关要动三个地方**（缺一条后台就管不住，已写进 `docs/dsh-work-guide.md`）：
+① `FEATURE_FLAG_REGISTRY` 登记（key / 标签 / 说明 / 关闭参数名 / 作用于哪个工具）；
+② 迁移里补一条同 key 的种子；③ 工具页**认这个参数**（例：`companyExportDisabled()` 读 `?nocompanyexport=1`）。
+
+**测试**：`tests/admin-feature-flags.test.mjs`（**10 项**，**自动适配两种状态**）：
+管理员能看后台「功能开关」/ 非管理员被挡（307 → `/tools?error=admin_required`）/
+**迁移没跑时**：后台点名要跑 `0018_feature_flags.sql`、**所有功能保持开启**（iframe src 无参数）、开关显示"已开启"/
+**迁移跑过后**（本套会自动切到这一支）：点「关掉」→ 后台显示已关闭 → 工具页 iframe src 带上
+`nocompanyexport=1` → **面板消失**、旧导出等照常 → 再点一次能打开并恢复。
+
+> ⚠️ 诚实说明：**白名单护栏没有自动断言**（要伪造 Server Action 调用，太脆）——
+> 靠代码 + 人工 review；`feature-actions.ts` 里注明了这一点。
 
 ---
 

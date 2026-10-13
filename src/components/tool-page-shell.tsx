@@ -6,6 +6,7 @@ import ToolFrame from "@/components/tool-frame";
 import ToolIcon from "@/components/tool-icon";
 import { getViewer } from "@/lib/viewer";
 import { getToolByRoute, resolveIframeSrc } from "@/lib/tools-db";
+import { getDisabledParamsForTool, withFeatureParams } from "@/lib/feature-flags";
 
 type ToolPageShellProps = {
   /** 数据库 tools 表中的 route，如 /tools/math-plan */
@@ -50,7 +51,13 @@ export default async function ToolPageShell({ route, skeleton }: ToolPageShellPr
   }
 
   const { role } = viewer;
-  const iframeSrc = resolveIframeSrc(slug);
+  const baseSrc = resolveIframeSrc(slug);
+  // ⚙️ 功能开关：后台关掉某个功能时，把"关闭参数"拼到 iframe 的 src 上 ——
+  //    工具页自己读这个参数（如 `?nocompanyexport=1`），**工具页代码一行都不用改**。
+  //    参数名登记在 src/lib/feature-flags.ts 的 FEATURE_FLAG_REGISTRY。
+  const iframeSrc = baseSrc
+    ? withFeatureParams(baseSrc, await getDisabledParamsForTool(slug))
+    : null;
 
   return (
     <>
