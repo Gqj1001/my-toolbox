@@ -106,7 +106,91 @@
 - **本期不动学生档案的表结构**（不加字段、不改表）。
 - 真要落库时，需要新增字段/新表 ⇒ **届时先停下来问用户**，不自己跑 SQL。
 
-## 8. 实际交付（本期已实现并通过测试）
+## 8. ⭐ 一键关掉 / 如何彻底撤销
+
+### 8.1 先回答："这个初版能撤吗？会影响别的程序吗？"
+
+**能撤，而且设计上就是纯新增**（用户 2026-10 要求把这句话写清楚）：
+
+| 问题 | 答案 |
+|---|---|
+| 动过现有生成逻辑吗？ | **没有。** `paper-parser` / `narrator` / `error-engine` / `report-template` / `report-docx` / `paper-score-*` **一行没改**；`app.js` 只**新增**了一段（有 `开始/结束` 标记包着）+ 3 行接线 |
+| 动过数据库吗？ | **没有。** 无迁移、无新表、无新字段、无新列（排名/已学课时等都是**导出时手填**，不落库） |
+| 动过接口吗？ | **没有。** 没有新增/修改任何 `src/app/api/**` 路由（导出是纯前端：读页面数据 → 生成 docx → 下载） |
+| 动过其它工具吗？ | **没有。** 只碰了 `public/tools/paper-analysis/*` 与新增的 `public/tools/company-template/*`（math-plan / feedback 一个字节没动） |
+| 会影响旧导出吗？ | **不会。** 「⬇ 导出 Word 表格（.docx）」走的是老路径（`ReportDocx`/`ReportTemplate`/`js/template-data.js`），与本模块互不相干（测试里专门断言了旧按钮还在） |
+| 关掉/撤掉后数据会丢吗？ | **不会。** 本模块只读数据、不写任何存储 |
+
+### 8.2 一键关掉（不用回退代码、不用改数据库）
+
+关掉后：**「🏢 公司模板导出」那块面板消失、导出按钮点不动；其它一切照常**
+（表单、报告、AI 润色、旧导出、学校卷子识别…都不受影响）。
+
+三种关法（任选一种，照 `feedback.html`「紧急开关」的老规矩）：
+
+| # | 怎么关 | 怎么开回来 | 适合 |
+|---|---|---|---|
+| ① | 把 `public/tools/paper-analysis/js/app.js` 里的 `const COMPANY_EXPORT_ENABLED = true;` 改成 **`false`**，提交后 Vercel 自动部署 | 改回 `true` | 最彻底、最稳（推荐） |
+| ② | 网址后面加参数：**`https://010034.xyz/tools/paper-analysis?nocompanyexport=1`**（父页）或 **`/tools/paper-analysis/index.html?nocompanyexport=1`**（工具页直链） | 去掉参数 | **不用改代码、不用等部署**，临时/线上应急首选 |
+| ③ | 打开工具页 → F12 控制台执行 `localStorage.setItem('pa_nocompanyexport','1')` → 刷新 | 执行 `localStorage.removeItem('pa_nocompanyexport')` | 只在你这台电脑上关（不影响别人） |
+
+> ⚠️ 关法② 的两个地址**都认**：工具页是嵌在 iframe 里的，父页的 `?query` 不会自动传进 iframe，
+> 所以代码里**专门多读了一次父页的 `location.search`**（同源可读；读不到就忽略）。
+> 这两种地址都有测试钉住（工具页直链 / 父页参数，各一条断言）。
+
+### 8.3 彻底撤销（删文件 + 删代码，**别整笔回退**）
+
+⚠️ **不要用 `git revert` 整笔回退**：那一笔里可能还夹着别的修复（例如学校卷子识别的
+"容易题满分"修复、面板展开修复），整笔回退会把它们一起退掉。**按下面清单精确删**：
+
+**A. 删文件（本模块独有的，删掉不影响任何其它功能）**
+
+```
+docs/company-export-plan.md          # 本文档（想留作记录也可以不删）
+docs/company-template/               # 整个目录：原件 + 三个切分模板
+public/tools/company-template/       # 整个目录：template-data.js + company-docx.js
+scripts/split-company-template.py    # 切模板用（只在改模板时用得到）
+scripts/build-company-template.py    # 生成零件数据用
+tests/company-export.test.mjs        # 本模块的测试
+```
+（`docs/company-template-analysis.md` 是**分析文档**，与代码无关，建议留着。）
+
+**B. 删 index.html 里的 3 处**（都在 `public/tools/paper-analysis/index.html`）
+
+1. 整块面板：从 `<!-- ⭐⭐⭐ 公司模板导出 · 开始 … -->` 到 `<!-- ⭐⭐⭐ 公司模板导出 · 结束 … -->`
+   （中间就是 `<div class="panel" … id="companyPanel"> … </div>`）
+2. 那两行脚本（含上面的注释）：
+   ```html
+   <!-- ⭐ 公司模板导出（新增模块）：模板零件 + 填充引擎；删这两行不影响其它功能（旧导出不用它们） -->
+   <script src="../company-template/template-data.js"></script>
+   <script src="../company-template/company-docx.js"></script>
+   ```
+
+**C. 删 app.js 里的 2 处**（`public/tools/paper-analysis/js/app.js`）
+
+1. 整段：从 `/* ⭐⭐⭐ 公司模板导出 · 开始 …` 到 `/* ⭐⭐⭐ 公司模板导出 · 结束 … */`
+   （里面是 `COMPANY_EXPORT_ENABLED` / `companyExportDisabled()` / `collectCompanyData()` /
+   `exportCompany()` / `window.CompanyExportHooks`）
+2. `bind()` 里那 3 行接线（注释写着"与上面那一段成对"）：
+   `const coBtn = $('#btnCompanyExport'); if(coBtn){ … }` 整个花括号块
+
+> ✅ **只删一半也不会把页面弄崩**：接线那段写成了"取不到元素就跳过"
+> （`const coBtn = $('#btnCompanyExport'); if(coBtn){…}`），
+> 所以"只删面板 HTML"或"只删那段 JS"都不会抛错，其它功能照常。有测试守着开关行为。
+> ⚠️ 但**想删干净**还是请 A→B→C 一起删（否则会残留一个 `../company-template/*` 的 404 请求）。
+
+**D. 数据库 / 接口**：**不需要任何操作**（没动表、没动接口、没落库）。
+如果哪天做过"过程记录"二期（见 §7），那时才会有迁移 —— 届时本文档要更新。
+
+### 8.4 关掉 / 撤销后的验证清单（3 条，一分钟）
+
+1. 打开 `/tools/paper-analysis` → 「🏢 公司模板导出」面板**不出现**；
+2. 同页「⬇ 导出 Word 表格（.docx）」**照常可用**（旧路径不受影响）；
+3. F12 控制台**没有红色报错**（尤其不能有 `companyExportDisabled is not defined` 之类）。
+
+---
+
+## 9. 实际交付（本期已实现并通过测试）
 
 > ✅ **用户 2026-10 拍板的两件事**（都记在这里，避免下次再问）：
 > 1. **题干：先不做**，列为"等触发"（触发条件见 §6 ✅ 那一行）；

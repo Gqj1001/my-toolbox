@@ -371,7 +371,7 @@ try {
   const b = await startBrowser(CDP_PORT, "D:/my-website/.edge-profile-company");
   edge = b.edge;
   const { cdp, sessionId } = b;
-  const { inTool, goto, login } = makePageApi(cdp, sessionId);
+  const { ev, inTool, goto, login } = makePageApi(cdp, sessionId);
   const pageErrors = [];
   cdp.ws.addEventListener("message", (e) => {
     const m = JSON.parse(e.data);
@@ -447,6 +447,72 @@ try {
   `);
   record("点「导出所选附件」按钮有反馈（提示已导出附件1）",
     /附件1/.test(String(clicked?.hint ?? "")), JSON.stringify(clicked?.hint));
+
+  /* ======================================================================
+     ⭐ 一键开关（用户 2026-10 专门要求的）：三种关法都要真的管用
+     ====================================================================== */
+  {
+    const on = await inTool(`
+      const p = w.document.getElementById('companyPanel');
+      return { disabled: w.CompanyExportHooks.disabled(),
+               visible: !!p && p.style.display !== 'none' && !p.hasAttribute('hidden') };
+    `);
+    record("⭐ 默认是**开着**的：面板可见、开关判定为未关闭",
+      on?.disabled === false && on?.visible === true, JSON.stringify(on));
+
+    // 关法②：工具页直链加参数（最可能的用法：把工具页存书签）
+    //  ⚠️ 直链时工具页是顶层文档（没有 iframe）→ 只能用 ev 在顶层求值
+    await goto("/tools/paper-analysis/index.html?nocompanyexport=1", 4000);
+    const off1 = await ev(`(() => {
+      const p = document.getElementById('companyPanel');
+      document.getElementById('btnCompanyExport').click();
+      return { disabled: window.CompanyExportHooks.disabled(),
+               visible: !!p && p.style.display !== 'none' && !p.hasAttribute('hidden'),
+               hint: document.getElementById('coHint').textContent };
+    })()`);
+    record("⭐ 关法②：工具页直链加 `?nocompanyexport=1` → 面板消失、开关为已关闭",
+      off1?.disabled === true && off1?.visible === false, JSON.stringify(off1));
+    record("⭐ 关掉后按钮点不动（不会导出，也不会报错）",
+      String(off1?.hint ?? "") === "", JSON.stringify(off1?.hint));
+
+    // 关法②b：父页加参数（工具页在 iframe 里，必须能读到父页 search）
+    await goto("/tools/paper-analysis?nocompanyexport=1", 4000);
+    const off2 = await inTool(`
+      const p = w.document.getElementById('companyPanel');
+      return { disabled: w.CompanyExportHooks.disabled(),
+               visible: !!p && p.style.display !== 'none' && !p.hasAttribute('hidden') };
+    `);
+    record("⭐ 关法②b：**父页**加 `?nocompanyexport=1` → iframe 里的面板同样消失（读父页 search）",
+      off2?.disabled === true && off2?.visible === false, JSON.stringify(off2));
+
+    // 关法③：localStorage（改一次就记住，不用每次带参数）
+    await goto("/tools/paper-analysis/index.html", 4000);
+    await ev(`localStorage.setItem('pa_nocompanyexport','1')`);
+    await goto("/tools/paper-analysis", 4000);
+    const off3 = await inTool(`
+      const p = w.document.getElementById('companyPanel');
+      return { disabled: w.CompanyExportHooks.disabled(),
+               visible: !!p && p.style.display !== 'none' && !p.hasAttribute('hidden') };
+    `);
+    record("⭐ 关法③：`localStorage.setItem('pa_nocompanyexport','1')` 后刷新 → 面板消失",
+      off3?.disabled === true && off3?.visible === false, JSON.stringify(off3));
+
+    // 开回来 + 确认没影响别的功能
+    await goto("/tools/paper-analysis/index.html", 4000);
+    await ev(`localStorage.removeItem('pa_nocompanyexport')`);
+    await goto("/tools/paper-analysis", 4000);
+    const back = await inTool(`
+      const p = w.document.getElementById('companyPanel');
+      return { disabled: w.CompanyExportHooks.disabled(),
+               visible: !!p && p.style.display !== 'none' && !p.hasAttribute('hidden'),
+               others: !!w.document.getElementById('btnDocx') && !!w.document.getElementById('reportText') &&
+                       !!w.document.getElementById('btnPolishAll') };
+    `);
+    record("⭐ 开回来：清掉 localStorage 后刷新 → 面板恢复",
+      back?.disabled === false && back?.visible === true, JSON.stringify(back));
+    record("⭐ 开关**不影响其它功能**（旧导出按钮、报告框、AI 润色按钮都还在）",
+      back?.others === true, JSON.stringify(back));
+  }
 
   record("页面无真实 JS 异常", pageErrors.length === 0, pageErrors.slice(0, 2).join(" | ") || "0 条");
   try { await cdp.send("Browser.close"); } catch { /* ignore */ }

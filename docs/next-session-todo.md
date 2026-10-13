@@ -159,7 +159,7 @@
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
 
-**全套回归现状（2026-10 第十二批实测，32 个套件全绿 ✅，合计 1030 项断言）**：
+**全套回归现状（2026-10 第十二批实测，32 个套件全绿 ✅，合计 1037 项断言）**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -175,7 +175,7 @@ school-paper 43/43feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15          admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
 student-report 37/37       student-analysis 21/21
-company-export 42/42
+company-export 49/49
 ```
 
 > ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。第一批实测时就发现旧表有几处**过期或漏项**：

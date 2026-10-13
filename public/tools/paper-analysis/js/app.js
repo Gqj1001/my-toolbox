@@ -2059,12 +2059,14 @@ function exportDocx(){
   }
 }
 
-/* ==========================================================================
-   🏢 公司模板导出（★ 2026-10 第十二批，**新增模块**）
+/* ⭐⭐⭐ 公司模板导出 · 开始（★ 2026-10 第十二批新增模块；整块可删，见
+   docs/company-export-plan.md §8「一键关掉 / 如何彻底撤销」）⭐⭐⭐
+   ==========================================================================
+   🏢 公司模板导出（**新增模块**）
    --------------------------------------------------------------------------
    红线（用户 2026-10 明确）：**不动现有生成逻辑**。这里只"读现有数据、输出 docx"。
    数据全部来自已经算好的东西：`lastAdviceCtx.ctx`（生成报告时的诊断）+ 表单 + 档案字段。
-   底稿是公司原件切分出来的三个模板（`public/tools/company-template/templates/`），
+   底稿是公司原件切分出来的三个模板（`docs/company-template/附件{1,2,3}.docx`），
    填充引擎在 `../company-template/company-docx.js`（按标签定位、只改文字）。
 
    用户定的口径（7 条，改之前先看 `docs/company-export-plan.md`）：
@@ -2076,6 +2078,31 @@ function exportDocx(){
      ⑥ 「已学课时」= 手填（实际已上，不是计划）
      ⑦ 签字栏留空（打印后手写）
    ========================================================================== */
+
+/* ⭐ 一键开关（照 feedback.html「紧急开关」的老规矩）
+ *   关掉后：这块面板消失、导出按钮点不动，**其它一切照常**（表单/报告/AI/旧导出都不受影响）。
+ *   不用回退代码、不用改数据库。三种关法任选：
+ *     ① 把下面的常量改成 false（改一行，最快）
+ *     ② 网址后面加 `?nocompanyexport=1` —— **父页**（/tools/paper-analysis?nocompanyexport=1）
+ *        或**工具页直链**（/tools/paper-analysis/index.html?nocompanyexport=1）都认
+ *     ③ 在工具页控制台执行 localStorage.setItem('pa_nocompanyexport','1')
+ *   开回来：常量改回 true / 去掉参数 / localStorage.removeItem('pa_nocompanyexport') */
+const COMPANY_EXPORT_ENABLED = true;
+
+function companyExportDisabled(){
+  try{
+    if(COMPANY_EXPORT_ENABLED !== true) return true;
+    if(new URLSearchParams(location.search).get('nocompanyexport') === '1') return true;
+    // ⚠️ 工具页是**嵌在 iframe 里**的（iframe src 是固定路径，父页的 ?query 不会自动带进来），
+    //    所以要单独读一次父页 search（同源可读；跨域/被沙箱挡住就忽略，不影响其它判断）
+    try{
+      if(window.parent && window.parent !== window){
+        if(new URLSearchParams(window.parent.location.search).get('nocompanyexport') === '1') return true;
+      }
+    }catch(e){ /* 读不到就算了 */ }
+    return localStorage.getItem('pa_nocompanyexport') === '1';
+  }catch(e){ return false; }
+}
 
 /** 从页面与已生成的报告里取数据（**只读**，不改任何现有状态） */
 function collectCompanyData(){
@@ -2105,6 +2132,7 @@ function collectCompanyData(){
 
 /** 导出所选附件 → 下载 .docx */
 function exportCompany(){
+  if(companyExportDisabled()){ toast('公司模板导出已关闭'); return; }   // ⭐ 一键开关
   const att = ($('#coAtt2') && $('#coAtt2').checked) ? '附件2' : '附件1';
   if(!window.CompanyDocx || !window.CompanyTemplateData){
     toast('导出模块没加载，请刷新页面'); return;
@@ -2132,6 +2160,7 @@ function exportCompany(){
 
 /** 测试钩子（与 math-plan 的 MathPlanHooks 同一做法）：让测试能拿到字节与数据 */
 window.CompanyExportHooks = {
+  disabled: () => companyExportDisabled(),
   collect: () => collectCompanyData(),
   buildBytes: (att) => {
     if(!window.CompanyDocx) return null;
@@ -2140,6 +2169,7 @@ window.CompanyExportHooks = {
     return { att: a, bytes: Array.prototype.slice.call(bytes) };
   },
 };
+/* ⭐⭐⭐ 公司模板导出 · 结束（删到这一行即可整块移除；另见 bind() 里的接线与 index.html 的面板）⭐⭐⭐ */
 
 function copyReport(){
   const txt = $('#reportText').innerText;
@@ -2629,8 +2659,19 @@ function bind(){
   $('#btnCopy').onclick = copyReport;
   $('#btnCopy2').onclick = copyReport;
   $('#btnDocx').onclick = exportDocx;
-  // ★ 公司模板导出（新增模块，不动上面的生成逻辑）
-  $('#btnCompanyExport').onclick = exportCompany;
+  // ⭐ 公司模板导出接线（与上面「公司模板导出 · 开始/结束」那一段**成对**：
+  //    删那段时必须连这两行一起删）。写成"取不到元素就跳过"是为了**只删一半也不会把页面弄崩**
+  //    （例如只删了 index.html 的面板、或只删了上面那段 JS，都不会抛错、其它功能照常）。
+  {
+    const coBtn = $('#btnCompanyExport');
+    if(coBtn){
+      coBtn.onclick = exportCompany;
+      if(typeof companyExportDisabled === 'function' && companyExportDisabled()){
+        const p = $('#companyPanel');
+        if(p){ p.style.display = 'none'; p.setAttribute('hidden', 'hidden'); }
+      }
+    }
+  }
   $('#btnExport').onclick = exportDocx;
   $('#btnExport2').onclick = exportWord;
   $('#btnPrint').onclick = () => window.print();

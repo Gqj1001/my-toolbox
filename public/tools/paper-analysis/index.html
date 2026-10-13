@@ -206,7 +206,8 @@
       </div>
     </div>
 
-    <!-- ★ 2026-10 第十二批：公司模板导出（新增模块，不动上面的生成逻辑） -->
+    <!-- ⭐⭐⭐ 公司模板导出 · 开始（★ 2026-10 第十二批新增；整块可删，见
+         docs/company-export-plan.md §8「一键关掉 / 如何彻底撤销」）⭐⭐⭐ -->
     <div class="panel" style="margin-top:14px" id="companyPanel">
       <h2>🏢 公司模板导出 <span class="sp">附件1 / 附件2</span></h2>
       <div class="pad">
@@ -243,6 +244,7 @@
         <p class="tip" id="coHint"></p>
       </div>
     </div>
+    <!-- ⭐⭐⭐ 公司模板导出 · 结束（删到这一行 + 下面两行 script 即可整块移除）⭐⭐⭐ -->
 
     <div class="panel" style="margin-top:14px">
       <h2>🧠 AI 润色（建议段 / 错因列） <span class="sp">可选</span></h2>
@@ -352,7 +354,7 @@
 <script src="js/template-data.js"></script>
 <script src="js/report-template.js"></script>
 <script src="js/report-docx.js"></script>
-<!-- ★ 公司模板导出（新增模块）：模板零件 + 填充引擎（共用，在 tools 下一级） -->
+<!-- ⭐ 公司模板导出（新增模块）：模板零件 + 填充引擎；删这两行不影响其它功能（旧导出不用它们） -->
 <script src="../company-template/template-data.js"></script>
 <script src="../company-template/company-docx.js"></script>
 <script src="js/app.js"></script>
