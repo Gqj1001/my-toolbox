@@ -374,7 +374,8 @@ for (const localSha of commitList) {
 
   // ---------- 构造 tree（硬闸在这里） ----------
   // base_tree 要用「父提交的 tree」：第一个提交的父是基点（本地有对象）；
-  // 之后的父是远端新建的 commit，本地没有 —— 用循环里记下来的 tree sha。  const baseTreeForCommit =
+  // 之后的父是远端新建的 commit，本地没有 —— 用循环里记下来的 tree sha。
+  const baseTreeForCommit =
     newParentTree ?? git("rev-parse", `${parentForNext}^{tree}`);
   const tree = await api("POST", `/repos/${REPO}/git/trees`, {
     tree: entries,
