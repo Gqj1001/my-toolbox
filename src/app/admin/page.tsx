@@ -179,34 +179,22 @@ export default async function AdminPage() {
           </div>
         )}
 
-        {/* ⚙️ 功能开关：初版功能的"一键关掉"（关掉的是**入口**，代码与数据都不变） */}
+        {/* ⚙️ 功能开关：初版功能的"一键关掉"（关掉的是**入口**，代码与数据都不变）
+            ⚠️ 页面上**只留管理员需要的一句**（关掉会发生什么 + 多久生效）。
+            技术说明（开关清单登记在哪个文件、权限怎么校验）属于**开发者文档**，
+            已挪进 `docs/admin-page-notes.md` —— 别再加回页面上：
+            管理员不需要看文件路径与 SECURITY DEFINER 这类实现细节。 */}
         <section className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <h2 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               功能开关
             </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              给"初版功能"留的一键开关：关掉后对应入口消失，<b>代码与数据都不变</b>，
-              最多 30 秒全站生效（不用重新部署）。开关清单登记在{" "}
-              <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">
-                src/lib/feature-flags.ts
-              </code>
-              。
+              关掉后对应入口消失，<b>代码与数据都不变</b>，最多 30 秒全站生效（不用重新部署）。
             </p>
           </div>
           <FeatureFlagList ready={flagState.ready} error={flagState.error} flags={flagState.flags} />
         </section>
-
-        <div className="flex flex-col gap-1 text-xs text-zinc-400 dark:text-zinc-500">
-          <p>
-            权限判定以 user_roles 表为准；用户列表通过 SECURITY DEFINER 函数 admin_list_users()
-            读取，函数内部会再次校验管理员身份。
-          </p>
-          <p>
-            所有会员操作都在 Server Action 中执行，并在服务端用 requireAdmin()
-            校验调用者身份，前端隐藏按钮不构成安全边界。
-          </p>
-        </div>
       </main>
     </>
   );
