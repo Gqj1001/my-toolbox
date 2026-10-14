@@ -13,6 +13,7 @@ import {
   truncatedByReasoning,
 } from "@/lib/deepseek-thinking";
 import { ANALYSIS_TOOL, buildStudentReport } from "@/lib/student-report";
+import { isToolConstraintError, TOOL_CONSTRAINT_MIGRATION } from "@/lib/manual-score";
 
 /**
  * 学情分析：把档案里三个工具的记录交给 AI，写一份**整体学情报告**（会员专属）
@@ -220,7 +221,9 @@ export async function POST(request: NextRequest) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[students/analysis] 报告落库失败:", msg);
     // 约束没放开时给出**能照着做**的提示（不然只有一句"保存失败"，没法定位）
-    if (/feedback_history_tool_check|check_violation|23514/.test(msg)) {
+    // ⚠️ 判定与迁移文件名都从 `manual-score.ts` 取（唯一来源）：以前这里写死 0017 且只判 message，
+    //    于是 0019 之后提示会指错文件（2026-10 第十四批收拢）。
+    if (isToolConstraintError(e)) {
       return NextResponse.json(
         {
           ok: false,
@@ -228,7 +231,7 @@ export async function POST(request: NextRequest) {
           report: text,
           error:
             "报告已生成，但没能存进档案：数据库还不接受这个归属工具。" +
-            "请先在 Supabase SQL Editor 执行迁移 supabase/migrations/0017_history_tool_allow_analysis.sql" +
+            `请先在 Supabase SQL Editor 执行迁移 ${TOOL_CONSTRAINT_MIGRATION}` +
             "（放宽 tool 的 CHECK 约束），再重试。",
           code: "tool_constraint",
         },

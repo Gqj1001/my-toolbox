@@ -14,6 +14,7 @@ import {
   upsertStudent,
 } from "@/lib/feedback-db";
 import { parseDisplayDate } from "@/lib/date-input";
+import { normalizeManualScore, isToolConstraintError, TOOL_CONSTRAINT_MIGRATION } from "@/lib/manual-score";
 import { getViewer } from "@/lib/viewer";
 
 /**
@@ -33,6 +34,8 @@ import { getViewer } from "@/lib/viewer";
  *   GET    /api/students?withHistory=1    同时带上历史（按姓名分组）
  *   POST   /api/students  { name, ... }                    upsert 一位（合并语义）
  *   POST   /api/students  { op:"import", items:[…] }        批量导入考试记录（幂等）
+ *   POST   /api/students  { op:"manual", … }              手动补录**一条**成绩（第十四批；
+ *                                                        校验与规整在 `src/lib/manual-score.ts`）
  *   DELETE /api/students?name=张三         删除档案（连同其历史）
  *   DELETE /api/students?id=<historyId>   删除**单条**历史记录（阶段3 补：以前只有
  *                                         /api/feedback/data 支持，统一接口这边缺）
@@ -120,8 +123,33 @@ export async function GET(request: NextRequest) {
  *
  *  `analysis` 是 2026-10 第三批加进来的（迁移 `0017_history_tool_allow_analysis.sql`）：
  *  学情分析生成的 AI 报告会以它落库。⚠️ 这条迁移**必须也在线上执行**，
- *  否则保存报告会撞 23514（接口会返回 409 并点名迁移文件）。 */
-const ALLOWED_TOOLS = ["feedback", "paper", "math-plan", "analysis"] as const;
+ *  否则保存报告会撞 23514（接口会返回 409 并点名迁移文件）。
+ *
+ *  `manual` 是 2026-10 第十四批加进来的（迁移 `0019_history_tool_allow_manual.sql`）：
+ *  学员档案页里老师**手动补录**的成绩会以它落库（`op:"manual"`）。
+ *  ⚠️ 同样必须先执行迁移，否则保存会 409。 */
+const ALLOWED_TOOLS = ["feedback", "paper", "math-plan", "analysis", "manual"] as const;
+
+/** 撞上 `feedback_history_tool_check` 时的统一答复（409 + 能照着做的提示）。
+ *
+ *  ⚠️ 迁移文件名与"怎么判这个错"都从 `src/lib/manual-score.ts` 取（**唯一来源**）：
+ *     以前路由里各写一份、还写死了 `0016`，于是 0017/0019 之后
+ *     照着提示去跑迁移**解决不了问题**（2026-10 第十四批发现并收拢）。
+ *  ⚠️ 判"是不是这个错"**不能只看 message** —— PostgREST 把约束名放在 `details` 里，
+ *     实测因此把本该 409 的情况返回成 500（新套件当场抓到，见 `isToolConstraintError` 的注释）。 */
+function toolConstraintResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error:
+        "数据库还不接受这个归属工具：请先在 Supabase SQL Editor 执行迁移 " +
+        TOOL_CONSTRAINT_MIGRATION +
+        "（放宽 tool 的 CHECK 约束），再重试。",
+      code: "tool_constraint",
+    },
+    { status: 409 },
+  );
+}
 
 /** 把一条外来记录规整成可写入的行（日期走与 feedback 同一个解析器） */
 function normalizeHistoryItem(raw: Record<string, unknown>) {
@@ -204,21 +232,34 @@ export async function POST(request: NextRequest) {
       //    2026-10 第一次跑就撞上了：白名单加了 math-plan，但迁移 0016 还没在线上执行，
       //    于是前端只看到一句「操作失败，请稍后重试」——完全没法定位。
       //    归属工具的合法值**唯一来源是迁移文件**，接口这边只能替它报错。
-      const msg = e instanceof Error ? e.message : String(e);
-      if (/feedback_history_tool_check|check_violation|23514/.test(msg)) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error:
-              "数据库还不接受这个归属工具：请先在 Supabase SQL Editor 执行迁移 " +
-              "supabase/migrations/0016_history_tool_allow_math_plan.sql（放宽 tool 的 CHECK 约束），再重试。",
-            code: "tool_constraint",
-          },
-          { status: 409 },
-        );
-      }
+      if (isToolConstraintError(e)) return toolConstraintResponse();
       return dbError("导入记录", e);
     }
+  }
+
+  // ---------------- 手动补录一条成绩（第十四批） ----------------
+  // 校验与规整在 `src/lib/manual-score.ts`（纯函数，测试直接 import 它逐条钉）；
+  // 这里只负责"守卫 → 校验 → 写库 → 把撞约束翻译成能照着做的提示"。
+  if (body.op === "manual") {
+    const checked = normalizeManualScore(body);
+    if (!checked.ok) {
+      return NextResponse.json({ ok: false, error: checked.error }, { status: 400 });
+    }
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("feedback_history")
+      .insert(checked.row)
+      .select("id")
+      .single();
+    if (error) {
+      if (isToolConstraintError(error)) return toolConstraintResponse();
+      console.error("[students] 手动补录失败:", error.code, error.message);
+      return NextResponse.json({ ok: false, error: "保存失败，请稍后重试。" }, { status: 500 });
+    }
+    // ⚠️ 必须清历史缓存：档案页与三个工具读的是同一份进程内缓存（TTL 25 秒），
+    //    不清的话会出现"刚保存成功、刷新却看不到"（本项目反复踩过的症状）。
+    invalidateHistory();
+    return NextResponse.json({ ok: true, id: data?.id ?? null, row: checked.row });
   }
 
   // ---------------- upsert 一位学生档案（合并语义） ----------------

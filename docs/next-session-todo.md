@@ -1,15 +1,17 @@
 # 下个会话待办
 
-> **当前状态一句话**（2026-10 第十三批结束时）：
-> 全站 **33 个测试套件 / 1047 项断言全绿**；最近三批上线了 **🏢 公司模板导出（附件1/2）**、
-> **一键开关（三种关法）**、**⚙️ 通用功能开关搬到管理后台**（`/admin`，新表 `feature_flags`）。
-> 红线一直守着：这些全是**新增模块**，现有生成逻辑一行没改。
+> **当前状态一句话**（2026-10 第十五批结束时）：
+> 全站 **35 个 `*.test.mjs` 套件**（+ `verify-checklist.mjs` 共 36 套）全绿，明细见第八节；
+> 最近五批上线了 **🔑 忘记密码 / 修改密码**、**📝 学员档案手动补录成绩**（`tool='manual'` + 迁移 `0019`）、
+> **⚙️ 通用功能开关搬到管理后台**（新表 `feature_flags`）、**🏢 公司模板导出（附件1/2）**、
+> **一键开关（三种关法）**。公司模板导出的**附件3 已按用户 2026-10 的决定暂停**（见下面 1b 表 b 行）。
 >
-> 更新时间：**2026-10（第十三批：管理后台功能开关）**。本文件只放**还没做的**；
+> 更新时间：**2026-10（第十四批：学员档案手动补录成绩）**。本文件只放**还没做的**；
 > 已完成的全部在 `docs/project-overview.md` §十「✅ 最近已完成」（有细节、测试数与变异自证结论）。
 >
 > 配套阅读：`docs/project-overview.md`（现状总入口）、`docs/dsh-work-guide.md`（怎么配合 + 踩过的坑）、
-> `docs/perf-notes.md`（性能记录）、`docs/company-export-plan.md`（公司模板导出方案与后台开关）。
+> `docs/perf-notes.md`（性能记录）、`docs/manual-score-plan.md`（第十四批的完整方案与实做记录）、
+> `docs/company-export-plan.md`（公司模板导出方案与后台开关）。
 > 每条都写了「为什么」和「怎么验」，**不要只照标题做**。
 
 **图例**：🔴 真隐患 / 该优先做 · 🟠 待你实测验收（功能已上线，但**真实效果**还没验过）·
@@ -37,15 +39,22 @@
 
 ### 1b. ✅ 已拍板 / ⏳ 等触发的事
 
-> 🔴 **需要你在 Supabase 做一次**：执行 **`supabase/migrations/0018_feature_flags.sql`**
-> （管理后台「功能开关」用的那张表）。**不执行也安全** —— 所有功能保持开启，后台会明确提示
-> "表还没建 + 要跑这个迁移"；执行之后 `tests/admin-feature-flags.test.mjs` 会自动从"分支 A"
-> 切到"分支 B"（真正测开关的关/开、以及工具页参数是否拼上）。
+> 🔴 **需要你在 Supabase 做一次（3 件，都是点几下）**：
+> 1. ~~**执行 `supabase/migrations/0018_feature_flags.sql`**~~ —— ✅ **用户 2026-10 已执行**
+>    （实测：`admin-feature-flags` 已走**分支 B**，18/18 全绿，真测"关掉/打开"生效）。
+> 2. ~~**执行 `supabase/migrations/0019_history_tool_allow_manual.sql`**~~ —— ✅ **用户 2026-10 已执行**
+>    （实测：`manual-score` 已走**分支 B**，**45/45 全绿**，含"保存 → 读回 → 进趋势 → 删除"
+>    与真浏览器整条链路）。
+> 3. **还没做：Authentication → URL Configuration → Redirect URLs 里加两条**（**第十五批**，忘记密码要用）：
+>    `https://010034.xyz/auth/confirm` 与 `http://localhost:3000/auth/confirm`。
+>    **不加的话重置邮件发不出去**（Supabase 拒绝跳到白名单外的地址）。
+>    另外**上线后请自己点一遍**"修改密码"和"忘记密码"各一次 —— 自动测试**故意没有真改密码**
+>    （怕把共享测试账号留在未知密码上，导致后续所有套件一起红）。详见 `docs/password-reset-plan.md`。
 
 | # | 事项 | 状态 |
 |---|---|---|
 | a | **附件2「题目」列要不要改成读题干** | ✅ **用户 2026-10 已定：先不做（列为"等触发"）**。理由：**学科网报告里根本没有题干**（只有题号/知识点/难度/细目表）⇒ 对主力路径**零收益**；而"抄错题干"会把错的原文写进**要交公司**的表，风险高于"题目列与考点列重复"。<br>**触发条件**（满足再谈）：出现明确的"拍整张卷子导入"使用场景，或用户主动提出。成本约 **+0.003–0.006 元/页**（每题多 30–60 字输出）。完整评估见 `docs/company-export-plan.md` §6 |
-| b | **公司模板导出 · 附件3 的接线** | ✅ **用户 2026-10 已定：下一批做**（先等用户用 Word 核对附件1/2 的格式）。附件3 的**模板与引擎本期已就绪**，缺的是 **math-plan 侧**的数据组装 + 按钮，约半天 |
+| b | **公司模板导出 · 附件3 的接线** | 🅿️ **2026-10 第十四批：用户改口"先不做附件三了"**（原定"下一批做"）。方案已写好并留档：`docs/company-attachment3-plan.md`（逐格数据来源 + 两个待拍板项 + 验收口径）。**恢复条件**：用户主动说要，或他先用 Word 核对完附件1/2 的排版后再说 |
 | c | **附件1 要不要一期就上** | ✅ **用户 2026-10 已拍板：一期就上**（即当前行为：格式框架 + 抬头已填，**六段归因/措施由老师手写**）。二期若要省手写，再考虑 AI 出草稿（属新功能，另开） |
 | d | **过程列二期怎么做**（三次课后/阶段总结/效果评估） | ⏳ 结论已记进文档：这几段**跟着"这一份方案"走、不跟学生走** ⇒ 二期记录要**挂在那份方案的 history 记录上**（入口：档案详情页「辅导方案记录」旁），**不是存在学生身上**；**届时需要动表结构 ⇒ 先问用户，别自己跑 SQL** |
 
@@ -137,7 +146,9 @@
   `middleware-cache`、`math-plan-students`、`date-input`、`paper-analysis-students`、
   `archive-students`、`vision-scores`（起两次服务）、`student-analysis`（桩 4588）、
   `paper-attribution-polish`（桩 4589 + Edge 9491）、`vision-paper`（起两次服务，桩 4590 + Edge 9492）、
-  `school-paper`（桩 4591 + Edge 9494）、**`company-export`（起服务 + Edge 9495；自带 python 校验）**、**`admin-feature-flags`（起服务 + Edge 9496）**。
+  `school-paper`（桩 4591 + Edge 9494）、**`company-export`（起服务 + Edge 9495；自带 python 校验）**、**`admin-feature-flags`（起服务 + Edge 9496）**、
+  **`manual-score`（起服务 + Edge 9497；第十四批新增，会自动适配迁移 0019 跑没跑）**、
+  **`password-flows`（起服务 + Edge 9498；第十五批新增：忘记密码/修改密码）**。
   （`student-report` **不需要服务**：纯函数 + 直接 import `.ts`，秒级跑完。）
 - 需要外部服务的 6 套 + 自带服务的 1 套已固化成脚本（会先等 3000 空出来）：
   ```powershell
@@ -177,35 +188,54 @@
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
 
-**全套回归现状（2026-10 第十三批实测，33 个套件全绿 ✅，合计 1047 项断言）**：
+**全套回归现状（2026-10 第十五批实测：35 个 `*.test.mjs` + `verify-checklist.mjs` = 36 套，全绿 ✅）**：
+
+- **全部 36 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1159 项断言**
+  （⚠️ 上一行那套 `manual-score` 在本清单里记的是**分支 B 的 45 项** ——
+  因为用户 2026-10 已经跑过迁移 `0019`，现在跑就是走分支 B）：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
 math-plan-ai-apply 20/20   math-plan-ai-sections 26/26  math-plan-ai-vip-path 18/18
-math-plan-export-ui 18/18  middleware-cache 13/13    verify-checklist 18/18
-step7-api 39/39            step7-ui 36/36            ai-thinking-mode 11/11
-paper-analysis 56/56       paper-regression 23/23    paper-score-edit 59/59
-paper-score-report 15/15   paper-score-ui 36/36      paper-preset 18/18
+math-plan-export-ui 18/18  middleware-cache 13/13     verify-checklist 18/18
+step7-api 39/39            step7-ui 36/36             ai-thinking-mode 11/11
+paper-analysis 56/56       paper-regression 23/23     paper-score-edit 59/59
+paper-score-report 15/15   paper-score-ui 36/36       paper-preset 18/18
 paper-analysis-students 27/27
 paper-attribution-polish 35/35
 vision-paper 31/31
-school-paper 43/43feedback-data-cache 26/26  feedback-client-cache 51/51
-students-unified 81/81     date-input 15/15          admin-grant90 18/18
+school-paper 43/43
+feedback-data-cache 26/26  feedback-client-cache 51/51
+students-unified 81/81     date-input 15/15           admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
-student-report 37/37       student-analysis 21/21
-company-export 49/49
+manual-score 45/45         student-report 45/45       password-flows 32/32
+student-analysis 21/21     company-export 49/49
 admin-feature-flags 10/10
 ```
+
+> ⚠️ **本轮的两个新认识（都写进实际文档了）**：
+> 1. **`student-report` 实际是 45 项**（旧文档写 37，是"加断言时忘了改"的漂移）——
+>    这正是坑 1 说的那类问题：**以实跑为准，别照抄旧表**；
+> 2. **`_run-ui-suites.mjs` 的清单已经落后**：它只列了 6 套需要外部服务的 + `ai-thinking-mode`，
+>    而"自己起服务"的套件早就有 28 套（见上一节）。**要跑全套就得按那串名单一套一套来**，
+>    别以为跑完那个脚本就等于全套回归。
 
 > ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。第一批实测时就发现旧表有几处**过期或漏项**：
 > `math-plan-students` 实际是 **37**（旧表写 29）、`students-unified` 曾经写 62 而实际 64，
 > 而且**整个 `archive-students`（17 项）被漏掉了**。这正是 `dsh-work-guide.md` 坑 1 说的那类问题。
 >
-> 变化说明（最近两批，更早的见 `project-overview.md` §十）：
+> 变化说明（最近三批，更早的见 `project-overview.md` §十）：
+> · **第十五批**：新增 `password-flows`（**32 项**：纯函数密码规则 + 静态契约 + 真 HTTP + 真浏览器）；
+>   `manual-score` 32 → **45 项**（✅ 用户跑完迁移 `0019` 后**分支 B 实测 45/45**；
+>   顺手修掉两条**假红断言**：趋势那行原来用"页面里有没有 `105/150` 字符串"来判，
+>   而页面渲染是 `105` 与 ` / 150` 两段 ⇒ 改成从 HTML 里**抠表格行**核对）；
+>   `student-report` → **45**。
+> · **第十四批**：新增 `manual-score`（**32 项**，迁移 0019 跑过后 37）；
+>   `student-report` 37 → **45**（「手动补录」组 + 契约；**旧值 37 本身就是漂移**）。
+>   ⚠️ 那一轮跑了**全套**：回归中途我曾误起带服务的套件杀了 3000，把 `students-unified` 弄红一次
+>   —— 重跑 81/81 干净；教训见 `dsh-work-guide.md` 坑 16。
 > · **第九批**：`school-paper` 36 → **43**（用户实测报的两个 bug 的防回归：两个面板要展开、
 >   AI 估难度后「容易题满分」要把较易的题置回满分；外加"难度必须落成数字系数 0.85"的根因断言）。
-> · **第十批**：`paper-attribution-polish` 23 → **35**（报告头「✨ AI 润色」合并成一次点完两部分：
->   上游被调 2 次 / 失败那步重试一次 / 只成功一半时保留另一部分 / 非会员一次都不调）。
-> ⚠️ 那条合并**必须串行**——两个函数都是"读整篇→改自己→整篇写回"，并行会互相覆盖
-> （变异测试验过：改并行 → 33/35，红的正是"两部分都润色"）。
-> 第二～十批都用**变异测试**自证过断言真会红。
+> ⚠️ `paper-attribution-polish` 那条合并**必须串行**——两个函数都是"读整篇→改自己→整篇写回"，
+> 并行会互相覆盖（变异测试验过：改并行 → 33/35，红的正是"两部分都润色"）。
+> 第二～十五批都用**变异测试**自证过断言真会红。

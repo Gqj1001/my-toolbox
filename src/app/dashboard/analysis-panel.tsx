@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 type Props = {
@@ -25,6 +26,7 @@ type Props = {
  *    所以这里刻意先取 `j.report` 再判成功与否：**不能让用户白花一次 AI 调用**。
  */
 export default function AnalysisPanel({ name, isVip, hasRecords }: Props) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -50,6 +52,9 @@ export default function AnalysisPanel({ name, isVip, hasRecords }: Props) {
             ? `已生成并存入档案（${j.title ?? ""}）`
             : "已生成。档案里已有一份同名记录，本次没有重复保存。",
         });
+        // ⚠️ 存进去了就要刷新：记录列表是**服务端**渲染的，不刷新老师看不到那条新记录
+        //    （会以为"生成了但没存上"）。与手动补录成功后同一个做法。
+        if (j.saved) router.refresh();
       } else {
         setMsg({ kind: "err", text: j?.error || `生成失败（HTTP ${r.status}）` });
       }

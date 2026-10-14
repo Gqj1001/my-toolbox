@@ -31,6 +31,7 @@ process.on("warning", () => { /* 有意静音：见上 */ });
 
 const {
   ANALYSIS_TOOL,
+  SOURCE_TOOLS,
   TOOL_LABELS,
   buildStudentReport,
   extractPaperWeakness,
@@ -126,8 +127,12 @@ const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subje
   record("概览：统计条数**排除**学情报告自己（5 条 → 4 条），并单独计数",
     r.overview.total === 4 && r.overview.excludedReports === 1,
     `total=${r.overview.total} excluded=${r.overview.excludedReports}`);
-  record("概览：byTool 三类都有、条数对，时间跨度按日期算",
-    r.overview.byTool.length === 3 &&
+  // ⚠️ 这里**不要写死条数**（本项目踩过：写死 3 类，加第 4 类就假红）。
+  //    改成"每个出现的来源都必须是登记过的、且都有中文标签" —— 那才是真正要守的契约：
+  //    「登记漏了（比如把 manual 只加进 TOOL_LABELS 却忘了 SOURCE_TOOLS）」会立刻变红。
+  record("概览：byTool 每一条都在 SOURCE_TOOLS 登记过、都有中文标签，条数与时间跨度对",
+    r.overview.byTool.length > 0 &&
+      r.overview.byTool.every((b) => SOURCE_TOOLS.includes(b.tool) && typeof TOOL_LABELS[b.tool] === "string") &&
       JSON.stringify(r.overview.byTool.map((b) => [b.tool, b.count])) ===
         JSON.stringify([["math-plan", 1], ["paper", 2], ["feedback", 1]]) &&
       r.overview.firstDate === "2026-09-01" && r.overview.lastDate === "2026-10-25" &&
@@ -167,6 +172,49 @@ const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subje
 
   record("notes：如实说明排除了 N 份历史学情报告",
     r.notes.some((n) => n.includes("排除") && n.includes("1 份")), JSON.stringify(r.notes));
+}
+
+/* ==========================================================================
+   2b. 手动补录的成绩（2026-10 第十四批）
+   --------------------------------------------------------------------------
+   老师在**别的地方**考的试（学校期中、别家机构模考）也记进档案。
+   它在库里的形状是一条 tool='manual' 的普通记录，所以：
+     · **必须**进成绩趋势与记录概览（这是这个功能存在的理由）；
+     · **不许**变成「薄弱与失分」的证据 —— 手动记录只有分数、没有诊断正文，
+       编一条出来就是"拿不存在的观察去跟家长说"。
+   ========================================================================== */
+{
+  const rows = [
+    ROW({ id: 9, tool: "paper", date: "2026-09-01", title: "开学考", score: 60, full_score: 100,
+      text: "……核心薄弱板块集中在以下 1 处：导数单调性。" }),
+    ROW({ id: 10, tool: "manual", type_name: "期中", date: "2026-10-08", title: "学校期中考试",
+      score: 105, full_score: 150,
+      text: "手动补录 · 由老师在档案页填写\n考试名称：学校期中考试\n得分：105 / 满分：150" }),
+  ];
+  const r = buildStudentReport({ name: "孙七", student: STUDENT, rows });
+
+  record("★手动补录：出现在成绩趋势里，得分率算对（105/150 = 70%），并按日期排到第二位",
+    r.scores.length === 2 && r.scores[1].title === "学校期中考试" &&
+      r.scores[1].tool === "manual" && r.scores[1].percent === 70,
+    JSON.stringify(r.scores));
+
+  record("★手动补录：趋势把它算进去（60% → 70%，+10 个百分点）",
+    r.trend?.count === 2 && r.trend.delta === 10 && r.trend.lastPercent === 70,
+    JSON.stringify(r.trend));
+
+  record("★手动补录：进「记录概览」的按工具统计（标签是「手动补录」）",
+    JSON.stringify(r.overview.byTool.map((b) => [b.tool, b.count])) ===
+      JSON.stringify([["paper", 1], ["manual", 1]]) &&
+      r.overview.byTool.find((b) => b.tool === "manual")?.label === "手动补录",
+    JSON.stringify(r.overview.byTool));
+
+  record("★手动补录：**不许**被当成薄弱/失分证据（它没有诊断正文）",
+    !r.weaknesses.some((w) => w.tool === "manual") && r.weaknesses.length === 1,
+    JSON.stringify(r.weaknesses.map((w) => [w.tool, w.label])));
+
+  record("★手动补录：喂给 AI 的摘要里带着它（「AI 分析学期时也考虑在内」的证据）",
+    r.digest.includes("学校期中考试") && r.digest.includes("105/150"),
+    r.digest.includes("学校期中考试") ? "在" : "不在");
 }
 
 /* ==========================================================================
@@ -245,9 +293,15 @@ const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subje
    所以这里直接读文件比对，任何一处漏改都会红。 */
 {
   record("契约：ANALYSIS_TOOL 常量就是 'analysis'", ANALYSIS_TOOL === "analysis", ANALYSIS_TOOL);
-  record("契约：TOOL_LABELS 覆盖四个归属（含学情报告）",
-    ["math-plan", "paper", "feedback", "analysis"].every((t) => typeof TOOL_LABELS[t] === "string"),
+  record("契约：TOOL_LABELS 覆盖全部登记来源（含学情报告与手动补录）",
+    ["math-plan", "paper", "feedback", "analysis", "manual"].every((t) => typeof TOOL_LABELS[t] === "string"),
     JSON.stringify(TOOL_LABELS));
+  record("★契约：每一条 SOURCE_TOOLS 都有中文标签（只加进一处 = 概览里显示成英文 key）",
+    SOURCE_TOOLS.every((t) => typeof TOOL_LABELS[t] === "string"),
+    `SOURCE_TOOLS=${JSON.stringify(SOURCE_TOOLS)}`);
+  record("★契约：手动补录（manual）已登记为一种来源（否则老师补的成绩不进概览）",
+    SOURCE_TOOLS.includes("manual") && TOOL_LABELS.manual === "手动补录",
+    `SOURCE_TOOLS=${JSON.stringify(SOURCE_TOOLS)} label=${TOOL_LABELS.manual}`);
 
   // ① 迁移里最后一条 feedback_history_tool_check 的取值集合
   const migDir = join(ROOT, "supabase", "migrations");
@@ -271,6 +325,16 @@ const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subje
   record("★契约：两边都包含 analysis（学情报告会以它落库）",
     !!dbTools && !!codeTools && dbTools.includes(ANALYSIS_TOOL) && codeTools.includes(ANALYSIS_TOOL),
     `库=[${dbTools}] 代码=[${codeTools}]`);
+
+  // ③ 撞约束时的提示里点名的那个迁移文件，必须**就是上面最后一条**定义 CHECK 的迁移。
+  //    ⚠️ 以前路由里写死 `0016`，于是 0017 之后照着提示跑迁移也解决不了问题（第十四批修）。
+  //    现在常量在 `src/lib/manual-score.ts`（唯一来源），两个路由都从那里取。
+  const msSrc = readFileSync(join(ROOT, "src", "lib", "manual-score.ts"), "utf8");
+  const cm = msSrc.match(/TOOL_CONSTRAINT_MIGRATION\s*=\s*"([^"]+)"/);
+  const namedMigration = cm ? cm[1] : null;
+  record("★契约：撞约束时点名的迁移 == 最后一条定义 CHECK 的迁移（写死旧文件名会误导老师）",
+    !!namedMigration && namedMigration.endsWith(dbFile),
+    `提示里写=[${namedMigration}] 实际最新=[${dbFile}]`);
 }
 
 process.exit(summary() ? 0 : 1);

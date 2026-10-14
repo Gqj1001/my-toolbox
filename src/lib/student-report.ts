@@ -28,6 +28,7 @@ export const TOOL_LABELS: Record<string, string> = {
   "math-plan": "辅导方案",
   paper: "试卷分析",
   feedback: "课后反馈",
+  manual: "手动补录",
   analysis: "学情报告",
 };
 
@@ -37,8 +38,14 @@ export const TOOL_LABELS: Record<string, string> = {
  *     · `src/app/api/students/route.ts` 的 `ALLOWED_TOOLS` */
 export const ANALYSIS_TOOL = "analysis";
 
-/** 参与统计的工具（**不含 `analysis`**）—— 报告不能拿自己当输入，否则会越滚越离谱 */
-const SOURCE_TOOLS = ["math-plan", "paper", "feedback"] as const;
+/** 参与统计的工具（**不含 `analysis`**）—— 报告不能拿自己当输入，否则会越滚越离谱。
+ *
+ *  ⚠️ `manual` 是 2026-10 第十四批加进来的（老师在学员档案页**手动补录**的成绩）：
+ *     它只贡献**分数与趋势**（`scores` 那段本来就扫全部带 score 的记录，不挑工具），
+ *     **不**参与「薄弱与失分」的抽取（手动记录没有诊断正文，编不出来也不该编）。
+ *     ⚠️ 只登记在 `TOOL_LABELS` 里、忘了加到这里的话，「记录概览」里就看不到它
+ *     （统计条数照常包含它）—— `tests/student-report.test.mjs` 有断言钉住"登记与展示一致"。 */
+export const SOURCE_TOOLS = ["math-plan", "paper", "feedback", "manual"] as const;
 
 export type ReportInput = {
   name: string;

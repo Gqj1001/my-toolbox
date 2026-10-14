@@ -1,6 +1,8 @@
 import Link from "next/link";
 import NewStudentForm from "@/components/archive-new-student";
 import StudentEditor from "@/components/archive-student-editor";
+import ManualScoreForm from "@/components/manual-score-form";
+import RecordDeleteButton from "@/components/record-delete-button";
 import SiteHeader from "@/components/site-header";
 import AnalysisPanel from "./analysis-panel";
 import AnalysisSummary from "./analysis-summary";
@@ -18,10 +20,12 @@ const TOOL_META: Record<string, { label: string; badge: string }> = {
   "math-plan": { label: TOOL_LABELS["math-plan"], badge: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" },
   paper: { label: TOOL_LABELS.paper, badge: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300" },
   feedback: { label: TOOL_LABELS.feedback, badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
+  // ★ 第十四批：老师**手动补录**的成绩（在别处考的试）也是档案里的一类记录
+  manual: { label: TOOL_LABELS.manual, badge: "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" },
   // ★ 第三批：学情分析生成的 AI 报告也以一条记录的形式存在档案里（tool='analysis'）
   analysis: { label: TOOL_LABELS.analysis, badge: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" },
 };
-const TOOL_ORDER = ["math-plan", "paper", "feedback", "analysis"];
+const TOOL_ORDER = ["math-plan", "paper", "feedback", "manual", "analysis"];
 /** 认不出来的归属（将来加工具时会先出现这种）也要显示出来，不能静默丢掉 */
 function toolMeta(tool: string) {
   return TOOL_META[tool] ?? { label: tool || "未标归属", badge: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300" };
@@ -147,6 +151,10 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
             teacher={String(info.teacher ?? "")}
           />
 
+          {/* ★ 第十四批：手动补录成绩（在别处考的试也记进档案）。
+              保存成功后自己 router.refresh()，所以记录列表与下面的学情分析会立刻更新。 */}
+          <ManualScoreForm name={selected} />
+
           {/* ★ 第三批：学情分析 —— 统计部分所有人可见（服务端算好、不花 AI 钱），
               AI 报告是会员专属（`AnalysisPanel` 里的按钮）。 */}
           <AnalysisSummary report={report} />
@@ -172,9 +180,17 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
                           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                             {it.title || it.typeName || "（未填名称）"}
                           </span>
-                          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                            {it.date || "未填日期"}
-                            {it.score != null ? ` · ${it.score}${it.fullScore != null ? ` / ${it.fullScore}` : ""} 分` : ""}
+                          <span className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                            <span>
+                              {it.date || "未填日期"}
+                              {it.score != null ? ` · ${it.score}${it.fullScore != null ? ` / ${it.fullScore}` : ""} 分` : ""}
+                            </span>
+                            {/* ⭐ 第十四批：手动补录的记录由老师自己填，**填错要能撤** ——
+                                只给这一类记录一个删除按钮（其它记录由各自的工具管理）。
+                                走已有的 DELETE /api/students?id=…，只删这一条。 */}
+                            {g.tool === "manual" && it.id != null ? (
+                              <RecordDeleteButton id={it.id} title={it.title} />
+                            ) : null}
                           </span>
                         </div>
                         <details className="mt-1.5">
