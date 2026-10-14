@@ -125,6 +125,82 @@ const { checkNewPassword, MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } = await imp
     /name="reset"\s+value="1"/.test(resetFormSrc),
     "隐藏字段在");
 
+  /* ------------------------------------------------------------------------
+     ⚠️ 本节是**第十六批修的 bug 的防回归**（用户实测报的）：
+     症状：点邮件里的重置链接 → 落到**登录界面**，根本没法重置密码。
+     根因：Supabase 现在把会话放在跳转地址的 **`#` 片段**里
+          （`…/auth/confirm?next=/reset-password#access_token=…`），而 `#` **不发给服务器**；
+          原来那个"服务端路由 /auth/confirm"只读 `?token_hash=` ⇒ 永远读不到会话 ⇒ 跳登录页。
+     修法：换成**客户端**回调页（浏览器能读 `#`，并且浏览器端 client 会把会话落成 Cookie）。
+     ⇒ 这里用静态契约钉住"回调页确实是客户端在干活"，真行为由下面的真浏览器那一段验。
+     ------------------------------------------------------------------------ */
+  const confirmPageSrc = readFileSync("D:/my-website/my-toolbox/src/app/auth/confirm/page.tsx", "utf8");
+  const confirmClientSrc = readFileSync("D:/my-website/my-toolbox/src/components/auth-confirm-client.tsx", "utf8");
+  const callbackLibSrc = readFileSync("D:/my-website/my-toolbox/src/lib/auth-callback.ts", "utf8");
+  let oldRouteExists = true;
+  try { readFileSync("D:/my-website/my-toolbox/src/app/auth/confirm/route.ts", "utf8"); } catch { oldRouteExists = false; }
+
+  record("★契约：/auth/confirm 是**客户端**回调（旧的只会读 ?token_hash 的服务端路由已删除）",
+    /AuthConfirmClient/.test(confirmPageSrc) && oldRouteExists === false,
+    `page=客户端 old-route.ts 存在=${oldRouteExists}`);
+
+  record("★契约：回调必须读 **URL 片段**（hash）并把会话写进 Cookie（setSession / exchangeCodeForSession / verifyOtp 三条都要在）",
+    /location\.hash/.test(confirmClientSrc) &&
+      /setSession\(/.test(confirmClientSrc) &&
+      /exchangeCodeForSession\(/.test(confirmClientSrc) &&
+      /verifyOtp\(/.test(confirmClientSrc) &&
+      /createClient\(\)/.test(confirmClientSrc),
+    "hash + 三条换会话路径都在");
+
+  record("★契约：链接失效/过期时给出**中文出路**（别甩上游错误原文、别停在空白页）",
+    /已失效|已过期|无效或已经用过/.test(callbackLibSrc) &&
+      /重新申请一封重置邮件/.test(callbackLibSrc) &&
+      /error_code/.test(callbackLibSrc),
+    "错误分支有中文提示");
+
+  // eslint-disable-next-line no-new-func
+  const { parseAuthCallback, hasSessionPayload, authCallbackMessage, safeNextPath } =
+    await import("../src/lib/auth-callback.ts");
+
+  record("① 解析：片段的会话 + 查询串的 next 都要拿到（这正是被修的那个形状）",
+    (() => {
+      const url = "https://010034.xyz/auth/confirm?next=/reset-password#access_token=AT&refresh_token=RT&type=recovery";
+      const p = parseAuthCallback(url, "#access_token=AT&refresh_token=RT&type=recovery");
+      return p.accessToken === "AT" && p.refreshToken === "RT" && p.type === "recovery" &&
+        p.next === "/reset-password" && hasSessionPayload(p) === true;
+    })(),
+    "片段 + 查询串都解析出来了");
+
+  record("① 解析：`#error=access_denied&error_code=otp_expired` → 判为失败并说清「重新申请」",
+    (() => {
+      const hash = "#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid";
+      const p = parseAuthCallback("https://010034.xyz/auth/confirm?next=/reset-password", hash);
+      const m = authCallbackMessage(p);
+      return m.ok === false && /重新申请一封重置邮件/.test(m.text) && /失效|过期/.test(m.text);
+    })(),
+    "过期链接有出路");
+
+  record("① 解析：直接打开（既没会话也没错误）→ 明说「要从邮件链接进」",
+    (() => {
+      const p = parseAuthCallback("https://010034.xyz/auth/confirm", "");
+      return hasSessionPayload(p) === false && authCallbackMessage(p).ok === false &&
+        /邮件里的链接/.test(authCallbackMessage(p).text);
+    })(),
+    "空访问也有提示");
+
+  record("① 解析：PKCE 的 ?code= 与旧式 ?token_hash=&type= 都要认",
+    (() => {
+      const a = parseAuthCallback("https://x/auth/confirm?code=abc&next=/reset-password", "");
+      const b = parseAuthCallback("https://x/auth/confirm?token_hash=th&type=recovery", "");
+      return a.code === "abc" && hasSessionPayload(a) && b.tokenHash === "th" && b.type === "recovery" && hasSessionPayload(b);
+    })(),
+    "两条旧路径都认");
+
+  record("★① 解析：`next` 只认站内路径（挡住开放重定向）",
+    safeNextPath("//evil.com") === "/" && safeNextPath("https://evil.com") === "/" &&
+      safeNextPath("/reset-password") === "/reset-password" && safeNextPath(null) === "/",
+    "站外一律回 /");
+
   const proxySrc = readFileSync("D:/my-website/my-toolbox/src/proxy.ts", "utf8");
   record("★契约：/forgot-password 是公开路径；/reset-password **故意不是**",
     /PUBLIC_PATHS = \["\/login", "\/signup", "\/forgot-password", "\/auth"\]/.test(proxySrc) &&
@@ -237,6 +313,50 @@ try {
 
   record("④（准备）在浏览器里登录", await login(adminEmail, password));
   await goto("/account/password", 3500);
+
+  /* ------------------------------------------------------------------------
+     ④-0 ★ 被修的那个 bug 的**真行为**验证：把真会话放进 `#` 片段打开 /auth/confirm，
+     必须换成 Cookie 并跳到 `?next=` 指定的页面（而不是停在原地或弹回登录页）。
+     ------------------------------------------------------------------------ */
+  // 拿一份**真会话**（和 Supabase 邮件的 verify 端点跳回来时带的那份同样形状）
+  const supaUrl = readEnv().SUPABASE_URL;
+  const supaKey = readEnv().ANON_KEY;
+  const sess = await (await fetch(`${supaUrl}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: supaKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: adminEmail, password }),
+  })).json();
+
+  if (!sess?.access_token) {
+    record("④-0（准备）拿到一份真会话用于片段测试", false, "登录接口没返回 access_token");
+  } else {
+    const ref = new URL(supaUrl).hostname.split(".")[0];
+    // 先清掉浏览器里已有的会话 cookie，避免"本来就有会话"污染这一步
+    await cdp.send("Network.clearBrowserCookies", {}, sessionId);
+    const hash = `#access_token=${sess.access_token}&refresh_token=${sess.refresh_token}&type=recovery&expires_in=3600`;
+    await cdp.send("Page.navigate", { url: `${BASE}/auth/confirm?next=/reset-password${hash}` }, sessionId);
+    // 等它自己跳走（客户端换会话 → location.replace）
+    let landed = "";
+    for (let i = 0; i < 40; i++) {
+      await sleep(500);
+      landed = String(await ev("location.pathname"));
+      if (landed && landed !== "/auth/confirm") break;
+    }
+    record("④-0 ★片段里的会话被认下来，并跳到 /reset-password（这正是原来坏掉的那一跳）",
+      landed === "/reset-password", `落点=${landed || "(没跳走)"}`);
+
+    const pageText = String(await ev("document.body.innerText"));
+    const hasForm = !!(await ev(`!!document.querySelector('form [name="password"]')`));
+    const noOld = !(await ev(`!!document.querySelector('[name="oldPassword"]')`));
+    record("④-0 重置页真的可用：有新密码表单、且没有「当前密码」那一栏",
+      hasForm && noOld && /设置新密码/.test(pageText),
+      `表单=${hasForm} 无旧密码栏=${noOld}`);
+
+    // 清掉这次为测试建立的会话，别影响后面的步骤
+    await cdp.send("Network.clearBrowserCookies", {}, sessionId);
+    await login(adminEmail, password);
+    await goto("/account/password", 3500);
+  }
 
   let formReady = false;
   for (let i = 0; i < 30; i++) {

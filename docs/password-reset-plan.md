@@ -112,7 +112,67 @@ http://localhost:3000/auth/confirm
 > 而不是"这句代码无所谓"。这次补的是"直接对动作源码下契约"——因为动作本身要连 Supabase，
 > 纯函数测不到它有没有把参数传下去。
 
-## 5. 没做 / 刻意不做（记在这里）
+## 5. ⚠️ 上线后实测报的 bug 与修法（第十六批）
+
+用户配好 Redirect URLs 之后实测，**点邮件里的重置链接落到的是登录界面**，根本没法重置密码。
+
+### 5.1 根因（实测抓到的形状）
+
+Supabase 现在把**会话或错误放在跳转地址的 `#` 片段**里：
+
+```
+https://jmyo….supabase.co/auth/v1/verify?token=pkce_…&type=recovery&redirect_to=…
+   ↓ 303
+https://010034.xyz/auth/confirm?next=/reset-password#access_token=…&refresh_token=…&type=recovery
+或（链接过期/已用过）
+https://010034.xyz/auth/confirm?next=/reset-password#error=access_denied&error_code=otp_expired&…
+```
+
+而 **`#` 后面的东西永远不会发给服务器**。我们原来那个 `/auth/confirm` 是
+**服务端路由（`route.ts`）**，只能读 `?token_hash=` / `?code=` ⇒ **什么都读不到** ⇒
+一律走到"链接无效"分支 ⇒ 跳 `/login`。**症状就是"点重置链接看到登录页"。**
+
+> 实测证据（本地桩）：拿一个坏 token 打 Supabase 的 verify 端点，回来的
+> `Location` 正是 `…/auth/confirm?next=/reset-password#error=access_denied&error_code=otp_expired&…`
+> —— 错误在 `#` 里，服务端看不见。
+> 顺带确认：**`?next=/reset-password` 在查询串里被完整保住了**（因为那是我们自己拼进去的参数）。
+
+### 5.2 修法
+
+把 `/auth/confirm` **从服务端路由改成客户端页**：
+
+| 件 | 说明 |
+|---|---|
+| `src/app/auth/confirm/page.tsx` | 壳（服务端组件，只渲染客户端组件） |
+| `src/components/auth-confirm-client.tsx` | **浏览器端**读 `location.hash`，按四条路换会话：`setSession`（片段的会话）/ `exchangeCodeForSession`（`?code=`）/ `verifyOtp`（旧式 `?token_hash=&type=`）/ 报错分支；成功后 `location.replace(next)` |
+| `src/lib/auth-callback.ts` | **纯函数**：解析回调参数 + 判断"有没有可换会话的东西" + 把 `error_code` 翻成中文出路 + `next` 只认站内路径 |
+| ~~`src/app/auth/confirm/route.ts`~~ | **已删除**（它就是看不到 `#` 的那条路） |
+
+三条关键点：
+
+1. **会话必须由浏览器端 Supabase client 落成 Cookie**（`@supabase/ssr` 的
+   `createBrowserClient` 就是 cookie 存储）—— 否则跳过去中间件还是看不到会话，又被弹回登录页；
+2. **注册确认邮件也走同一个页面**（`signUp` 的 `emailRedirectTo` 也是 `/auth/confirm`），
+   它同样是 `#access_token=…` 的形状，所以两条邮件**一套代码**；
+3. 失败时**必须给出口**：页面显示中文说明后 1.5 秒跳 `/login?error=…`
+   （"链接已失效，请重新申请一封重置邮件"），**绝不把上游英文错误原文甩给老师**。
+
+### 5.3 回归测试（防它再退化）
+
+`tests/password-flows.test.mjs`（**42 项**）里新增：
+
+- **静态契约**：`/auth/confirm` 必须是客户端回调、旧 `route.ts` 必须不存在、
+  三个换会话调用都在、错误文案里有中文出路；
+- **纯函数**：片段里的会话 + 查询串的 `next` 都要解析出来、`#error=…` 判为失败、
+  直接打开要明说"要从邮件链接进"、`?code=` 与 `?token_hash=` 都认、`next` 挡开放重定向；
+- **真浏览器（最关键）**：拿一份**真会话**放进 `#` 片段打开 `/auth/confirm?next=/reset-password`
+  → 断言它**真的跳到 `/reset-password`**、页面有"设置新密码"表单且**没有**"当前密码"那一栏。
+  （这条就是原来那个 bug 的直接防回归。）
+
+> ⚠️ 那次修完**顺手发现**：`next` 参数在**查询串**里、会话在**片段**里，
+> 所以解析必须**两边都看** —— 只看片段会丢 `next`（跳回首页），只看查询串会丢会话（跳登录页）。
+
+## 6. 没做 / 刻意不做（记在这里）
 
 - **不自己写 token 表**（见 §1）；
 - **不做"改密码后强制所有设备下线"**：Supabase 的改密码会让其它 refresh token 失效，

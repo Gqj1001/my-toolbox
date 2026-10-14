@@ -188,9 +188,9 @@
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
 
-**全套回归现状（2026-10 第十五批实测：35 个 `*.test.mjs` + `verify-checklist.mjs` = 36 套，全绿 ✅）**：
+**全套回归现状（2026-10 第十六批实测：35 个 `*.test.mjs` + `verify-checklist.mjs` = 36 套，全绿 ✅）**：
 
-- **全部 36 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1159 项断言**
+- **全部 36 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1156 项断言**
   （⚠️ 上一行那套 `manual-score` 在本清单里记的是**分支 B 的 45 项** ——
   因为用户 2026-10 已经跑过迁移 `0019`，现在跑就是走分支 B）：
 
@@ -208,9 +208,9 @@ school-paper 43/43
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15           admin-grant90 18/18
 archive-students 21/21     vision-scores 15/15
-manual-score 45/45         student-report 45/45       password-flows 32/32
+manual-score 45/45         student-report 45/45       password-flows 42/42
 student-analysis 21/21     company-export 49/49
-admin-feature-flags 10/10
+admin-feature-flags 18/18
 ```
 
 > ⚠️ **本轮的两个新认识（都写进实际文档了）**：
@@ -225,7 +225,15 @@ admin-feature-flags 10/10
 > 而且**整个 `archive-students`（17 项）被漏掉了**。这正是 `dsh-work-guide.md` 坑 1 说的那类问题。
 >
 > 变化说明（最近三批，更早的见 `project-overview.md` §十）：
-> · **第十五批**：新增 `password-flows`（**32 项**：纯函数密码规则 + 静态契约 + 真 HTTP + 真浏览器）；
+> · **第十六批（用户实测报的 bug）**：**邮件重置链接落到登录页** —— 根因是
+>   Supabase 把会话放在跳转地址的 **`#` 片段**里，而 `#` **不发给服务器**，
+>   原来那个服务端路由 `/auth/confirm` 只能读 `?token_hash=` ⇒ 永远读不到会话。
+>   已改成**客户端回调页**（`page.tsx` + `auth-confirm-client.tsx`，
+>   解析在纯函数 `lib/auth-callback.ts`，旧 `route.ts` 已删）。
+>   `password-flows` 32 → **42 项**：新增一条**真浏览器**断言
+>   （真会话放进片段 → 必须跳到 `/reset-password` 且表单可用）。
+>   顺带 `admin-feature-flags` 从 10 → **18 项**（0018 已执行，走分支 B：真测"关掉/打开"）。
+> · **第十五批**：新增 `password-flows`（**42 项**：纯函数 + 静态契约 + 真 HTTP + 真浏览器）；
 >   `manual-score` 32 → **45 项**（✅ 用户跑完迁移 `0019` 后**分支 B 实测 45/45**；
 >   顺手修掉两条**假红断言**：趋势那行原来用"页面里有没有 `105/150` 字符串"来判，
 >   而页面渲染是 `105` 与 ` / 150` 两段 ⇒ 改成从 HTML 里**抠表格行**核对）；

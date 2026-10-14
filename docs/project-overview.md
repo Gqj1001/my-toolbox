@@ -166,6 +166,14 @@
 - ⚠️ **要你在 Supabase 配一次**：Authentication → URL Configuration 的 **Redirect URLs**
   里加 `https://010034.xyz/auth/confirm` 与 `http://localhost:3000/auth/confirm`
   ——**不加的话重置邮件发不出去**（Supabase 拒绝跳到白名单外的地址）。详见 `docs/password-reset-plan.md` §3。
+- ⚠️ **邮件链接的会话在 URL 的 `#` 片段里（2026-10 第十六批修的 bug，务必记住）**：
+  Supabase 现在跳回来的是 `…/auth/confirm?next=/reset-password#access_token=…`，
+  而 **`#` 永远不会发给服务器**。所以 `/auth/confirm` **必须是客户端页**
+  （`src/app/auth/confirm/page.tsx` + `src/components/auth-confirm-client.tsx`，
+  解析在纯函数 `src/lib/auth-callback.ts`）—— 它原来是**服务端路由**，
+  只能读 `?token_hash=`，于是**什么都读不到 → 一律跳登录页**（症状：点重置链接看到登录界面）。
+  ⚠️ 失败时页面上会给中文出路再跳 `/login?error=…`，**不要把上游英文错误甩给老师**。
+  `tests/password-flows.test.mjs` 有一条**真浏览器**断言钉住这一跳（片段会话 → `/reset-password`）。
 - 报错中文翻译与密码规则各自**只有一个来源**：`src/lib/auth-errors.ts`、`src/lib/password-policy.ts`。
   （⚠️ 同步的纯函数**不能**放在 `"use server"` 文件里 —— 那种文件每个 export 都必须是 async，
   否则构建直接报 `Server Actions must be async functions`。）
@@ -272,7 +280,8 @@
 | 文档 | 管什么 |
 |---|---|
 | `docs/other-subjects-plan.md` | **全科适配要做哪些工作**的完整清单：哪些不用改、哪些必须改（题型分值差异最大）、五步走的路线（先从物理试点） |
-| **`docs/password-reset-plan.md`** | **忘记密码 / 修改密码**（第十五批）：为什么复用 Supabase 邮件重置、为什么改密码要验旧密码、重置流程为什么不要求旧密码、**要你在 Supabase 后台配的 Redirect URLs**、以及 3 条变异自证的结论 |
+| **`docs/password-reset-plan.md`** | **忘记密码 / 修改密码**（第十五～十六批）：为什么复用 Supabase 邮件重置、为什么改密码要验旧密码、重置流程为什么不要求旧密码、**要你在 Supabase 后台配的 Redirect URLs**、**§5 那个"点链接落到登录页"的 bug 与修法（`#` 片段不发给服务器）**、以及变异自证结论 |
+| **`docs/admin-page-notes.md`** | **管理后台的开发者备忘**（第十六批从页面上挪下来的）：功能开关这个机制怎么工作、权限与安全边界（`SECURITY DEFINER` / `requireAdmin()` / 前端隐藏按钮不算边界）。⚠️ 约定：**后台页面只放管理员需要的信息**，实现细节写这里 |
 | **`docs/manual-score-plan.md`** | **学员档案「手动补录成绩」**（第十四批）：为什么复用档案记录而不是新开表、字段与三条硬规则、要跑的迁移、验收口径，以及**本轮测试当场抓到的那个真 bug**（PostgREST 把约束名放在 `details` 里 → 409 变 500） |
 | **`docs/company-attachment3-plan.md`** | **公司模板导出 · 附件3 的接线方案**（已写好、**用户 2026-10 决定先不做**）：附件3 逐格数据来源、按钮与输入框位置、两个待拍板项、验收口径。**恢复条件=用户主动说要** |
 | `docs/ai-keywords-import-plan.md` | 课后反馈**教材关键词 AI 批量导入**的设计与确认记录（959 章 / 4179 知识点 / 8358 关键词） |
