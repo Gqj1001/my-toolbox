@@ -339,21 +339,42 @@ for (const localSha of commitList) {
   // 该提交相对其父的变更
   const strongParent = git("rev-parse", `${localSha}^`).trim();
   const diffBase = strongParent === baseCommit ? baseCommit : strongParent;
-  const changed = git("diff", "--name-status", diffBase, localSha).split("\n").filter(Boolean);
+  // ⚠️ `-c core.quotePath=false` **不能省**（2026-10 实测踩到，脚本因此推不动）：
+  //    git 默认会把非 ASCII 文件名**转义**成八进制（`"docs/\345\205\254..."`）。
+  //    拿这种路径去建 tree，GitHub 会**照字面**建出一堆乱码文件名的新文件，
+  //    而真正的文件没被替换 ⇒ 拼出来的 tree 与本地不同 ⇒ 硬闸拦下。
+  //    （本轮症状：GitHub 树里多出 `\345\205\254\345\217\270...docx` 之类的怪名字。）
+  const changed = git("-c", "core.quotePath=false", "diff", "--name-status", diffBase, localSha)
+    .split("\n")
+    .filter(Boolean);
 
   const entries = [];
   for (const line of changed) {
-    const [status, file] = line.split("\t");
-    if (status === "D") continue; // 不进 tree 即删除
-    const mode = git("ls-tree", localSha, "--", file).split(/\s+/)[0];
+    const [status, ...rest] = line.split("\t");
+    const file = rest.join("\t");           // 文件名里可能有制表符？没有，但别用 [1] 硬取
+    // ⚠️ **删除必须显式告诉 GitHub**（2026-10 实测踩到，第二个真因）：
+    //    `base_tree` 的语义是"**从基线复制**"，所以"不放进 tree" **不等于删除** ——
+    //    被删的文件会原样留在结果树里（本地树里没有它）⇒ 两边 tree 必然不同 ⇒ 硬闸拦下。
+    //    GitHub tree API 里删除的写法是：`sha: null`（`path` + `mode` 仍要带上）。
+    if (status === "D") {
+      const delMode = git("-c", "core.quotePath=false", "ls-tree", diffBase, "--", file).split(/\s+/)[0].padStart(6, "0");
+      entries.push({ path: file, mode: delMode, type: "blob", sha: null });
+      continue;
+    }
+    // ⚠️ mode 必须**补足六位**（子树要 `040000`）。
+    //    本地 `git ls-tree` 给的是**五位** `40000`（git 自己的写法），
+    //    而 GitHub 的 tree API 只认六位：五位会被拒成
+    //    `422 Must supply a valid tree.mode`，**整棵子树被丢掉** →
+    //    拼出来的 tree 与本地不同 → 硬闸拦下。
+    //    普通文件（100644 / 100755 / 120000）本来就是六位，补零是幂等的。
+    const mode = git("-c", "core.quotePath=false", "ls-tree", localSha, "--", file).split(/\s+/)[0].padStart(6, "0");
     const blobSha = await uploadBlob(git("rev-parse", `${localSha}:${file}`), file);
     entries.push({ path: file, mode, type: "blob", sha: blobSha });
   }
 
   // ---------- 构造 tree（硬闸在这里） ----------
   // base_tree 要用「父提交的 tree」：第一个提交的父是基点（本地有对象）；
-  // 之后的父是远端新建的 commit，本地没有 —— 用循环里记下来的 tree sha。
-  const baseTreeForCommit =
+  // 之后的父是远端新建的 commit，本地没有 —— 用循环里记下来的 tree sha。  const baseTreeForCommit =
     newParentTree ?? git("rev-parse", `${parentForNext}^{tree}`);
   const tree = await api("POST", `/repos/${REPO}/git/trees`, {
     tree: entries,
