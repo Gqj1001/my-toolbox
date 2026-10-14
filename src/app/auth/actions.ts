@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { translateAuthError } from "@/lib/auth-errors";
 
 export type AuthFormState = {
   status: "idle" | "error" | "success";
@@ -105,63 +106,8 @@ export async function logOut() {
   redirect("/login");
 }
 
-/** 把 Supabase 的英文报错转成中文提示 */
-function translateAuthError(error: { message?: string; code?: string }): string {
-  const message = error.message ?? "";
-  const code = error.code ?? "";
-  const normalized = message.toLowerCase();
-
-  if (code === "invalid_credentials" || normalized.includes("invalid login credentials")) {
-    return "邮箱或密码不正确。";
-  }
-  if (code === "email_not_confirmed" || normalized.includes("email not confirmed")) {
-    return "邮箱尚未确认，请先点击确认邮件中的链接。";
-  }
-  if (
-    code === "user_already_exists" ||
-    normalized.includes("user already registered") ||
-    normalized.includes("already been registered") ||
-    normalized.includes("user already exists")
-  ) {
-    return "该邮箱已注册，请直接登录。";
-  }
-  // 覆盖 "Unable to validate email address: invalid format" / "invalid domain" 等
-  if (
-    code === "validation_failed" ||
-    normalized.includes("unable to validate email") ||
-    normalized.includes("invalid format")
-  ) {
-    return "邮箱格式不正确，请检查后重新输入。";
-  }
-  // 实测 Supabase 返回 "Password should be at least 6 characters."
-  if (code === "weak_password" || normalized.includes("password should be at least")) {
-    return "密码长度不足，至少需要 6 个字符。";
-  }
-  if (normalized.includes("password is too weak")) {
-    return "密码强度不足，请使用更复杂的密码（建议包含大小写字母与数字）。";
-  }
-  // 2026 起 Supabase 默认启用泄露密码检测（HaveIBeenPwned）
-  if (code === "weak_password_pwned" || normalized.includes("pwned") || normalized.includes("compromised")) {
-    return "该密码已在数据泄露库中出现，请更换一个更安全的密码。";
-  }
-  if (
-    code === "over_email_send_rate_limit" ||
-    code === "over_request_rate_limit" ||
-    normalized.includes("rate limit") ||
-    normalized.includes("too many requests")
-  ) {
-    return "请求过于频繁（可能是邮件发送限额），请稍后再试。";
-  }
-  if (
-    code === "signup_disabled" ||
-    normalized.includes("signups not allowed") ||
-    normalized.includes("signup is disabled")
-  ) {
-    return "当前项目已关闭注册功能，请联系管理员。";
-  }
-  if (normalized.includes("failed to fetch") || normalized.includes("network")) {
-    return "无法连接认证服务，请检查网络后重试。";
-  }
-
-  return message || "操作失败，请稍后重试。";
-}
+/* ⚠️ `translateAuthError()` 已经搬到 `src/lib/auth-errors.ts`（2026-10 第十五批）。
+ *    原因：本文件顶部有 `"use server"`，而**该指令下每一个 export 都会变成 Server Action**
+ *    ⇒ 同步函数不能 export（构建直接报 `Server Actions must be async functions`）。
+ *    密码相关那两个动作（`app/auth/password-actions.ts`）与本文件都从新位置 import 它。
+ *    **不要**把它复制回来 —— 那会变成两份中文口径。 */

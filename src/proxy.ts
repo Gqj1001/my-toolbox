@@ -16,8 +16,14 @@ import {
   type SourceUser,
 } from "@/lib/session-freshness";
 
-/** 无需登录即可访问的路径前缀 */
-const PUBLIC_PATHS = ["/login", "/signup", "/auth"];
+/** 无需登录即可访问的路径前缀
+ *
+ *  ⚠️ `/forgot-password` 必须在这里：忘了密码的人**恰恰是登不进来的人**，
+ *     不放行就会被中间件弹回登录页，永远点不到"发送重置链接"。
+ *  ⚠️ `/reset-password` **故意不放**：走到那一页的人一定已经由邮件链接换出会话，
+ *     没会话就不该能直接打开它（被弹回登录页才是对的）。
+ */
+const PUBLIC_PATHS = ["/login", "/signup", "/forgot-password", "/auth"];
 
 /**
  * 被封禁用户仍可访问的路径。

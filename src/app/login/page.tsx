@@ -48,6 +48,13 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
             立即注册
           </Link>
         </p>
+
+        <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+          忘记密码了？{" "}
+          <Link href="/forgot-password" className="font-medium text-zinc-900 underline dark:text-zinc-100">
+            用邮箱重置
+          </Link>
+        </p>
       </div>
     </main>
   );

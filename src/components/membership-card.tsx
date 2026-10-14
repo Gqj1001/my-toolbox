@@ -73,6 +73,14 @@ export default function MembershipCard({ email, role, plan, isVip, expiresAt }: 
               查看会员权益
             </Link>
           ) : null}
+          {/* ★ 2026-10 第十五批：「修改密码」的入口之一（另一个在登录页的"忘记密码"旁边）。
+              放这里的原因：老师想改密码时，第一反应就是找"我的账号"这一块。 */}
+          <Link
+            href="/account/password"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            修改密码
+          </Link>
           <SignOutButton />
         </div>
       </div>
