@@ -1,5 +1,6 @@
 import Link from "next/link";
 import NewStudentForm from "@/components/archive-new-student";
+import BackfillPanel from "@/components/backfill-panel";
 import StudentEditor from "@/components/archive-student-editor";
 import ManualScoreForm from "@/components/manual-score-form";
 import RecordDeleteButton from "@/components/record-delete-button";
@@ -154,6 +155,11 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           {/* ★ 第十四批：手动补录成绩（在别处考的试也记进档案）。
               保存成功后自己 router.refresh()，所以记录列表与下面的学情分析会立刻更新。 */}
           <ManualScoreForm name={selected} />
+
+          {/* ★ 第十八批（用户拍板第二批）：补录**历史材料**（工具上线之前的卷子/方案/反馈）。
+              走 AI 整理 → 老师核对 → 存入档案；复用已有 tool 值 ⇒ 零迁移。
+              面板内部自己 router.refresh()，记录列表与学情分析会立刻更新。 */}
+          <BackfillPanel name={selected} />
 
           {/* ★ 第三批：学情分析 —— 统计部分所有人可见（服务端算好、不花 AI 钱），
               AI 报告是会员专属（`AnalysisPanel` 里的按钮）。 */}

@@ -1,15 +1,13 @@
 # 下个会话待办
 
-> **当前状态一句话**（2026-10 第十七批结束时）：
-> 全站 **36 个测试套件 / 1172 项断言全绿**（本轮**全部亲跑**，明细见第八节）；
-> 最近五批上线了 **🔁 识别失败只重试那一页** + **💸 重复润色先确认** + **🗑 学情报告可删**
-> （第十七批）、**🔑 忘记密码 / 修改密码**（第十五～十六批）、**📝 学员档案手动补录成绩**
-> （`tool='manual'` + 迁移 `0019`，第十四批）。
+> **当前状态一句话**（2026-10 第十八批结束时）：
+> 全站 **37 个套件 / 1211 项断言全绿**（本轮全部亲跑，明细见第八节）；
+> 最近两批上线了 **📥 档案页补录历史材料**（老 Word/PDF 里的旧卷子/方案/反馈 → AI 整理成
+> **与现有工具同格式**的正文 → 老师核对 → 入档 ⇒ 学情分析零改动自动算进去；**零迁移**，第十八批）
+> 与 **🔁 识别失败只重试那一页 + 💸 重复润色先确认 + 🗑 学情报告可删**（第十七批）。
 > 公司模板导出的**附件3 已按用户 2026-10 的决定暂停**（见下面 1b 表 b 行）。
-> ⏳ **等用户回来拍板的新功能**：档案页补录**历史材料**（老 Word/PDF/照片 → AI 整理成统一格式
-> → 入档 → 学情分析自动算进去）—— 方案见 `docs/manual-backfill-plan.md`，四个待拍板项在 §7。
 >
-> 更新时间：**2026-10（第十四批：学员档案手动补录成绩）**。本文件只放**还没做的**；
+> 更新时间：**2026-10（第十八批：档案页补录历史材料）**。本文件只放**还没做的**；
 > 已完成的全部在 `docs/project-overview.md` §十「✅ 最近已完成」（有细节、测试数与变异自证结论）。
 >
 > 配套阅读：`docs/project-overview.md`（现状总入口）、`docs/dsh-work-guide.md`（怎么配合 + 踩过的坑）、
@@ -192,9 +190,9 @@
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
 
-**全套回归现状（2026-10 第十七批实测：35 个 `*.test.mjs` + `verify-checklist.mjs` = 36 套，全绿 ✅）**：
+**全套回归现状（2026-10 第十八批实测：36 个 `*.test.mjs` + `verify-checklist.mjs` = 37 套，全绿 ✅）**：
 
-- **全部 36 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1172 项断言**：
+- **全部 37 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1211 项断言**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -211,7 +209,7 @@ feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15           admin-grant90 18/18
 archive-students 28/28     vision-scores 15/15
 manual-score 45/45         student-report 45/45       password-flows 42/42
-student-analysis 21/21     company-export 49/49
+student-analysis 21/21     company-export 49/49       backfill 39/39
 admin-feature-flags 18/18
 ```
 
