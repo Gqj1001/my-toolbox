@@ -27,9 +27,12 @@ export type FeatureFlagSpec = {
   label: string;
   /** 后台里显示的说明（写清"关掉后会发生什么"） */
   note: string;
-  /** 关掉时拼到工具页 iframe src 上的**参数名**（值固定为 1） */
+  /** 关掉时拼上去的**参数名**（值固定为 1）。
+   *  ⚠️ 两种落点，见 `tools` 字段的说明。 */
   param: string;
-  /** 作用于哪些工具（slug，如 paper-analysis） */
+  /** 作用于哪些**工具页**（slug，如 paper-analysis）——关掉时 `ToolPageShell` 会把参数拼到 iframe src 上。
+   *  ⚠️ 若受影响的是**网站页面**（不是工具 iframe），这里留 `[]`，由那个页面**自己**读开关
+   *     （见 `pageDisables()`，例：`/dashboard` 的「补录历史材料」）。 */
   tools: string[];
 };
 
@@ -41,7 +44,37 @@ export const FEATURE_FLAG_REGISTRY: FeatureFlagSpec[] = [
     param: "nocompanyexport",
     tools: ["paper-analysis"],
   },
+  {
+    // ★ 2026-10 第十八批（用户要求"初版功能要能一键关掉"）
+    key: "backfill_materials",
+    label: "补录历史材料（学员档案）",
+    note: "学员档案详情页的「📥 补录历史材料」面板（把工具上线之前的旧试卷分析/辅导方案/课后反馈整理进档案）。关掉后面板消失；手动补录成绩、档案列表、学情分析等一律照常。⚠️ 它不在工具 iframe 里，所以由 /dashboard 页面自己读这个开关（见 feature-flags.ts 的 pageDisables）。",
+    param: "nobackfill",
+    // 不是工具 iframe ⇒ 不用服务端拼 iframe 参数；由页面自己读
+    tools: [],
+  },
 ];
+
+/**
+ * 页面级开关：受影响的是**网站页面**（不是工具 iframe）时用它。
+ *
+ * ⚠️ 为什么需要它：`ToolPageShell` 那套"把参数拼到 iframe 的 src 上"只对工具页有效；
+ *    `/dashboard` 这类页面没有 iframe，**必须自己读开关**。调用方从自己的
+ *    searchParams 里取出 `spec.param` 的值传进来（Next 给的是对象、不是 URLSearchParams，
+ *    所以这里刻意收**单个字符串**，不去绑 Next 的类型）。
+ *
+ * 优先级与工具页一致：**URL 参数（含后台开关） > 代码常量** ⇒ 后台关掉＝一定关。
+ *
+ * @param key         登记表里的 key
+ * @param paramValue  调用方从 URL 里取到的该参数值（'1' = 临时关掉）；没取到传 undefined
+ */
+export async function pageDisables(key: string, paramValue?: string | string[] | null): Promise<boolean> {
+  const spec = FEATURE_FLAG_REGISTRY.find((f) => f.key === key);
+  if (!spec) return false;                       // 没登记过的 key：不参与（与白名单同一口径）
+  if (await isFeatureEnabled(key) === false) return true;          // 后台关掉
+  const v = Array.isArray(paramValue) ? paramValue[0] : paramValue;
+  return v === "1";                                                // 临时兜底：?nobackfill=1
+}
 
 /** 后台展示用：登记信息 + 表里的状态 */
 export type FeatureFlagView = FeatureFlagSpec & {

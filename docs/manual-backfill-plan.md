@@ -226,7 +226,27 @@
 | 面板 | `src/components/backfill-panel.tsx` | 类型 → 上传/粘贴 → 整理 → **核对清单（可编辑正文）** → 存入档案 |
 | 接线 | `src/app/dashboard/page.tsx` | 详情页加入面板（放在"手动补录成绩"下面） |
 | 测试 | `tests/backfill.test.mjs` | **39 项**（纯函数 + 提示词契约 + 真接口 + 真浏览器端到端） |
+| 后台开关（**用户要求**） | `src/lib/feature-flags.ts` + `supabase/migrations/0020_feature_flag_backfill.sql` | 登记了 `backfill_materials`（param `nobackfill`）；**关掉后 `/dashboard` 上那块面板消失**，其它功能照常 |
 | 数据库 | —— | **零改动**（这是选 A 的最大好处）⭐ |
+
+### 8.0 后台一键关掉（第十八批补登记，用户要求）
+
+用户问"补录有没有登记进功能开关" —— **原来没有**（登记表里只有 `company_export`），
+已按项目自己的规矩（`dsh-work-guide.md` 坑 13：初版功能一律配后台开关）补上，**三处齐全**：
+
+| 处 | 内容 |
+|---|---|
+| 登记表 | `FEATURE_FLAG_REGISTRY` 加 `backfill_materials`（label / note / param=`nobackfill` / `tools: []`） |
+| 数据库种子 | **新迁移 `0020_feature_flag_backfill.sql`**（只往 `feature_flags` 插一行）<br>⚠️ 为什么是新迁移而不是改 0018：0018 的 seed 用 `on conflict (key) do nothing`，**再跑一遍不会补出新 key** |
+| 页面认参数 | `/dashboard` 调 `pageDisables('backfill_materials', params.nobackfill)`，为真就整块不渲染 |
+
+⚠️ **与工具页开关的机制差别**（写下来免得下次搞混）：`ToolPageShell` 那套是"把参数拼到
+**iframe 的 src** 上"；而补录面板在**网站页面** `/dashboard` 里、**没有 iframe**，
+所以走的是新加的 `pageDisables()`（页面自己读开关）。**优先级两边一致**：URL 参数（含后台开关）> 代码常量。
+
+**关掉之后会发生什么**：面板消失；**手动补录成绩、档案列表、学情分析、三个工具一律照常**。
+**两种关法**：① 后台 `/admin`「功能开关」点「关掉这个功能」（30 秒内全站生效、不用重新部署）；
+② 临时兜底：访问 `/dashboard?...&nobackfill=1`（只影响那次访问，用于应急）。
 
 ### 8.1 三个关键实现决定（都写进代码注释了）
 
@@ -248,6 +268,7 @@
 | **B1** | 不再校验材料类型（未知类型**当成试卷分析**处理） | **37/39**：纯函数那条 + **HTTP 层那条（本应 400，实际 200）** 一起红 |
 | **B2** | 不再解析模型的 JSON（永远走"原文兜底"） | **35/39**：facts 全空 ⇒ 分数没落库 ⇒ **学情分析算不出得分率**（连带 4 条红，信号最强） |
 | **B3** | 存库时用 **AI 原文**、忽略老师改的那一版 | **38/39**：库里变回 `1 处`，红的正是"以老师改后的为准"那条 |
+| **F1** | `pageDisables()` 里的**后台开关判定失效**（只看 URL 参数） | `admin-feature-flags` **24/25**：红的正是"后台关掉后 /dashboard 面板也消失"那条 ⇒ 证明"一键关掉"这条路真的通了 |
 
 > B1 的诚实说明：第一版变异（直接不校验）会让套件**崩在 `BACKFILL_KINDS[undefined].tool`**，
 > 那也是"守卫在起作用"，但它证明的是"会抛错"而不是"接口返回 400"；

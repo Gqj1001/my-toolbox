@@ -14,6 +14,7 @@ import {
   studentsByName,
 } from "@/lib/feedback-db";
 import { buildStudentReport, TOOL_LABELS } from "@/lib/student-report";
+import { pageDisables } from "@/lib/feature-flags";
 import { getViewer } from "@/lib/viewer";
 
 /** 记录按工具分组时的显示名与顺序（顺序 = 老师看档案的习惯：方案 → 卷子 → 反馈 → 学情报告） */
@@ -103,6 +104,11 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
   // ---------------- 详情视图 ----------------
   if (selected) {
     const isKnown = selected in all;
+    // ⚙️ 功能开关（2026-10 第十八批）：「补录历史材料」是初版功能，要能**在管理后台一键关掉**
+    //    （用户口径，见 dsh-work-guide.md 坑 13）。它**不在工具 iframe 里**，
+    //    所以不走 ToolPageShell 那套"拼 iframe 参数"，由本页自己读开关；
+    //    同时支持临时兜底 `?nobackfill=1`（优先级与工具页一致：URL 参数 > 代码常量）。
+    const backfillOff = await pageDisables("backfill_materials", params.nobackfill);
     const info = (all[selected] ?? {}) as Record<string, unknown>;
     const items = ((allHistory[selected] ?? []) as HistoryItem[]).slice().reverse();   // 新的在前
     // ★ 第三批：学情分析。用**原始行**（`historyRows`）算，因为那份有真正的 ISO 日期，
@@ -158,8 +164,9 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
 
           {/* ★ 第十八批（用户拍板第二批）：补录**历史材料**（工具上线之前的卷子/方案/反馈）。
               走 AI 整理 → 老师核对 → 存入档案；复用已有 tool 值 ⇒ 零迁移。
-              面板内部自己 router.refresh()，记录列表与学情分析会立刻更新。 */}
-          <BackfillPanel name={selected} />
+              面板内部自己 router.refresh()，记录列表与学情分析会立刻更新。
+              ⚙️ 后台「功能开关」关掉（或加 `?nobackfill=1`）时整块不渲染。 */}
+          {backfillOff ? null : <BackfillPanel name={selected} />}
 
           {/* ★ 第三批：学情分析 —— 统计部分所有人可见（服务端算好、不花 AI 钱），
               AI 报告是会员专属（`AnalysisPanel` 里的按钮）。 */}

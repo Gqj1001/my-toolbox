@@ -93,6 +93,74 @@ try {
   record("③ 工具页（/tools/paper-analysis）能打开且含 iframe",
     toolPage.status === 200 && /iframe/i.test(toolPage.html), `HTTP ${toolPage.status}`);
 
+  {
+    /* ======================================================================
+       ★★ 2026-10 第十八批：新增的开关「补录历史材料」（backfill_materials）
+       ----------------------------------------------------------------------
+       它作用在**网站页面** `/dashboard`（不是工具 iframe），所以走的是
+       `pageDisables()` 那条路（页面自己读开关），而不是"服务端拼 iframe 参数"。
+       这里钉四件事：
+         ① 登记表与后台里都有这一条；
+         ② **临时兜底** `?nobackfill=1` 立刻把面板藏起来（不依赖数据库 ⇒ 两种迁移状态都能测）；
+         ③ 关掉后**其它功能照常**（手动补录成绩还在）；
+         ④ （要 0020 种子）后台点「关掉」→ 面板消失；再点一次 → 恢复。
+       ====================================================================== */
+    const adminHtml = (await getHtml("/admin", adminCookie)).html;
+    record("★④ 后台「功能开关」区能看到这条新开关（登记表里有它）",
+      /backfill_materials/.test(adminHtml) && /补录历史材料/.test(adminHtml),
+      `含 key=${/backfill_materials/.test(adminHtml)} 含名字=${/补录历史材料/.test(adminHtml)}`);
+
+    // ② 临时兜底（**不依赖数据库**）
+    const probe = encodeURIComponent("__flag__");
+    const dashNormal = await getHtml(`/dashboard?name=${probe}`, adminCookie);
+    const dashOff = await getHtml(`/dashboard?name=${probe}&nobackfill=1`, adminCookie);
+    record("★④ 正常打开 /dashboard：**有**「补录历史材料」面板",
+      /补录历史材料/.test(dashNormal.html), `HTTP ${dashNormal.status}`);
+    record("★④ 加 `?nobackfill=1`：面板**立刻消失**（不用等后台、不用重新部署）",
+      !/补录历史材料/.test(dashOff.html), `面板在=${/补录历史材料/.test(dashOff.html)}`);
+    record("★④ 关掉时**其它功能照常**（手动补录成绩 + 学情分析都还在）",
+      /手动补录成绩/.test(dashOff.html) && /学情分析/.test(dashOff.html),
+      `补录成绩在=${/手动补录成绩/.test(dashOff.html)} 学情分析在=${/学情分析/.test(dashOff.html)}`);
+
+    // ④ 后台真的关掉（需要 0020 的种子；没跑就说明并跳过）
+    if (!/data-flag="backfill_materials"/.test(adminHtml)) {
+      console.log("     → 后台里**没有** backfill_materials 这一行：请在 Supabase 执行 " +
+        "supabase/migrations/0020_feature_flag_backfill.sql；跑完之后本套件会自动测「后台关掉 → 页面消失」");
+    } else {
+      // ⚠️ 用**自己的端口**：本套件后面那段（分支 B）还会用 CDP_PORT，
+      //    两次起浏览器撞同一个调试端口会互相踢掉（本轮差点踩到）。
+      const b2 = await startBrowser(9499, "D:/my-website/.edge-profile-flags2");
+      edge = b2.edge;
+      const { cdp: cdp2, sessionId: sid2 } = b2;
+      const { ev: ev2, goto: goto2, login: login2 } = makePageApi(cdp2, sid2);
+      record("（准备·开关）管理员在浏览器里登录", await login2(adminEmail, password));
+
+      const clickToggle = async () => {
+        await goto2("/admin", 4000);
+        await ev2(`(() => {
+          const row = document.querySelector('[data-flag="backfill_materials"]');
+          const btn = row && row.querySelector('button[type="submit"]');
+          if (btn) btn.click();
+          return true;
+        })()`);
+        await sleep(3000);
+      };
+
+      await clickToggle();   // 关掉
+      const off = await getHtml(`/dashboard?name=${probe}`, adminCookie);
+      record("★④ 后台关掉后：/dashboard 上那块面板也消失（**不改代码、不重新部署**）",
+        !/补录历史材料/.test(off.html) && /手动补录成绩/.test(off.html),
+        `面板在=${/补录历史材料/.test(off.html)} 补录成绩在=${/手动补录成绩/.test(off.html)}`);
+
+      await clickToggle();   // 开回来
+      const back = await getHtml(`/dashboard?name=${probe}`, adminCookie);
+      record("★④ 再点一次「打开」：面板恢复（状态回到开启）",
+        /补录历史材料/.test(back.html), "已恢复");
+
+      try { await cdp2.send("Browser.close"); } catch { /* ignore */ }
+    }
+  }
+
   if (!ready) {
     /* ---------------- 分支 A：迁移还没跑 ---------------- */
     record(`② 表没建时后台明确说要跑哪个迁移（点名 ${MIGRATION}）`,
