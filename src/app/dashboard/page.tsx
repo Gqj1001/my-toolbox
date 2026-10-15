@@ -185,10 +185,12 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
                               {it.date || "未填日期"}
                               {it.score != null ? ` · ${it.score}${it.fullScore != null ? ` / ${it.fullScore}` : ""} 分` : ""}
                             </span>
-                            {/* ⭐ 第十四批：手动补录的记录由老师自己填，**填错要能撤** ——
-                                只给这一类记录一个删除按钮（其它记录由各自的工具管理）。
-                                走已有的 DELETE /api/students?id=…，只删这一条。 */}
-                            {g.tool === "manual" && it.id != null ? (
+                            {/* ⭐ 第十四批：手动补录的记录由老师自己填，**填错要能撤**。
+                                ⭐ 第十七批：**学情报告（analysis）也开给它** —— 用户反馈
+                                「我生成了好几份学情分析，现在不知道在哪里删除」。
+                                这两类都是"老师自己产生的记录"，删错了代价可控；
+                                其它记录（方案/卷子/反馈）仍由各自的工具管理。 */}
+                            {it.id != null && (g.tool === "manual" || g.tool === "analysis") ? (
                               <RecordDeleteButton id={it.id} title={it.title} />
                             ) : null}
                           </span>

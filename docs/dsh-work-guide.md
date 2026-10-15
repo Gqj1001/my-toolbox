@@ -371,6 +371,40 @@ Error: Server Actions must be async functions.
   **绝不把上游英文错误原文甩给老师**；
 - 防回归要**真行为断言**：拿一份真会话放进片段打开那个地址，断言它**真的跳到目标页**。
 
+### 21. `window.confirm()` 会**阻塞无头浏览器** —— 新增确认框后，相关套件必须自动应答（2026-10 实际踩到）
+
+第十七批给"重复润色"加了一句确认（`window.confirm`）。改完跑回归，
+`paper-attribution-polish` 直接变成 **22/23 + `timeout Runtime.evaluate`** ——
+看起来像"页面卡死"，其实是**浏览器在等一个永远没人点的确认框**（无头环境里没人点）。
+
+**做法**（写在套件里）：
+
+```js
+const dialogs = [];
+cdp.ws.addEventListener("message", async (e) => {
+  const m = JSON.parse(e.data);
+  if (m.method === "Page.javascriptDialogOpening") {
+    dialogs.push({ message: m.params?.message ?? "", type: m.params?.type ?? "" });
+    // accept:false = 点"取消"；想点确定就 true
+    await cdp.send("Page.handleJavaScriptDialog", { accept: false }, sessionId);
+  }
+});
+await cdp.send("Page.enable", {}, sessionId);   // 不 enable 收不到这个事件
+```
+
+> ⚠️ 顺带白拿一条**有价值的断言**：把 `accept:false`（取消）之后上游一次都没被调用，
+> 正好证明"老师取消 → 不花钱"。所以**别把确认框当成测试障碍，它是可断言的行为**。
+>
+> ⚠️ 另外注意：换了**另一个浏览器实例**（第二个 CDP 连接）就要**再挂一次**监听 ——
+> 第一版只给第一个实例挂了，免费账号那一段差点又卡住。
+
+### 22. 「档案里的记录」对象**不含 `name` 字段**（2026-10 实际踩到，假红一次）
+
+`studentsByName()` 返回的是 `{ 张三: {grade, campus, teacher, …} }` ——
+**姓名是 map 的 key，不在 value 里**。所以断言 `student.name === "张三"` **永远为假**（假红）。
+判断"这位学生还在不在"要用 **`grade`/`campus` 这类字段**，或者干脆**直连数据库**查那一行
+（本轮就是靠直连库那条断言才把"接口没读到"和"库里真没了"分开）。
+
 ## 开工前先确认的路径与命令（省得第一步就卡住）
 
 | 项 | 值 |

@@ -367,6 +367,8 @@ function adoptPaperText(txt, sourceLabel){
   }
   paper = r;
   $('#paperPaste').value = txt;
+  // ★ 第十七批：导入了一份**新试卷** → 润色标记作废（后面生成的报告是全新内容）
+  resetPolishMarks();
 
   // 应用解析结果到表单
   $('#paperTitle').textContent = r.title || '';
@@ -756,6 +758,29 @@ async function compressImageFile(file){
 let visionPages = [];
 let visionBusy = false;
 
+/** ★ 2026-10 第十七批：**识别失败只重试那一页**
+ *  ----------------------------------------------------------------------------
+ *  以前一页失败就 `throw`，整批作废 —— 20 页的扫描件里有一页拍糊，前面 19 页的
+ *  识别结果也一起丢了，老师只能重新上传一遍（重花一次钱）。
+ *  现在：失败页单独记下来、**成功页照常保留并进入预览**，状态区给出「只重试这 N 页」。
+ *
+ *  ⚠️ 两条管线（本文件里的 vision / school）**各自**有一套这两个变量，
+ *     但**按钮与交互文案保持同一套口径**，别只在一条上做。
+ */
+let visionSources = [];       // 本批的全部页（重试时只挑失败的那几页再发）
+let visionFailed = [];        // [{ index, label, message }]
+
+/** 页级失败 → 状态区 html（含"只重试这一页"按钮） */
+function visionFailBoxHtml(){
+  if(!visionFailed.length) return '';
+  const pages = visionFailed.map(f => f.label || ('第 ' + (f.index + 1) + ' 页')).join('、');
+  return '<div class="warnbox" style="margin-top:10px">⚠️ 有 <b>' + visionFailed.length + '</b> 页没识别成功：'
+    + esc(pages)
+    + '<br><span style="opacity:.8">其它页的结果已经保留在下面，不用整份重来。</span>'
+    + '<br><button type="button" class="btn" id="btnVisionRetry" style="margin-top:8px">🔁 只重试这 '
+    + visionFailed.length + ' 页</button></div>';
+}
+
 /** 图片文件 → 识别（先逐张压缩，再走统一的识别管线） */
 async function visionRun(files){
   const list = Array.from(files || []);
@@ -790,22 +815,84 @@ async function runVisionSources(sources){
   }
   if(visionBusy){ toast('上一批还在识别，请稍等'); return; }
   visionBusy = true;
+  visionSources = sources;
   visionPages = [];
+  visionFailed = [];
   try{
     for(let i = 0; i < sources.length; i++){
       box.innerHTML = '<div class="tip">⏳ 正在识别 ' + esc(sources[i].label) + '（' + (i + 1) + '/' + sources.length + '）…</div>';
-      const d = await apiFetch(API_BASE + '/vision-paper', { method:'POST', body:{ image: sources[i].dataUrl } });
-      if(!d || !d.ok) throw new Error((d && d.error) || '识别失败');
-      visionPages.push({
-        label: sources[i].label,
-        text: d.text || '',
-        empty: !!d.empty,
-        uncertain: !!d.uncertain,
-      });
+      try{
+        const d = await apiFetch(API_BASE + '/vision-paper', { method:'POST', body:{ image: sources[i].dataUrl } });
+        if(!d || !d.ok) throw new Error((d && d.error) || '识别失败');
+        visionPages.push({
+          label: sources[i].label,
+          text: d.text || '',
+          empty: !!d.empty,
+          uncertain: !!d.uncertain,
+        });
+      }catch(e){
+        // ★ 一页失败 → **只记下这一页**，继续识别后面的（不再整批作废）
+        visionFailed.push({ index: i, label: sources[i].label, message: String(e && e.message || e).slice(0, 120) });
+      }
+    }
+    // ⚠️ 一页都没成功 = 整批失败（配额/网络/服务器），那时给原来的整批报错口径
+    if(!visionPages.length && visionFailed.length){
+      throw new Error(visionFailed[0].message || '识别失败');
     }
     renderVisionPreview();
+    // 有失败页 → 在预览上面追加"只重试这几页"的状态区（成功页照常保留）
+    // ⚠️ 按钮的点击**只在 bind() 的事件委托里接一次**（不要在这里再 onclick 一遍，
+    //    否则点一次会跑两遍 = 重复发请求、重复花钱）
+    if(visionFailed.length){
+      const warn = document.createElement('div');
+      warn.innerHTML = visionFailBoxHtml();
+      box.insertBefore(warn, box.firstChild);
+    }
   }catch(e){
-    box.innerHTML = '<div class="errbox">识别失败：' + esc(e.message) + '</div>';
+    box.innerHTML = '<div class="errbox">识别失败：' + esc(e.message)
+      + (visionFailed.length ? '<br>' + visionFailBoxHtml() : '') + '</div>';
+  }finally{
+    visionBusy = false;
+  }
+}
+
+/** ★ 只重试**失败的那几页**（成功页原样保留，不重发、不重花钱）
+ *  ⚠️ 重试成功后**顺序会被打乱**（失败页的结果追加在末尾）。
+ *     预览是按 label 显示的一页一段文字，顺序不影响"填进导入框"的合并顺序吗？
+ *     —— 影响。所以这里**按原始下标回插**：`visionPages` 里每一项记住自己的 `index`，
+ *     重试后统一按 index 重排，保证与上传顺序一致。 */
+async function retryVisionFailed(){
+  if(visionBusy){ toast('上一批还在识别，请稍等'); return; }
+  const retry = visionFailed.slice();
+  if(!retry.length) return;
+  const box = $('#visionPreview');
+  visionBusy = true;
+  const stillFailed = [];
+  try{
+    for(let i = 0; i < retry.length; i++){
+      const f = retry[i];
+      const src = visionSources[f.index];
+      box.innerHTML = '<div class="tip">🔁 正在重试 ' + esc(src ? src.label : ('第 ' + (f.index + 1) + ' 页'))
+        + '（' + (i + 1) + '/' + retry.length + '）…</div>';
+      try{
+        const d = await apiFetch(API_BASE + '/vision-paper', { method:'POST', body:{ image: src.dataUrl } });
+        if(!d || !d.ok) throw new Error((d && d.error) || '识别失败');
+        visionPages.push({ index: f.index, label: src.label, text: d.text || '', empty: !!d.empty, uncertain: !!d.uncertain });
+      }catch(e){
+        stillFailed.push({ index: f.index, label: f.label, message: String(e && e.message || e).slice(0, 120) });
+      }
+    }
+    visionFailed = stillFailed;
+    // 按原始下标重排，保证"填进导入框"的顺序与上传顺序一致
+    visionPages.sort((a, b) => (a.index == null ? 0 : a.index) - (b.index == null ? 0 : b.index));
+    renderVisionPreview();
+    if(visionFailed.length){   // 还有没成功的 → 继续给按钮（点击由 bind() 的事件委托接）
+      const warn = document.createElement('div');
+      warn.innerHTML = visionFailBoxHtml();
+      box.insertBefore(warn, box.firstChild);
+    }
+  }catch(e){
+    box.innerHTML = '<div class="errbox">重试失败：' + esc(e.message) + '</div>';
   }finally{
     visionBusy = false;
   }
@@ -907,6 +994,10 @@ function coeffOfLabel(label){
 let schoolBusy = false;
 /** 识别出来的结构（预览里改过之后会先回写到这里，再建 paper） */
 let schoolStructure = null;
+/** ★ 第十七批：上一次识别**已成功**的页（重试时带上，跳过它们、不重发） */
+let schoolPages = [];
+/** ★ 第十七批：上一次识别**失败**的页 [{index,label,message}] */
+let schoolFailed = [];
 
 function setSchoolStatus(html){
   const box = $('#schoolPreview');
@@ -946,43 +1037,142 @@ async function schoolRun(files){
       throw new Error('这份共 ' + pages.length + ' 页，超过上限 ' + SCHOOL_MAX_PAGES + ' 页，请分两次上传。');
     }
 
-    // ---------- ② 分批推进（每批 ≤10 页，**批内逐页调用**） ----------
-    const parts = [];
-    const rawPages = [];
-    for(let start = 0; start < pages.length; start += SCHOOL_BATCH_SIZE){
-      const batch = pages.slice(start, start + SCHOOL_BATCH_SIZE);
-      for(let i = 0; i < batch.length; i++){
-        const idx = start + i;
-        const batchNote = pages.length > SCHOOL_BATCH_SIZE
-          ? '（第 ' + (Math.floor(idx / SCHOOL_BATCH_SIZE) + 1) + ' 批 / 共 ' + Math.ceil(pages.length / SCHOOL_BATCH_SIZE) + ' 批）'
-          : '';
-        setSchoolStatus('🔍 正在识别第 ' + (idx + 1) + '/' + pages.length + ' 页…' + batchNote);
+    // ---------- ②③④ 识别 → 预览（与重试路径**共用**下面这个函数） ----------
+    await schoolPagesToStructure(pages);
+  }catch(e){
+    handleSchoolError(e);
+  }finally{
+    schoolBusy = false;
+  }
+}
+
+/** 学校卷子管线的**统一失败处理**（首次识别与重试共用）
+ *
+ *  ⚠️ 这里必须区分两种失败（2026-10 第十七批实测踩到）：
+ *    · **部分页失败**（`e.__schoolFailed`）：保住已成功页与失败页的下标，
+ *      状态区给「只重试这 N 页」—— 这正是"某页拍糊不用整份重来"的关键；
+ *    · **整批失败**（一页都没成功 / 读文件就炸）：只是普通报错，不出现重试按钮。
+ *  第一版把 schoolRun 的 catch 写成"无条件清空"，于是刚保存的失败页被自己擦掉，
+ *  按钮点了没反应（测试当场抓到）。所以两条路径**必须共用这一个函数**。 */
+function handleSchoolError(e){
+  const failed = e && e.__schoolFailed;
+  if(failed && failed.length){
+    schoolFailed = failed;
+    // 已成功页的**数据**也要留住（重试时直接并回结果，不重发）
+    schoolPages = (e.__schoolPages || []).map(p => ({ label: p.label, dataUrl: p.dataUrl, data: p.data || null }));
+    setSchoolStatus(schoolFailBoxHtml(failed));
+    return;
+  }
+  schoolFailed = [];
+  schoolPages = [];
+  setSchoolStatus('识别失败：' + esc(e && e.message ? e.message : e)
+    + '<br>可以重试，或换一张更清晰的图；也可以改用「粘贴文字」。');
+}
+
+/** ★ 第十七批：从"每页一张图"走到"预览"的那一段（**唯一实现**）
+ *
+ *  为什么单独抽出来：重试时**必须复用同一段收尾步骤**（合并、渲染预览、展开面板、
+ *  rawPages 兜底展示）。本项目在"平行入口漏了收尾步骤"上踩过坑（学校卷子那个 bug），
+ *  所以这里**不再写第二份循环**，而是让 schoolRun（首次）与 retrySchoolFailed（重试）
+ *  都调它。
+ *
+ *  `pages` = [{label, dataUrl}]；重试时里面会带上一批**已成功**的页，
+ *  循环里靠 `schoolFailed` 的下标跳过它们（不重发、不重花钱）。 */
+async function schoolPagesToStructure(pages){
+  const parts = [];
+  const rawPages = [];
+  const prevPages = schoolPages;            // 上一次已成功页（重试时才非空）
+  const failedSet = new Map(schoolFailed.map(f => [f.index, f]));
+  // ⚠️ 重试时"上次失败、这次要重发"的页要**记住原样**（本次真的又失败才留在 failedSet 里）。
+  //    第一版只是把旧的失败页塞进 failedSet 后就不管了 —— 于是**重试成功了它还在失败集合里**，
+  //    结果永远出不来（测试当场抓到：重试后 failed 仍是 1、预览不出现）。
+  const toRetry = new Set(schoolFailed.map(f => f.index));
+  failedSet.clear();
+  // ⚠️ 本次每页拿到的 `structure` 要按**下标**存下来（不只是 push 进 parts）：
+  //    因为重试时"已成功页"要能原样并回结果。只存 parts 的话，
+  //    "成功页返回的既不是 structure 也不是 raw"这种边角情况会丢页。
+  const dataByIdx = prevPages.map(p => p.data).slice();
+  for(let start = 0; start < pages.length; start += SCHOOL_BATCH_SIZE){
+    const batch = pages.slice(start, start + SCHOOL_BATCH_SIZE);
+    for(let i = 0; i < batch.length; i++){
+      const idx = start + i;
+      if(prevPages.length && !toRetry.has(idx)){   // 这一页上次已经成功 → 不重发（不重花钱）
+        if(dataByIdx[idx]) parts.push(dataByIdx[idx]);
+        continue;
+      }
+      const batchNote = pages.length > SCHOOL_BATCH_SIZE
+        ? '（第 ' + (Math.floor(idx / SCHOOL_BATCH_SIZE) + 1) + ' 批 / 共 ' + Math.ceil(pages.length / SCHOOL_BATCH_SIZE) + ' 批）'
+        : '';
+      setSchoolStatus('🔍 正在识别第 ' + (idx + 1) + '/' + pages.length + ' 页…' + batchNote);
+      try{
         const d = await apiFetch(API_BASE + '/vision-paper-structure', {
           method:'POST',
           body:{ image: batch[i].dataUrl, page: idx + 1, totalPages: pages.length },
         });
         if(!d || !d.ok) throw new Error((d && d.error) || '识别失败');
-        if(d.structure) parts.push(d.structure);
+        if(d.structure){ parts.push(d.structure); dataByIdx[idx] = d.structure; }
         else if(d.raw) rawPages.push({ page: idx + 1, raw: d.raw });
+      }catch(e){
+        // 只记下这一页，继续后面的（不再整批作废）
+        if(!failedSet.has(idx)) failedSet.set(idx, { index: idx, label: batch[i].label || ('第 ' + (idx + 1) + ' 页'), message: String(e && e.message || e).slice(0, 120) });
       }
     }
+  }
+  // ⚠️ 有失败页时**必须 throw**：这样"这一批的结果"不会被当成完整结构
+  //    （否则老师可能拿一份缺页的结构去生成报告）。提示里带上"只重试"按钮。
+  if(failedSet.size){
+    const labels = [...failedSet.values()].map(f => f.label).join('、');
+    const err = new Error('有 ' + failedSet.size + ' 页没识别成功：' + labels + '（其它页的结果已保留，可直接重试这几页）');
+    err.__schoolFailed = [...failedSet.values()];
+    err.__schoolPages = pages.map((p, i) => ({ label: p.label, dataUrl: p.dataUrl, data: dataByIdx[i] ?? null }));
+    throw err;
+  }
 
-    schoolStructure = mergeStructures(parts);
-    if(!schoolStructure.questions.length){
-      const box = $('#schoolPreview');
-      box.innerHTML = '<div class="warnbox">没有认出任何题目。可能是：① 图太模糊/拍歪；② 这不是卷子（比如是学生成绩单）；'
-        + '③ 整页都是答题卡而没有题干。<br>建议重拍一张更清晰的，或改用「粘贴文字」。</div>'
-        + (rawPages.length ? '<details class="cat" open><summary><span class="arw">▶</span>AI 返回的原文（不是合法 JSON 时才有）</summary>'
-            + '<div class="body"><pre style="white-space:pre-wrap;font-size:12px;max-height:300px;overflow:auto">'
-            + esc(rawPages.map(p => '--- 第 ' + p.page + ' 页 ---\n' + p.raw).join('\n\n')) + '</pre></div></details>' : '');
-      return;
-    }
-    renderSchoolPreview(rawPages);
+  schoolStructure = mergeStructures(parts);
+  if(!schoolStructure.questions.length){
+    const box = $('#schoolPreview');
+    box.innerHTML = '<div class="warnbox">没有认出任何题目。可能是：① 图太模糊/拍歪；② 这不是卷子（比如是学生成绩单）；'
+      + '③ 整页都是答题卡而没有题干。<br>建议重拍一张更清晰的，或改用「粘贴文字」。</div>'
+      + (rawPages.length ? '<details class="cat" open><summary><span class="arw">▶</span>AI 返回的原文（不是合法 JSON 时才有）</summary>'
+          + '<div class="body"><pre style="white-space:pre-wrap;font-size:12px;max-height:300px;overflow:auto">'
+          + esc(rawPages.map(p => '--- 第 ' + p.page + ' 页 ---\n' + p.raw).join('\n\n')) + '</pre></div></details>' : '');
+    schoolPages = [];          // 这一批没产出可用结构 → 不保留"已成功页"（避免拿半成品去重试）
+    schoolFailed = [];
+    return;
+  }
+  schoolPages = [];
+  schoolFailed = [];
+  renderSchoolPreview(rawPages);
+}
+
+/** ★ 只重试**失败的那几页**（学校卷子/扫描版 PDF 管线）
+ *  做法：把上次**已成功**的页（schoolPages，含它们的数据）与新的一批页一起交给
+ *  `schoolPagesToStructure`；循环里会跳过"上次已成功"的下标、只对失败页发请求
+ *  ⇒ 不重发、不重花钱，且合并结果仍然完整。
+ *  ⚠️ 这里**故意复用同一个函数**（而不是再写一份循环）：合并、渲染预览、
+ *     面板展开这些收尾步骤都在那条路上，本项目在"平行入口漏收尾"上踩过坑。 */
+async function retrySchoolFailed(){
+  if(schoolBusy){ toast('上一批还在识别，请稍等'); return; }
+  if(!schoolFailed.length || !schoolPages.length){ toast('没有可重试的页'); return; }
+  schoolBusy = true;
+  setSchoolStatus('🔁 正在重试失败的那 ' + schoolFailed.length + ' 页（其它页不重发）…');
+  try{
+    await schoolPagesToStructure(schoolPages);
   }catch(e){
-    setSchoolStatus('识别失败：' + esc(e.message) + '<br>可以重试，或换一张更清晰的图；也可以改用「粘贴文字」。');
+    handleSchoolError(e);
   }finally{
     schoolBusy = false;
   }
+}
+
+/** 页级失败 → 状态区 html（含"只重试这几页"按钮） */
+function schoolFailBoxHtml(failed){
+  const labels = failed.map(f => f.label).join('、');
+  return '⚠️ 有 <b>' + failed.length + '</b> 页没识别成功：' + esc(labels)
+    + '<br>其它页的结果已经保留下来，<b>不用整份重来</b>。'
+    + '<br><button type="button" class="btn" id="btnSchoolRetry" style="margin-top:8px">🔁 只重试这 '
+    + failed.length + ' 页</button>'
+    + '<br><span style="opacity:.8">也可以重拍那一页再上传，或改用「粘贴文字」。</span>';
 }
 
 /** 多页/多批的**唯一**合并实现（分批只影响循环，不影响这里）
@@ -1632,6 +1822,9 @@ function generateReport(){
 
   $('#reportText').textContent = report;
   lastReport = report;
+  // ★ 第十七批：**重新生成报告 = 全新内容** → 润色标记清空
+  //   （否则老师改了卷子重新生成，再点润色会被多问一句"已经润过"，其实那段是新的）
+  resetPolishMarks();
   updateReportMeta(name, ctx);
   if(API.mode !== 'server'){ /* 本机模式不自动存档 */ }
   switchStep('cReport');
@@ -1651,6 +1844,54 @@ function updateReportMeta(name, ctx){
 }
 
 /* ==========================================================================
+   ★ 2026-10 第十七批：重复润色的确认（**别再花第二次钱**）
+   --------------------------------------------------------------------------
+   现象（用户提的）：老师已经润过一次，忘了 / 手快点第二次 → **又一次 AI 调用 = 又花一次钱**。
+   做：润色前若发现"这段已经润过"，先弹一句确认，点了"确定"才继续。
+
+   判定依据：`reportPolishMarks`（**内存标记**，不靠猜报告正文）。
+   为什么不写进报告正文：工具把整篇报告当纯文本用，任何写进正文的标记都会出现在老师
+   **复制/打印给家长**的那份里 —— 为一句"这是 AI 写的"污染报告不值得；而且老师手改过之后
+   标记也会失准。标记在"重新生成报告 / 导入新试卷 / 手动编辑报告"时清空（那时确实是新内容）。
+
+   ⚠️ 三处入口**共用同一套口径**：建议段（aiAdvice）、错因列（aiPolishAttribution）、
+     合并按钮（polishAll，它串行跑前两个）。别只在某一处加提示。
+   ========================================================================== */
+/** 哪几段已经润过：{ advice:true, attribution:true }（内存态，随报告一起重置） */
+let reportPolishMarks = { advice:false, attribution:false };
+
+/** 清空润色标记（新报告 / 换试卷 / 老师手动改过报告时调用） */
+function resetPolishMarks(){ reportPolishMarks = { advice:false, attribution:false }; }
+
+/** **纯函数**：该不该为这次润色做确认，以及问什么话。
+ *  @param marks  当前标记
+ *  @param parts  这次要润的部分：`['advice','attribution']`
+ *  @returns `{ ask:boolean, message:string }` */
+function polishConfirm(marks, parts){
+  const m = marks || {};
+  const list = (parts || []).filter(Boolean);
+  const done = list.filter(p => m[p]);
+  if(!done.length) return { ask:false, message:'' };
+  const label = { advice:'「教学辅导建议」段', attribution:'【错题分析】的错因列' };
+  const names = done.map(p => label[p] || p).join(' 和 ');
+  const extra = done.length !== list.length ? '（这次还会一起润其它还没润的部分）' : '';
+  return {
+    ask: true,
+    message: names + '已经是 AI 润色过的文案了。\n\n再润一次会**再调用一次 AI**（会有费用），'
+      + '而且会用新文案**覆盖**现在这段' + extra + '。\n\n仍要重新润色吗？',
+  };
+}
+
+/** 需要确认时弹确认；老师点"取消"就中止（返回 false） */
+function confirmRepolish(parts){
+  const c = polishConfirm(reportPolishMarks, parts);
+  if(!c.ask) return true;
+  const yes = window.confirm(c.message);
+  if(!yes) toast('已取消（没有调用 AI，也没花费用）');
+  return yes;
+}
+
+/* ==========================================================================
    AI：① 重写「教学辅导建议」段  ② 润色【错题分析】的「原因」列
    ========================================================================== */
 /**
@@ -1666,6 +1907,9 @@ function updateReportMeta(name, ctx){
 async function aiAdvice(opts){
   const o = (opts && (opts.btn || opts.silent)) ? opts : {};
   if(!lastAdviceCtx){ toast('请先生成报告'); return { ok:false, error:'请先生成报告' }; }
+  // ★ 第十七批：已经润过这一段 → 先确认（避免重复调用 AI、重复花钱）。
+  //   `silent` 时（合并按钮内部调用）由 polishAll 统一问一次，这里不再问第二遍。
+  if(!o.silent && !confirmRepolish(['advice'])) return { ok:false, error:'已取消（用户不想重新润色）', canceled:true };
   const { name, ctx, attitude } = lastAdviceCtx;
   const btn = o.btn || $('#btnAIAdvice'); const old = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ AI 生成中';
@@ -1715,6 +1959,7 @@ async function aiAdvice(opts){
     lastReport = merged;
     $('#stChars').textContent = merged.length;
     if(!o.silent) toast('建议段已由 AI 重写，可继续手动修改');
+    reportPolishMarks.advice = true;      // ★ 记下"这段已经润过"，下次点会先确认
     return { ok:true };
   }catch(e){
     if(!o.silent) toast('AI 生成失败：' + e.message, 3400);
@@ -1774,6 +2019,8 @@ function pickAttrReasons(text){
 async function aiPolishAttribution(opts){
   const o = (opts && (opts.btn || opts.silent)) ? opts : {};
   const btn = o.btn || $('#btnAIPolishAttr'); const old = btn.textContent;
+  // ★ 第十七批：错因列已经润过 → 先确认（`silent` 时由 polishAll 统一问一次）
+  if(!o.silent && !confirmRepolish(['attribution'])) return { ok:false, error:'已取消（用户不想重新润色）', canceled:true };
   const cur = $('#reportText').textContent;
   if(!cur.trim()){ toast('请先生成报告'); return { ok:false, error:'请先生成报告' }; }
   const { lines, targets } = pickAttrReasons(cur);
@@ -1820,6 +2067,7 @@ async function aiPolishAttribution(opts){
     lastReport = merged;
     $('#stChars').textContent = merged.length;
     if(!o.silent) toast('错因列已润色 ' + out.length + ' 处（分数与题号未动），可继续手动修改');
+    reportPolishMarks.attribution = true;   // ★ 记下"这一列已经润过"
     return { ok:true, count: out.length };
   }catch(e){
     if(!o.silent) toast('错因润色失败：' + e.message, 3600);
@@ -1845,13 +2093,20 @@ async function polishAll(){
   const btn = $('#btnPolishAll'); const old = btn.textContent;
   if(!lastAdviceCtx){ toast('请先生成报告'); return; }
   if(!$('#reportText').textContent.trim()){ toast('请先生成报告'); return; }
+  // ★ 第十七批：这个按钮**一次会润两部分**，所以按"两部分"一起问一次
+  //   （只要其中任一段已经润过，就提醒会覆盖 + 会再花钱）。
+  //   ⚠️ 必须在这里问：它内部调 aiAdvice/aiPolishAttribution 时带 `silent:true`，
+  //      那两个函数不会再问（否则一次点击弹两个确认框）。
+  if(!confirmRepolish(['advice', 'attribution'])) return;
   btn.disabled = true;
 
   /** 跑一步：失败自动重试一次；会员/封禁类错误不重试（重试也没用） */
   const step = async (label, fn) => {
     btn.textContent = '⏳ ' + label + '…';
     let r = await fn();
-    if(!r.ok && !/会员|封禁/.test(String(r.error || ''))){
+    // ★ 第十七批：**老师主动取消**（`canceled`）绝不能再重试一次 ——
+    //    那等于绕过了他刚点的"取消"，还照样花钱。
+    if(!r.ok && !r.canceled && !/会员|封禁/.test(String(r.error || ''))){
       btn.textContent = '⏳ ' + label + '（重试一次）…';
       const again = await fn();
       if(again.ok){ r = again; r.retried = true; }
@@ -2170,6 +2425,35 @@ window.CompanyExportHooks = {
   },
 };
 /* ⭐⭐⭐ 公司模板导出 · 结束（删到这一行即可整块移除；另见 bind() 里的接线与 index.html 的面板）⭐⭐⭐ */
+
+/** ★ 第十七批：识别重试的测试钩子（只读 + 触发重试，无副作用）
+ *
+ *  为什么要有它：这个功能的核心保证是"**只重发失败的那几页**"，
+ *  而这件事只有在**真浏览器 + 计数**下才验得出来（纯函数测不到"发了几次请求"）。
+ *  测试用法：让桩上游对某几页回错 → 断言 `failed` 只有那几页、`pages` 有成功的 → 点重试
+ *  → 断言桩上游**只收到了那几页**的请求（另外几页没有第二次请求）。 */
+window.PaperAnalysisHooks = {
+  visionState: () => ({
+    total: visionSources.length,
+    ok: visionPages.length,
+    failed: visionFailed.map(f => ({ index: f.index, label: f.label })),
+  }),
+  schoolState: () => ({
+    total: schoolPages.length,
+    ok: schoolPages.filter(p => p.data).length,
+    failed: schoolFailed.map(f => ({ index: f.index, label: f.label })),
+  }),
+  retryVision: () => retryVisionFailed(),
+  retrySchool: () => retrySchoolFailed(),
+  /** ★ 第十七批：重复润色的标记与判定（给"已润过再点会先确认"的断言用）
+   *  ⚠️ `setPolishMarks` 是**给测试用的**：整个 app 包在 IIFE 里，
+   *     `reportPolishMarks` 是模块内的 `let`，测试没法从外面改它（`w.reportPolishMarks`
+   *     只会改 window 上的一个无关属性）。 */
+  polishMarks: () => ({ ...reportPolishMarks }),
+  setPolishMarks: (m) => { reportPolishMarks = { advice: !!(m && m.advice), attribution: !!(m && m.attribution) }; },
+  polishConfirm: (parts) => polishConfirm(reportPolishMarks, parts),
+  resetPolishMarks: () => resetPolishMarks(),
+};
 
 function copyReport(){
   const txt = $('#reportText').innerText;
@@ -2569,6 +2853,10 @@ function bind(){
   document.addEventListener('click', e => {
     if(e.target.closest('[data-close]')){ const m = e.target.closest('.mask'); if(m) m.classList.remove('on'); }
     if(e.target.classList && e.target.classList.contains('mask')) e.target.classList.remove('on');
+    // ★ 第十七批：识别失败的重试按钮（它们是在识别失败时才动态插进状态区的，
+    //    所以用**事件委托**接线，而不是在 bind() 里直接 onclick —— 那时元素还不存在）
+    if(e.target && e.target.id === 'btnVisionRetry') retryVisionFailed();
+    if(e.target && e.target.id === 'btnSchoolRetry') retrySchoolFailed();
   });
 
   // ① 试卷
@@ -2680,10 +2968,15 @@ function bind(){
     if(!lastReport){ toast('没有可还原的内容'); return; }
     $('#reportText').textContent = lastReport;
     $('#stChars').textContent = lastReport.length;
+    // ★ 第十七批：还原到"生成时的内容" = 全新未润色的报告 → 标记清空
+    resetPolishMarks();
     toast('已还原为生成时的内容');
   };
   $('#reportText').addEventListener('input', () => {
     $('#stChars').textContent = $('#reportText').innerText.length;
+    // ★ 第十七批：**老师手动改过报告** → 那两段已经不能算"AI 润色过的原文"了，
+    //   标记清空（下次点润色不再多问一句）。
+    resetPolishMarks();
   });
 
   // 服务器 / AI

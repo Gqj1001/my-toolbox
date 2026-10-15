@@ -1,10 +1,13 @@
 # 下个会话待办
 
-> **当前状态一句话**（2026-10 第十五批结束时）：
-> 全站 **35 个 `*.test.mjs` 套件**（+ `verify-checklist.mjs` 共 36 套）全绿，明细见第八节；
-> 最近五批上线了 **🔑 忘记密码 / 修改密码**、**📝 学员档案手动补录成绩**（`tool='manual'` + 迁移 `0019`）、
-> **⚙️ 通用功能开关搬到管理后台**（新表 `feature_flags`）、**🏢 公司模板导出（附件1/2）**、
-> **一键开关（三种关法）**。公司模板导出的**附件3 已按用户 2026-10 的决定暂停**（见下面 1b 表 b 行）。
+> **当前状态一句话**（2026-10 第十七批结束时）：
+> 全站 **36 个测试套件 / 1172 项断言全绿**（本轮**全部亲跑**，明细见第八节）；
+> 最近五批上线了 **🔁 识别失败只重试那一页** + **💸 重复润色先确认** + **🗑 学情报告可删**
+> （第十七批）、**🔑 忘记密码 / 修改密码**（第十五～十六批）、**📝 学员档案手动补录成绩**
+> （`tool='manual'` + 迁移 `0019`，第十四批）。
+> 公司模板导出的**附件3 已按用户 2026-10 的决定暂停**（见下面 1b 表 b 行）。
+> ⏳ **等用户回来拍板的新功能**：档案页补录**历史材料**（老 Word/PDF/照片 → AI 整理成统一格式
+> → 入档 → 学情分析自动算进去）—— 方案见 `docs/manual-backfill-plan.md`，四个待拍板项在 §7。
 >
 > 更新时间：**2026-10（第十四批：学员档案手动补录成绩）**。本文件只放**还没做的**；
 > 已完成的全部在 `docs/project-overview.md` §十「✅ 最近已完成」（有细节、测试数与变异自证结论）。
@@ -90,9 +93,10 @@
 | 3 | 深度调优 AI 润色（温度 / prompt） | 需要真实产出的对比样本，与第 1 条一起做最省事 |
 | 4 | 逐年分值预设（自定义） | 各卷面结构只带一套「常用」逐题值，逐年会变；让老师把自己那年的分值存成预设 |
 | 5 | 关掉导航预取 | 省 11 条后台预取，代价是首次进入略慢（用户此前决定先不做） |
-| 6 | 识别失败**只重试那一页** | 现在整批失败要重传；学校卷子/报告多页时更明显 |
-| 7 | 重复点润色时提示"已润过一遍" | 第十批遗留的小体验项（再点会重润一次） |
+| 6 | ~~识别失败**只重试那一页**~~ | ✅ **2026-10 第十七批已做**（两条管线：`vision-paper` 与 `vision-paper-structure`；详见 `docs/import-retry-plan.md`） |
+| 7 | ~~重复点润色时提示"已润过一遍"~~ | ✅ **2026-10 第十七批已做**（建议段 / 错因列 / 合并按钮三处口径一致，取消后不调用 AI） |
 | 8 | 学员档案页加"生成学情分析"入口 | 现在入口在档案详情页；用户当时只要求"能做出来" |
+| 9 | **学情报告的删除** | ✅ **2026-10 第十七批已做**（详情页的 analysis 记录也能删，只删那一条、档案不动） |
 
 ---
 
@@ -188,11 +192,9 @@
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
 
-**全套回归现状（2026-10 第十六批实测：35 个 `*.test.mjs` + `verify-checklist.mjs` = 36 套，全绿 ✅）**：
+**全套回归现状（2026-10 第十七批实测：35 个 `*.test.mjs` + `verify-checklist.mjs` = 36 套，全绿 ✅）**：
 
-- **全部 36 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1156 项断言**
-  （⚠️ 上一行那套 `manual-score` 在本清单里记的是**分支 B 的 45 项** ——
-  因为用户 2026-10 已经跑过迁移 `0019`，现在跑就是走分支 B）：
+- **全部 36 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1172 项断言**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -202,12 +204,12 @@ step7-api 39/39            step7-ui 36/36             ai-thinking-mode 11/11
 paper-analysis 56/56       paper-regression 23/23     paper-score-edit 59/59
 paper-score-report 15/15   paper-score-ui 36/36       paper-preset 18/18
 paper-analysis-students 27/27
-paper-attribution-polish 35/35
-vision-paper 31/31
+paper-attribution-polish 42/42
+vision-paper 41/41
 school-paper 43/43
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15           admin-grant90 18/18
-archive-students 21/21     vision-scores 15/15
+archive-students 28/28     vision-scores 15/15
 manual-score 45/45         student-report 45/45       password-flows 42/42
 student-analysis 21/21     company-export 49/49
 admin-feature-flags 18/18
@@ -225,6 +227,13 @@ admin-feature-flags 18/18
 > 而且**整个 `archive-students`（17 项）被漏掉了**。这正是 `dsh-work-guide.md` 坑 1 说的那类问题。
 >
 > 变化说明（最近三批，更早的见 `project-overview.md` §十）：
+> · **第十七批（三件小优化）**：**识别失败只重试那一页**（两条管线：`vision-paper` 与
+>   `vision-paper-structure`）→ `vision-paper` 31 → **41 项**；
+>   **重复润色先确认**（建议段/错因列/合并按钮三处口径一致，取消后不调用 AI）→
+>   `paper-attribution-polish` 35 → **42 项**；
+>   **学情报告可删**（详情页 `analysis` 记录也开删除按钮）→ `archive-students` 21 → **28 项**。
+>   ⚠️ 新增的 `window.confirm` 会**阻塞无头浏览器**，所以相关套件必须用 CDP 的
+>   `Page.javascriptDialogOpening` + `handleJavaScriptDialog` 自动应答（本轮踩到并记在文档里）。
 > · **第十六批（用户实测报的 bug）**：**邮件重置链接落到登录页** —— 根因是
 >   Supabase 把会话放在跳转地址的 **`#` 片段**里，而 `#` **不发给服务器**，
 >   原来那个服务端路由 `/auth/confirm` 只能读 `?token_hash=` ⇒ 永远读不到会话。

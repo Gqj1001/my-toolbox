@@ -274,6 +274,20 @@ try {
     const { cdp, sessionId } = b;
     const { ev, goto, inTool, login } = makePageApi(cdp, sessionId);
 
+    // ★ 第十七批：新增了"重复润色先确认"（window.confirm）。在无头浏览器里
+    //   **confirm 会阻塞渲染线程**（没人点确定）⇒ 直接点按钮会把套件卡死。
+    //   这里用 CDP 的对话框事件把弹窗内容记下来并**自动点掉**（默认"取消"，
+    //   于是"老师取消后不会调用 AI"这件事也能被断言）。
+    const dialogs = [];
+    cdp.ws.addEventListener("message", async (e) => {
+      const m = JSON.parse(e.data);
+      if (m.method === "Page.javascriptDialogOpening") {
+        dialogs.push({ message: String(m.params?.message ?? ""), type: String(m.params?.type ?? "") });
+        try { await cdp.send("Page.handleJavaScriptDialog", { accept: false }, sessionId); } catch { /* ignore */ }
+      }
+    });
+    try { await cdp.send("Page.enable", {}, sessionId); } catch { /* ignore */ }
+
     record("会员在浏览器里登录成功", await login(userEmail, password));
     await goto("/tools/paper-analysis", 5000);
 
@@ -378,6 +392,23 @@ try {
 
     // ① 正常：一次点击 → 两次调用 → 两部分都变
     stubMode = "ok"; attrCalls = 0; calls.length = 0;
+    // ★ 第十七批：先确认"**已经润过再点会先弹确认**"（这一批新增的行为），
+    //   并用"取消"验证"取消后一次 AI 都没调"。
+    //   ⚠️ 标记是模块内 `let`（IIFE 里），测试只能通过 hooks 的 setter 设置。
+    await inTool(`w.PaperAnalysisHooks.setPolishMarks({ advice: true, attribution: true }); return true;`);
+    dialogs.length = 0;
+    calls.length = 0;
+    await inTool(`w.document.getElementById('btnPolishAll').click(); return 'clicked';`);
+    await sleep(1200);
+    record("★合并按钮：**已经润过再点会先弹确认**（提示会覆盖 + 会再花一次 AI）",
+      dialogs.length === 1 && /再调用一次 AI/.test(dialogs[0].message) && /覆盖/.test(dialogs[0].message),
+      JSON.stringify(dialogs));
+    record("★合并按钮：点「取消」后**一次 AI 都没调用**（没花钱、报告也没变）",
+      calls.length === 0, `上游被调 ${calls.length} 次`);
+
+    // 真正跑一遍：先把标记清掉（等价于"还没润过"），这样不会弹确认
+    await inTool(`w.PaperAnalysisHooks.resetPolishMarks(); return true;`);
+    dialogs.length = 0;
     await inTool(`w.document.getElementById('btnPolishAll').click(); return 'clicked';`);
     await sleep(3000);
     const both = await inTool(READ);
@@ -386,6 +417,49 @@ try {
     record("★★合并按钮：**两部分都润色了**（建议段换成 AI 文本；**有原因的那 3 道错题**最后一列都换成润色文案）",
       both?.adviceIsAI === true && both?.attrIsAI === 3,
       JSON.stringify({ 建议段是AI: both?.adviceIsAI, 润色行数: both?.attrIsAI, 表格总行数: both?.rows }));
+    record("★润过之后标记被记下（再点会弹确认）",
+      (await inTool(`const m = w.PaperAnalysisHooks.polishMarks(); return m.advice === true && m.attribution === true;`)) === true,
+      "marks 已置位");
+    record("★重新生成报告会**清空标记**（新报告是全新内容，不该被多问一句）",
+      (await inTool(`
+        w.document.getElementById('btnGen').click();
+        const m = w.PaperAnalysisHooks.polishMarks();
+        return m.advice === false && m.attribution === false;
+      `)) === true,
+      "重新生成后 marks 归零");
+
+    // ★ 三处入口**同一套口径**：建议段按钮、错因列按钮、合并按钮
+    //   （合并按钮是真点击验过了；这两个按钮的逻辑就是同一个 confirmRepolish，
+    //     这里直接验它对着这两段各自的文案 —— 免得"只给合并按钮加了提示"。）
+    const perEntry = await inTool(`
+      const h = w.PaperAnalysisHooks;
+      h.setPolishMarks({ advice: true, attribution: true });
+      const a = h.polishConfirm(['advice']);
+      const b = h.polishConfirm(['attribution']);
+      const both = h.polishConfirm(['advice', 'attribution']);
+      h.setPolishMarks({ advice: true, attribution: false });
+      const onlyAdvice = h.polishConfirm(['advice', 'attribution']);
+      h.resetPolishMarks();
+      return {
+        adviceAsk: a.ask, adviceMsg: a.message,
+        attrAsk: b.ask, attrMsg: b.message,
+        bothAsk: both.ask,
+        mixedAsk: onlyAdvice.ask, mixedMsg: onlyAdvice.message,
+      };
+    `);
+    record("★三处入口口径一致：建议段 / 错因列 / 合并按钮**都会**先确认",
+      perEntry?.adviceAsk === true && perEntry?.attrAsk === true && perEntry?.bothAsk === true &&
+        /教学辅导建议/.test(String(perEntry?.adviceMsg)) && /错因列/.test(String(perEntry?.attrMsg)),
+      JSON.stringify(perEntry));
+    record("★只润一段时提示不夸大：说清「哪段已润」+「还会一起润其它没润的部分」",
+      perEntry?.mixedAsk === true && /教学辅导建议/.test(String(perEntry?.mixedMsg)) &&
+        /一起润/.test(String(perEntry?.mixedMsg)) && !/错因列/.test(String(perEntry?.mixedMsg).split('\n')[0]),
+      JSON.stringify(String(perEntry?.mixedMsg ?? "").slice(0, 120)));
+    record("★没润过时**不弹**确认（老师第一次点不被打扰）",
+      (await inTool(`const h = w.PaperAnalysisHooks; h.resetPolishMarks();
+        const a = h.polishConfirm(['advice']); const b = h.polishConfirm(['advice','attribution']);
+        return a.ask === false && b.ask === false && a.message === '';`)) === true,
+      "首次点不弹");
 
     // ② 失败自动重试一次：让桩**第一次**少返回一行（段数不符 → 客户端重试 → 第二次成功）
     stubMode = "shortOnce"; attrCalls = 0; calls.length = 0;
@@ -430,6 +504,9 @@ try {
     await goto2("/tools/paper-analysis", 5000);
     const setup2 = await inTool2(BROWSER_SETUP);
     record("（准备·免费账号）同样生成一份真实报告", setup2?.zeroed === 3, JSON.stringify(setup2));
+    // ★ 第十七批：这不点也要保证**没有**"重复润色"弹窗（非会员这条要测的是会员校验，
+    //   不能被确认框挡住 —— 无头浏览器里 confirm 会阻塞页面）。
+    await inTool2(`w.PaperAnalysisHooks.resetPolishMarks(); return true;`);
 
     stubMode = "ok"; calls.length = 0;
     await inTool2(`w.document.getElementById('btnPolishAll').click(); return 'clicked';`);

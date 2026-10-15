@@ -172,6 +172,93 @@ try {
     /会员专属/.test(aBody) && !(analysis?.btnTexts ?? []).some((t) => /生成学情报告/.test(String(t))),
     `按钮=[${(analysis?.btnTexts ?? []).join(" / ")}]`);
 
+  // ---- 3c. ★第十七批：**学情报告的删除**（用户原话："我生成了好几份学情分析，
+  //          现在不知道在哪里删除。"）
+  //      这里钉三件事：① 分析记录在详情页有删除按钮；② 二次确认点"确定"后
+  //      那一行消失；③ **学生档案还在**（只删记录，不误删档案）。
+  {
+    // 先用接口造一条 analysis 记录（与 AI 生成时落库的形状一致：tool='analysis'）
+    const mk = await api("/api/students", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({
+        op: "import",
+        items: [
+          { student_name: STU, tool: "analysis", title: "学情报告 · 测试用",
+            date: "2026-10-16", text: "【整体学情】这是测试用的一份学情报告。" },
+          { student_name: STU, tool: "paper", title: "不该被删的卷子",
+            date: "2026-10-16", text: "【备考建议】这条是试卷分析，删除分析记录时不能碰它。" },
+        ],
+      }),
+    });
+    record("（准备）造一条学情报告 + 一条试卷分析记录",
+      mk.status === 200 && (mk.body?.inserted ?? 0) >= 1, JSON.stringify(mk.body).slice(0, 140));
+
+    await goto(`/dashboard?name=${encodeURIComponent(STU)}`, 4500);
+    const withAnalysis = await inDoc(`
+      const rows = [...document.querySelectorAll('li')];
+      const findRow = (t) => rows.find(li => li.innerText.includes(t)) || null;
+      const a = findRow('学情报告 · 测试用');
+      const p = findRow('不该被删的卷子');
+      return {
+        analysisHasDelete: !!(a && a.querySelector('button')),
+        paperHasDelete: !!(p && p.querySelector('button')),
+        analysisText: a ? a.innerText.replace(/\\s+/g,' ').slice(0, 120) : null,
+      };
+    `);
+    record("★学情报告在详情页有「删除」按钮（老师终于能自己删掉多余的报告）",
+      withAnalysis?.analysisHasDelete === true, JSON.stringify(withAnalysis));
+    record("★别的归属（试卷分析）**没有被误开**删除按钮（仍由各自的工具管理）",
+      withAnalysis?.paperHasDelete === false,
+      `analysis=${withAnalysis?.analysisHasDelete} paper=${withAnalysis?.paperHasDelete}`);
+
+    // 点删除 —— ⚠️ 无头浏览器里 confirm 会**阻塞页面**，必须用 CDP 自动点"确定"
+    let dialogMsg = "";
+    const onClick = (e) => {
+      const m = JSON.parse(e.data);
+      if (m.method === "Page.javascriptDialogOpening") {
+        dialogMsg = String(m.params?.message ?? "");
+        cdp.send("Page.handleJavaScriptDialog", { accept: true }, sessionId).catch(() => {});
+      }
+    };
+    cdp.ws.addEventListener("message", onClick);
+    if (withAnalysis?.analysisHasDelete) {
+      await inDoc(`
+        const rows = [...document.querySelectorAll('li')];
+        const a = rows.find(li => li.innerText.includes('学情报告 · 测试用'));
+        if(a) a.querySelector('button').click();
+        return true;
+      `);
+      await sleepMs(3000);
+    }
+    cdp.ws.removeEventListener("message", onClick);
+
+    record("★删除前有**二次确认**，且说清「只删这一条、不影响档案和其它记录」",
+      /只删这一条/.test(dialogMsg) && /不影响/.test(dialogMsg), JSON.stringify(dialogMsg));
+
+    const afterDel = await api(`/api/students?name=${encodeURIComponent(STU)}&withHistory=1`);
+    const items = (afterDel.body?.history ?? {})[STU] ?? [];
+    // ⚠️ 直连数据库问一次"档案行还在不在"（2026-10 第十七批加）：
+    //    这是本功能最危险的失效方式（删一条记录却把档案带走），值得**独立来源**核实。
+    //    ⚠️ 第一版这里还断言了 `student.name === STU` —— **那是错的**：
+    //    `studentsByName()` 返回的对象**不含 name**（名字是 map 的 key），
+    //    所以那条断言永远为假（假红）。改成看"行还在 + 关键字段在"。
+    const rawRow = await fetch(
+      `${SUPABASE_URL}/rest/v1/feedback_students?name=eq.${encodeURIComponent(STU)}&select=name,grade`,
+      { headers: H },
+    ).then((r) => r.json()).catch(() => null);
+    record("★点确定后：那条学情报告**从记录里消失**了",
+      !items.some((i) => String(i.tool) === "analysis" && String(i.title).includes("测试用")),
+      `剩余 ${items.length} 条：${items.map((i) => i.tool + "/" + i.title).join("、")}`);
+    record("★删的是**那一条**：试卷分析那条还在（没有连带误删）",
+      items.some((i) => String(i.tool) === "paper" && String(i.title).includes("不该被删")),
+      JSON.stringify(items.map((i) => [i.tool, i.title])));
+    record("★**学生档案还在**（只删记录，不误删档案 —— 这是本功能最危险的失效方式）",
+      Array.isArray(rawRow) && rawRow.length === 1 && rawRow[0].name === STU && rawRow[0].grade === "高二" &&
+        !!afterDel.body?.student && afterDel.body?.student?.grade === "高二",
+      `库里行=${JSON.stringify(rawRow)} 接口 student.grade=${JSON.stringify(afterDel.body?.student?.grade ?? null)}`);
+  }
+
   // ---- 4. 修改：**不勾任何框**直接提交 → 什么都不该变 ----
   const noChange = await inDoc(`
     const form = [...document.querySelectorAll('form')].find(f => f.querySelector('input[name="change_grade"]'));

@@ -106,6 +106,14 @@ const calls = [];
 let stubMode = "ok";
 /** 桩要返回的文本：默认是我编的极简报告；测试会用 `POST /__set` 换成**工具自带示例**（更真实） */
 let stubText = REPORT_TEXT;
+/** ★ 2026-10 第十七批：给"只重试失败那一页"用的故障注入。
+ *  `failNth`: 第几次请求（1 起）回 500；`onlyFirst`: 只失效那一次（重试就能成功）。
+ *  `failPage`: 只让 `body.page === N` 的请求回 500（学校卷子那条管线带 page 号）。
+ *  ⚠️ 为什么按 page 号：桩**看不见**客户端算出来的 dataUrl（压缩后的图），
+ *    按 body 里的 page 号定位最稳。 */
+let failNth = 0, onlyFirst = true, failPage = 0;
+let nth = 0;
+const countByPage = {};
 
 const stub = createServer((req, res) => {
   let raw = "";
@@ -113,7 +121,13 @@ const stub = createServer((req, res) => {
   req.on("end", () => {
     // 控制口：让测试把"桩该返回的文本"换成工具自带的示例报告
     if (req.url === "/__set") {
-      try { stubText = String(JSON.parse(raw).text ?? REPORT_TEXT); } catch { /* 忽略 */ }
+      try {
+        const j = JSON.parse(raw);
+        stubText = String(j.text ?? REPORT_TEXT);
+        if (typeof j.failNth === "number") { failNth = j.failNth; nth = 0; }
+        if (typeof j.onlyFirst === "boolean") onlyFirst = j.onlyFirst;
+        if (typeof j.failPage === "number") { failPage = j.failPage; countByPage[failPage] = 0; }
+      } catch { /* 忽略 */ }
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ ok: true, chars: stubText.length }));
       return;
@@ -121,10 +135,48 @@ const stub = createServer((req, res) => {
     let body = null;
     try { body = JSON.parse(raw); } catch { /* 保留 null */ }
     calls.push({ path: req.url, auth: req.headers.authorization ?? "", body });
+    const n = ++nth;
+    // ⚠️ 两条管线都**不从请求体里带页码**：结构识别把页码**拼进提示词**（"第 N 页"），
+    //    报告识别连页码都没有。所以这里统一从整个请求体文本里抠页码，再计数。
+    const promptPage = (() => {
+      const m = JSON.stringify(body ?? {}).match(/第 (\d+) 页/);
+      return m ? Number(m[1]) : 0;
+    })();
+    if (promptPage) countByPage[promptPage] = (countByPage[promptPage] ?? 0) + 1;
+    // ★ 故障注入：按"第几次请求"或"哪一页"回 500
+    const byNth = failNth > 0 && n === failNth && (onlyFirst ? true : n >= failNth);
+    const byPage = failPage > 0 && promptPage === failPage && countByPage[promptPage] === 1;
+    if (byNth || byPage) {
+      res.statusCode = 500;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ error: { message: "stub-vision-paper-boom" } }));
+      return;
+    }
     res.setHeader("content-type", "application/json");
     if (stubMode === "upstream500") {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: { message: "stub-vision-paper-boom" } }));
+      return;
+    }
+    // ⚠️ **学校卷子那条管线要的是"结构 JSON"**（`vision-paper-structure` 让模型直接产出
+    //    {structure:{…}}），而报告那条要的是**纯文本**。桩没法靠请求体里的 `page` 判别
+    //    —— 页码是**拼进提示词**的（实测踩到：第一版按 body.page 判别，于是永远走了文本分支，
+    //    新用例表现成"没有认出任何题目"）。所以按**提示词特征**判别。
+    const allText = JSON.stringify(body ?? {});
+    const wantsStructure = /请按约定输出 JSON|题型分块/.test(allText);
+    if (wantsStructure) {
+      // 页码从提示词里抠出来（"这是试卷的第 N 页"），好用 page 号注入故障与断言
+      const m = allText.match(/第 (\d+) 页/);
+      const page = m ? Number(m[1]) : 1;
+      res.end(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({
+          title: "桩卷", totalScore: 150,
+          blocks: [{ name: "单选题", count: 1 }],
+          questions: [{ no: page, type: "单选题", full: 5, got: null, knowledge: "桩知识点" + page }],
+          uncertainNotes: [],
+        }) } }],
+        usage: { prompt_tokens: 900, completion_tokens: 200 },
+      }));
       return;
     }
     const content =
@@ -451,6 +503,151 @@ try {
       /解析成功/.test(String(pdfAdopted?.result ?? "")) && pdfAdopted?.pv === 0,
       `结果=${JSON.stringify(String(pdfAdopted?.result ?? "").slice(0, 80))} 面板=${pdfAdopted?.pv} `
         + `页面异常=${JSON.stringify(pageErrors.slice(0, 2))}`);
+
+    /* ------------------------------------------------------------------
+       ★★ 第十七批：识别失败**只重试那一页**（两条管线各验一次）
+       ------------------------------------------------------------------
+       为什么要在这里测：这个功能的核心保证是"**只重发失败的那几页**"，
+       而"发了几次请求"只有真浏览器 + 计数桩才验得出来（纯函数测不到）。
+       做法：让桩对第 3 次请求回 500 → 断言前 2 页成功、第 3 页失败、出现重试按钮
+             → 点重试 → 断言**只多了一次请求**（第 1、2 页没有被重发）。 */
+
+    // ---- (a) 图片/截图那条管线：失败的是第 3 张 ----
+    await fetch(`http://127.0.0.1:${STUB_PORT}/__set`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: String(demoFull), failNth: 3, onlyFirst: true, failPage: 0 }),
+    });
+    const beforeVision = calls.length;
+
+    const v3 = await inTool(`
+      const mk = (name, color) => {
+        const cv = w.document.createElement('canvas'); cv.width = 12; cv.height = 12;
+        const g = cv.getContext('2d'); g.fillStyle = color; g.fillRect(0,0,12,12);
+        const dataUrl = cv.toDataURL('image/png');
+        const bin = atob(dataUrl.split(',')[1]);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return new w.File([arr], name, { type: 'image/png' });
+      };
+      const dt = new w.DataTransfer();
+      dt.items.add(mk('第1页.png', '#111'));
+      dt.items.add(mk('第2页.png', '#333'));
+      dt.items.add(mk('第3页.png', '#555'));
+      const inp = w.document.getElementById('visionInput');
+      inp.files = dt.files;
+      const n = inp.files.length;            // 派发前先数（app 处理完会把 input 清空，这是隐私设计）
+      inp.dispatchEvent(new w.Event('change'));
+      return 'dispatched:' + n;
+    `);
+    record("（准备）三张图一起提交（其中第 3 张会被桩拒绝一次）",
+      String(v3) === "dispatched:3", JSON.stringify(v3));
+
+    let vState = null, vBtn = false;
+    for (let i = 0; i < 60; i++) {
+      await sleep(500);
+      const s = await inTool(`
+        const h = w.PaperAnalysisHooks;
+        return { st: h ? h.visionState() : null,
+                 btn: !!w.document.getElementById('btnVisionRetry'),
+                 boxText: (w.document.getElementById('visionPreview').innerText || '').slice(0, 200) };
+      `);
+      if (s?.st && s.st.failed.length) { vState = s.st; vBtn = s.btn; break; }
+    }
+    record("★图片管线：一页失败**不再整批作废** —— 成功的 2 页留在结果里",
+      vState?.ok === 2 && vState?.total === 3,
+      JSON.stringify(vState));
+    record("★图片管线：失败页被单独记下（下标 2 = 第 3 张），状态区给出「只重试这 1 页」",
+      vState?.failed?.length === 1 && vState.failed[0].index === 2 && vBtn === true,
+      `failed=${JSON.stringify(vState?.failed)} 按钮=${vBtn}`);
+
+    const visionCallsBeforeRetry = calls.length;
+    await inTool(`w.document.getElementById('btnVisionRetry').click(); return true;`);
+    let vAfter = null;
+    for (let i = 0; i < 40; i++) {
+      await sleep(500);
+      const s = await inTool(`const h = w.PaperAnalysisHooks; return h ? h.visionState() : null;`);
+      if (s && s.failed.length === 0 && s.ok === 3) { vAfter = s; break; }
+      if (s) vAfter = s;
+    }
+    const visionRetryCalls = calls.length - visionCallsBeforeRetry;
+    record("★图片管线：点「只重试这 1 页」后全部 3 页都成功",
+      vAfter?.ok === 3 && vAfter?.failed?.length === 0,
+      JSON.stringify(vAfter));
+    record("★图片管线：重试**只发了 1 次请求**（另外 2 页没有被重发 = 没重复花钱）",
+      visionRetryCalls === 1,
+      `重试期间新增请求 ${visionRetryCalls} 次（期望 1；桩总请求 ${
+        calls.length - beforeVision}）`);
+
+    // ---- (b) 学校卷子那条管线：失败的是第 2 页（按 body.page 定位，桩看得见页码）----
+    await inTool(`w.document.getElementById('btnSchoolClear')?.click(); return true;`);
+    await fetch(`http://127.0.0.1:${STUB_PORT}/__set`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: String(demoFull), failNth: 0, failPage: 2 }),
+    });
+    const beforeSchool = calls.length;
+    const s3 = await inTool(`
+      const mk = (name, color) => {
+        const cv = w.document.createElement('canvas'); cv.width = 12; cv.height = 12;
+        const g = cv.getContext('2d'); g.fillStyle = color; g.fillRect(0,0,12,12);
+        const dataUrl = cv.toDataURL('image/png');
+        const bin = atob(dataUrl.split(',')[1]);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return new w.File([arr], name, { type: 'image/png' });
+      };
+      const dt = new w.DataTransfer();
+      dt.items.add(mk('卷1.png', '#111'));
+      dt.items.add(mk('卷2.png', '#333'));
+      dt.items.add(mk('卷3.png', '#555'));
+      const inp = w.document.getElementById('schoolInput');
+      inp.files = dt.files;
+      const n = inp.files.length;            // 同上：派发前先数（app 之后会清空 input）
+      inp.dispatchEvent(new w.Event('change'));
+      return 'dispatched:' + n;
+    `);
+    record("（准备）三页卷子一起提交（第 2 页会被桩拒绝一次）",
+      String(s3) === "dispatched:3", JSON.stringify(s3));
+
+    let scState = null, scBtn = false, scText = "";
+    for (let i = 0; i < 60; i++) {
+      await sleep(500);
+      const s = await inTool(`
+        const h = w.PaperAnalysisHooks;
+        return { st: h ? h.schoolState() : null,
+                 btn: !!w.document.getElementById('btnSchoolRetry'),
+                 txt: (w.document.getElementById('schoolPreview').innerText || '').slice(0, 200) };
+      `);
+      if (s?.st && s.st.failed.length) { scState = s.st; scBtn = s.btn; scText = s.txt; break; }
+      if (i > 8 && !scState) scText = s?.txt ?? "";
+    }
+    record("★学校卷子管线：一页失败也**不再整批作废**（失败的正好是第 2 页）",
+      scState?.failed?.length === 1 && scState.failed[0].index === 1,
+      `failed=${JSON.stringify(scState?.failed)}`);
+    record("★学校卷子管线：状态区给出「只重试这 N 页」按钮，并说明其它页已保留",
+      scBtn === true && /只重试这\s*1\s*页/.test(scText),
+      JSON.stringify(scText.slice(0, 120)));
+
+    const schoolCallsBeforeRetry = calls.length;
+    await inTool(`w.document.getElementById('btnSchoolRetry').click(); return true;`);
+    let scAfter = null, scPreview = false;
+    for (let i = 0; i < 60; i++) {
+      await sleep(500);
+      const s = await inTool(`
+        const h = w.PaperAnalysisHooks;
+        return { st: h ? h.schoolState() : null,
+                 preview: !!w.document.querySelector('#schoolPreview [data-q]') ||
+                          /题目|考点|正确答案/.test(w.document.getElementById('schoolPreview').innerText || '') };
+      `);
+      if (s?.st && s.st.failed.length === 0) { scAfter = s.st; scPreview = s.preview; break; }
+      if (s) scAfter = s.st;
+    }
+    const schoolRetryCalls = calls.length - schoolCallsBeforeRetry;
+    record("★学校卷子管线：点重试后失败清零，且**重新出了预览**（收尾步骤没漏）",
+      scAfter?.failed?.length === 0 && scPreview === true,
+      `state=${JSON.stringify(scAfter)} 预览=${scPreview}`);
+    record("★学校卷子管线：重试**只发了 1 次请求**（第 1、3 页没有重发）",
+      schoolRetryCalls === 1,
+      `重试期间新增请求 ${schoolRetryCalls} 次（期望 1；本批总请求 ${calls.length - beforeSchool}）`);
 
     try { await cdp.send("Browser.close"); } catch { /* ignore */ }
   }
