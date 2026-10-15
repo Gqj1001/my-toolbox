@@ -22,7 +22,12 @@
  *     learnedHours, totalHours,                       // 「已学课时/单科总课时」
  *     entryScore, entryRank, currentScore, currentRank,  // 「入学成绩/排名」「本次成绩/排名」
  *     wrongRows: [{ no, topic, point, reason }],       // 附件2 错题分析（动态行数）
- *     longTexts: { '学生角度': '…', … }                 // 附件1 六段长文（一期传空 = 留空）
+ *     longTexts: { '学生角度': '…', … },                // 附件1 六段长文（一期传空 = 留空）
+ *     // ---- 附件3 专用（★ 2026-10 第十八批接线；附件1/2 用不到）----
+ *     durationText: '2026年10月--2027年1月',            // 辅导进度标题里的「辅导时间」片段
+ *     hoursPerWeekText: '2',                           // 同一句里的「周课时」片段
+ *     rows: [{ module, content, goal, hours }],        // 逐次课表（**按模块合并相邻同名行**后填进度表）
+ *     lessonEval: { 模块名: '…' },                      // 进度表「效果评估」列（一期留空）
  *   }
  */
 (function (root, factory) {
@@ -251,6 +256,20 @@
     return (a + b).trim();
   }
 
+  /** 逐次课表的 `stage` 里带的授课类型后缀（例：「导数与函数单调性极值（概念与公式梳理）」）
+   *  → 附件3 的「知识模块」只写**模块名**。括号可能是全角/半角，两种都吃。 */
+  function stripStageSuffix(stage) {
+    return String(stage == null ? '' : stage).replace(/[（(][^（()）]*[)）]\s*$/, '').trim();
+  }
+
+  /** 一行「知识点：…目标：…」（与模板样例同款写法：两段直接连排、中间不换行） */
+  function kpLine(topic, goal) {
+    const a = String(topic == null ? '' : topic).trim();
+    const b = String(goal == null ? '' : goal).trim();
+    if (!a && !b) return '';
+    return (a ? '知识点：' + a : '') + (b ? '目标：' + b : '');
+  }
+
   /* ======================================================================
      四、三个附件的填充规格
      ====================================================================== */
@@ -307,6 +326,8 @@
       subject: data.subject || '数学',
       hours: hoursPair(data.learnedHours, data.totalHours),
       totalHoursText: (data.totalHours === 0 || data.totalHours) ? String(data.totalHours) : '',
+      durationText: String(data.durationText == null ? '' : data.durationText).trim(),
+      hoursPerWeekText: String(data.hoursPerWeekText == null ? '' : data.hoursPerWeekText).trim(),
       examType: data.examType || '',
       entryScoreRank: scoreRank(data.entryScore, data.entryRank),
       currentScoreRank: scoreRank(data.currentScore, data.currentRank),
@@ -316,8 +337,104 @@
        ⚠️ 不能"按标签清那一行"：学情分析/措施/预期效果这三块的**子行首格是纵向合并的延续格**
        （第二行起首格是空的），按标签只会命中每块第一行，其余行的语文样例会直接漏进导出件
        （实测踩过）。所以这里做**整表**清理：值格全清、标签格原样留。 */
+    // ⚠️ 附件3 还要靠"合计行的「40小时」"来定位进度表范围 —— 那一格会被下面的清空抹掉，
+    //    所以**先算索引、再清空**（本轮实测踩到：在清空后找数字，于是抛"找不到合计行"）。
+    let k3 = null;
     if (att === '附件3') {
+      const headKi = requireRow(rows, '知识模块', att);
+      // ⚠️ 合计行的判据不能只看"课时数格是数字" —— **数据行的课时数也是「2小时」这种**，
+      //    那样第一条数据行就会被当成合计行（本轮实测踩到：范围算成空的，直接抛错）。
+      //    合计行的独有特征是：**第 2 格（具体知识点）是空的**，而数据行都有「知识点：…」。
+      let totalKi = -1;
+      for (let i = headKi + 1; i < rows.length; i++) {
+        const cs = splitCells(rows[i]);
+        if (cs.length < 3) continue;
+        const kp = cellText(cs[1].xml);
+        const hrs = cellText(cs[2].xml);
+        if (!kp.trim() && /^\s*\d+\s*小时/.test(hrs)) { totalKi = i; break; }
+      }
+      if (totalKi < 0) throw new Error('附件3 模板里找不到进度表的合计行（公司改模板了？）');
+      const sampleIdx = [];
+      for (let i = headKi + 1; i < totalKi; i++) sampleIdx.push(i);
+      if (!sampleIdx.length) throw new Error('附件3 模板里没有进度表样例行（结构变了？）');
+      k3 = { headKi: headKi, totalKi: totalKi, sampleIdx: sampleIdx };
       rows = rows.map(function (r) { return clearValues(r); });
+    }
+
+    /* ---------- 附件3：进度表（★ 2026-10 第十八批接线；附件1/2 的分支一个字没动） ----------
+       ⚠️ 顺序很重要：`clearValues`（上面那句）已经把**整表值格清空**——包括 17 行语文样例，
+          所以下面往进度表里写的每一行都必须**显式构造**（不留任何"没数据就保持原样"的分支，
+          否则样例会漏进导出件）。
+       ⚠️ 模板里进度表的「效果评估」列有**纵向合并**（r29–31 / r33–35 共享一格）。这里用
+          "某行第 3 格文字非空"定位数据行、把**整段**替换成普通 4 格行，纵向合并自然消失
+          —— 那一列一期留空，正好规避"合并格放了内容、后续行又各写一遍"的错位。 */
+    if (att === '附件3') {
+      /* ① 辅导时间 / 周课时：模板那句话是**整格连排**的，所以按片段替换（不动固定文字） */
+      const durRow = requireRow(rows, '辅导进度及结果验收', att);
+      let durText = cellText(splitCells(rows[durRow])[0].xml);
+      if (v.durationText) durText = durText.replace(/辅导时间：[^；;]*/, '辅导时间： ' + v.durationText);
+      if (v.hoursPerWeekText) durText = durText.replace(/周课时:\s*[^课]*课时/, '周课时: ' + v.hoursPerWeekText + ' 课时');
+      rows[durRow] = fillCell(rows[durRow], 0, durText, att);
+
+      /* ② 逐次课表 → 进度表：**按模块合并相邻同名行**
+         用户口径（company-export-plan.md §2）：把逐次课表按模块合并 —— 模块只写一次、
+         课时数写该模块合计，延续行的「知识模块」留空（模板样例就是这个形状）。
+         ⚠️ 这条是本期最容易做坏的地方，有变异自证（把"合并"退回"逐行铺"，断言必须红）。 */
+      const srcRows = Array.isArray(data.rows) ? data.rows : [];
+      const merged = [];
+      srcRows.forEach(function (r) {
+        const mod = stripStageSuffix(r && r.module);
+        const last = merged[merged.length - 1];
+        if (last && mod && last.module === mod) {
+          last.topics.push(r.content);
+          last.goals.push(r.goal);
+          last.hours += Number(r.hours) || 0;
+        } else {
+          merged.push({
+            module: mod,
+            topics: [r && r.content],
+            goals: [r && r.goal],
+            hours: Number(r.hours) || 0,
+          });
+        }
+      });
+
+      /* ③ 进度表数据行的范围：用**清空前**算好的索引（`k3`，见上面的说明） */
+      const sampleIdx = k3.sampleIdx;
+      const totalKi = k3.totalKi;
+      const headKi = k3.headKi;
+
+      const built = merged.map(function (m) {
+        // ⚠️ 用"某一行"当格模板（只取它的 4 个 `<w:tc>`，丢弃其余行），**不要克隆整行** ——
+        //    被克隆的行可能在「效果评估」列带 `vMerge`（纵向合并），克隆出来会互相吞格。
+        const tpl = splitCells(rows[headKi + 1]).map(function (c) { return c.xml; });
+        return replaceCells(rows[headKi + 1], [
+          setCellText(tpl[0], m.module),
+          setCellText(tpl[1], kpLine(m.topics.join('；'), m.goals.join('；'))),
+          setCellText(tpl[2], m.hours ? m.hours + '小时' : ''),
+          setCellText(tpl[3], (data.lessonEval && data.lessonEval[m.module]) || ''),   // 一期留空
+        ]);
+      });
+      // 用实际行替换掉**全部**样例行（没有课表 = 一行都不留，防样例漏出）
+      rows = rows.slice(0, sampleIdx[0]).concat(built, rows.slice(totalKi));
+
+      /* ④ 合计行：用**清空前**记下的行号（替换后位置会变，所以按"数据行数"重算） */
+      const totalKi2 = sampleIdx[0] + built.length;
+      const tot = merged.reduce(function (a, m) { return a + (Number(m.hours) || 0); }, 0);
+      rows[totalKi2] = fillCell(rows[totalKi2], 2, tot ? tot + '小时' : '', att);
+
+      /* ⑤ 成绩结果统计：「入学成绩」可以填（面板上有个可选输入框），
+         「补习后」一期**留空**（要读档案里的历次成绩 = 跨工具取数，见方案 §4 决策 2）。
+         ⚠️ 附件3 这两格模板样例是「90」这种**光分数、没有排名**的写法，
+         所以**不能**用共享的 `entryScoreRank`（那个会拼成「90分/500名」，
+         而附件3 的抬头里根本没有"排名"这一栏）。 */
+      const scoreRow = findRow(rows, '成绩结果统计');
+      if (scoreRow >= 0) {
+        const es = String(data.entryScore == null ? '' : data.entryScore).trim();
+        rows[scoreRow] = fillCell(rows[scoreRow], 2, es, att);
+        // 第 3 格标签「补习后」、第 4 格是**合并格**（占两列）→ 一律写空
+        rows[scoreRow] = fillCell(rows[scoreRow], 4, '', att);
+      }
     }
 
     /* ---------- 抬头：逐行按标签填 ---------- */
@@ -401,5 +518,6 @@
     tableAt: tableAt, splitRows: splitRows, splitCells: splitCells,
     cellText: cellText, setCellText: setCellText, rowText: rowText,
     scoreRank: scoreRank, hoursPair: hoursPair, schoolGrade: schoolGrade,
+    stripStageSuffix: stripStageSuffix, kpLine: kpLine,
   } };
 }));

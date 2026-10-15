@@ -38,11 +38,13 @@ export type FeatureFlagSpec = {
 
 export const FEATURE_FLAG_REGISTRY: FeatureFlagSpec[] = [
   {
+    // ★ 2026-10 第十八批：附件3（辅导计划）也接了同一个开关 ——
+    //    key 不变（同一条种子），只是**多作用于一个工具**（后台那一行会同时管两个工具的导出）。
     key: "company_export",
-    label: "公司模板导出（试卷分析）",
-    note: "试卷分析「③ 生成报告」页的「🏢 公司模板导出」面板（附件1 / 附件2）。关掉后面板消失、按钮点不动；其它功能（表单、报告、AI 润色、旧导出）一律照常。",
+    label: "公司模板导出（试卷分析 + 数学方案）",
+    note: "试卷分析「③ 生成报告」页的「🏢 公司模板导出」面板（附件1 / 附件2），以及数学方案生成器的「🏢 公司模板导出（附件3）」按钮。关掉后这两个入口消失；其它功能（表单、报告、AI 润色、旧导出、生成方案）一律照常。",
     param: "nocompanyexport",
-    tools: ["paper-analysis"],
+    tools: ["paper-analysis", "math-plan"],
   },
   {
     // ★ 2026-10 第十八批（用户要求"初版功能要能一键关掉"）

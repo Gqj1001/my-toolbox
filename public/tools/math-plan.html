@@ -203,7 +203,40 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
        只在云端模式（/tools/math-plan.html）下可用；双击 HTML 打开时会提示不可用。 -->
   <button id="btnSavePlan" title="把这一次生成的方案存到该学生的档案里">📥 存入档案</button>
   <button class="primary" id="btnDoc">⬇ 导出 Word（模板）</button>
+  <!-- ★ 2026-10 第十八批：公司模板导出（附件3，辅导计划）。
+       ⚠️ 纯新增：原来那些导出按钮一个都没动（红线：现有生成逻辑一行不改）。 -->
+  <button id="btnCompany3" title="按公司「附件3 辅导计划」模板导出（抬头 + 进度表已填，过程内容留空）">🏢 公司模板导出（附件3）</button>
 </header>
+
+<!-- ★ 附件3 的面板（默认隐藏，点上面的按钮展开；整块可删，见 company-attachment3-plan.md） -->
+<div id="company3Panel" style="display:none;margin:10px 16px;padding:12px 14px;border:1px solid var(--line,#e4e4e7);border-radius:10px;background:#fff">
+  <div style="font-weight:600;margin-bottom:6px">🏢 公司模板导出 · 附件3（辅导计划）</div>
+  <div style="font-size:12px;color:#71717a;line-height:1.6;margin-bottom:10px">
+    以公司原件为底、只替换文字：<b>抬头 + 逐次课表</b>自动填；
+    <b>学情分析 / 措施 / 预期效果 / 效果评估 / 签字栏</b>留空给你在 Word 里写（打印后手签）。
+    进度表按<b>模块合并</b>：同名模块只写一次、课时数写该模块合计。
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-end">
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#52525b">
+      学校（模板要的是「学校+年级」，不是校区）
+      <input type="text" id="co3School" placeholder="如 天津一中" style="height:32px;padding:0 8px;border:1px solid #d4d4d8;border-radius:8px">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#52525b">
+      辅导时间
+      <input type="text" id="co3Duration" style="height:32px;padding:0 8px;border:1px solid #d4d4d8;border-radius:8px;width:230px">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#52525b">
+      周课时
+      <input type="text" id="co3Freq" style="height:32px;padding:0 8px;border:1px solid #d4d4d8;border-radius:8px;width:70px">
+    </label>
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#52525b">
+      入学成绩（可留空）
+      <input type="text" id="co3EntryScore" style="height:32px;padding:0 8px;border:1px solid #d4d4d8;border-radius:8px;width:100px">
+    </label>
+    <button class="primary" id="btnCompany3Export" style="height:32px">⬇ 导出附件3</button>
+    <span id="co3Hint" style="font-size:12px;color:#059669"></span>
+  </div>
+</div>
 
 <div class="layout">
   <!-- ================= 左：参数 ================= -->
@@ -400,6 +433,13 @@ textarea{resize:vertical;min-height:52px;line-height:1.5}
 <script src="./math-plan/template-data.js"></script>
 <script src="./math-plan/js/docx-builder.js"></script>
 <script src="./math-plan/js/report-template.js"></script>
+<!-- ★ 2026-10 第十八批：公司模板导出（附件3）。
+     ⚠️ 路径必须写**绝对路径**：本页在网站上由 /tools/math-plan 提供（**没有 .html 后缀**），
+        这时 `../company-template/x.js` 会被解析成 /company-template/x.js（404）——
+        实测踩到（引擎没加载、导出按钮点了没反应）。绝对路径与访问形式无关，最稳。
+     ⚠️ 引擎要的两个全局：`CompanyTemplateData`（本行）与 `DocxBuilder`（本页已有的那份）。 -->
+<script src="/tools/company-template/template-data.js"></script>
+<script src="/tools/company-template/company-docx.js"></script>
 
 <script>
 "use strict";
@@ -2010,8 +2050,143 @@ $("#btnSavePlan").addEventListener("click", savePlanToArchive);
 // exportWord() 函数本身保留着，万一以后要退回旧版，把按钮 HTML 加回来 + 恢复下面这行即可：
 // $("#btnDocLegacy").addEventListener("click", exportWord);
 
+/* =========================================================================
+   ★ 2026-10 第十八批：公司模板导出（附件3 · 辅导计划）
+   -------------------------------------------------------------------------
+   🏢 以公司原件（docs/company-template/附件3.docx）为底、**只替换文字**：
+      抬头 + 逐次课表（按模块合并）自动填；过程内容与签字栏留空给老师写。
+
+   ⚠️ 红线（用户 2026-10 明确）：**现有生成逻辑一行不改** —— 这一整块是**纯新增**，
+      用 `开始/结束` 标记包着，删掉整块即回到原样（另见 index 里的按钮与面板、
+      以及 bind() 里的两行接线，三处成对删）。
+
+   ⚠️ 一键开关（与 paper-analysis 那套同一口径，照 dsh-work-guide 坑 13）：
+      三种关法任选：① 把下面的常量改成 false；② 网址后加 ?nocompanyexport=1
+      （父页 /tools/math-plan?nocompanyexport=1、或工具页直链都认）；
+      ③ localStorage.setItem('mp_nocompanyexport','1')。
+      ⚠️ 服务端也会**自动拼**这个参数（后台「功能开关」关掉 company_export 时，
+       registry 里已把 math-plan 登记进去）—— 所以后台关掉＝一定关。
+   ========================================================================= */
+const COMPANY3_ENABLED = true;
+function company3Disabled(){
+  try{
+    if(COMPANY3_ENABLED !== true) return true;
+    if(new URLSearchParams(location.search).get('nocompanyexport') === '1') return true;
+    // 工具页嵌在 iframe 里（父页的 ?query 不会自动带进来）→ 单独读一次父页 search
+    try{
+      if(window.parent && window.parent !== window){
+        if(new URLSearchParams(window.parent.location.search).get('nocompanyexport') === '1') return true;
+      }
+    }catch(e){ /* 读不到就算了 */ }
+    return localStorage.getItem('mp_nocompanyexport') === '1';
+  }catch(e){ return false; }
+}
+
+/** 读一个输入框的值（本页没有通用的 val() 工具，统一走 $ 选择器） */
+function mp3val(id){
+  const el = document.getElementById(id);
+  return el && typeof el.value === "string" ? el.value.trim() : "";
+}
+
+/** 「YYYY年M月--YYYY年M月」：今天 → 今天 + 总周数（在校周数 + 假期周数） */
+function company3DefaultDuration(){
+  const weeks = Math.max(1, (Number(mp3val("f-wk")) || 0) + (Number(mp3val("f-wkh")) || 0));
+  const fmt = (d) => d.getFullYear() + "年" + (d.getMonth() + 1) + "月";
+  const start = new Date();
+  const end = new Date(start.getTime() + weeks * 7 * 24 * 3600 * 1000);
+  return fmt(start) + "--" + fmt(end);
+}
+
+/** 首次展开面板时把默认值填好（老师基本不用改） */
+function company3PrimeInputs(){
+  const dur = $("#co3Duration");
+  if(dur && !dur.value) dur.value = company3DefaultDuration();
+  const freq = $("#co3Freq");
+  if(freq && !freq.value) freq.value = String(mp3val("f-freq") || "2");
+}
+
+/** 从页面与逐次课表取数据（**只读**，不改任何现有状态） */
+function collectCompany3Data(){
+  const rows = currentLessonRows();      // 屏幕现取：AI 改写过的内容也要算数
+  const hours = rows.reduce((a, r) => a + (parseFloat(r.hours) || 0), 0);
+  return {
+    student: mp3val("f-name"),
+    school: mp3val("co3School"),
+    grade: mp3val("f-grade"),
+    teacher: mp3val("f-teach"),
+    subject: "数学",
+    totalHours: hours || (Number(mp3val("f-hours")) || ""),
+    durationText: mp3val("co3Duration") || company3DefaultDuration(),
+    hoursPerWeekText: mp3val("co3Freq") || String(mp3val("f-freq") || "2"),
+    entryScore: mp3val("co3EntryScore"),   // 只填「入学成绩」；「补习后」留空（口径见方案 §4 决策 2）
+    rows: rows,
+    lessonEval: {},                        // 一期留空：效果评估由老师在 Word 里写
+  };
+}
+
+/** 导出附件3 → 下载 .docx */
+function exportCompany3(){
+  if(company3Disabled()){ toast('公司模板导出已关闭'); return; }
+  if(!CURRENT){ toast('请先生成方案'); return; }
+  if(typeof CompanyDocx === 'undefined' || typeof CompanyTemplateData === 'undefined'){
+    toast('导出模块没加载，请刷新页面'); return; }
+  if(!mp3val('f-name')){ toast('请先填学生姓名'); return; }
+  let bin;
+  try{
+    bin = CompanyDocx.build('附件3', collectCompany3Data());
+  }catch(e){
+    toast('导出失败：' + (e && e.message ? e.message : e), 4200); return;
+  }
+  const blob = new Blob([bin], { type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = (mp3val('f-name') || '学生') + '-附件3-辅导计划.docx';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  const hint = $('#co3Hint');
+  if(hint) hint.textContent = '已导出附件3（抬头 + 进度表已填；过程内容与签字栏留空）';
+  toast('已按公司模板导出附件3', 3400);
+}
+
+/** 测试钩子（与 MathPlanHooks 同一做法；只读 + 拿字节，无副作用） */
+window.MathPlanCompany3Hooks = {
+  disabled: () => company3Disabled(),
+  collect: () => collectCompany3Data(),
+  defaultDuration: () => company3DefaultDuration(),
+  buildBytes: () => {
+    if(typeof CompanyDocx === 'undefined') return null;
+    const bytes = CompanyDocx.build('附件3', collectCompany3Data());
+    return { bytes: Array.prototype.slice.call(bytes), data: collectCompany3Data() };
+  },
+};
+/* ⭐⭐⭐ 公司模板导出（附件3）· 结束（删到这一行即可整块移除）⭐⭐⭐ */
+
 /* 首次进入提示 */
 refreshHints();
+
+/* ★ 2026-10 第十八批：公司模板导出（附件3）接线（与上面「开始/结束」那段**成对**：
+   删那段时必须连这里一起删）。写成"取不到元素就跳过"，是为了只删一半也不会把页面弄崩。 */
+{
+  const b3 = $("#btnCompany3");
+  if(b3){
+    b3.addEventListener("click", () => {
+      const p = $("#company3Panel");
+      if(!p) return;
+      const show = p.style.display === "none" || !p.style.display;
+      if(show) company3PrimeInputs();
+      p.style.display = show ? "" : "none";
+    });
+    const go = $("#btnCompany3Export");
+    if(go) go.addEventListener("click", exportCompany3);
+    // 关掉时：按钮与面板都不显示（其它功能一律照常）
+    if(company3Disabled()){
+      b3.style.display = "none";
+      const p = $("#company3Panel");
+      if(p){ p.style.display = "none"; p.setAttribute("hidden", "hidden"); }
+    }
+  }
+}
 syncSavePlanBtn();   // 未生成方案前「存入档案」是禁用的
 
 /* 阶段4：接账号里的学生档案（只在本站部署时开；双击 HTML 时是 no-op） */

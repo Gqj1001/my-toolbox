@@ -108,6 +108,17 @@ const DATA = {
     { no: 21, topic: "数列求和", point: "数列求和", reason: "错位相减未掌握" },
   ],
   longTexts: {},
+  // ★ 2026-10 第十八批：附件3 的逐次课表（**按模块合并**后填进度表）。
+  //   刻意用**同名相邻**两行来验"合并"：`导数…` 两条 + `解析几何` 两条 ⇒ 进度表应只有 2 个模块行。
+  rows: [
+    { module: "导数与函数单调性极值（概念与公式梳理）", content: "单调区间求解", goal: "会求单调区间", hours: 2 },
+    { module: "导数与函数单调性极值（真题精讲）", content: "含参分类讨论", goal: "不重不漏", hours: 2 },
+    { module: "解析几何（联立与韦达定理）", content: "联立求交点", goal: "步骤规范", hours: 4 },
+    { module: "解析几何（真题精讲）", content: "定点定值", goal: "拿步骤分", hours: 2 },
+  ],
+  durationText: "2026年10月--2027年1月",
+  hoursPerWeekText: "2",
+  lessonEval: {},
 };
 
 mkdirSync(OUT_DIR, { recursive: true });
@@ -132,9 +143,37 @@ for (const att of Object.keys(FILES)) {
   catch (e) { record(`${att} 能被 python-docx 打开`, false, String(e.message)); }
 }
 
+/* ---- ★ 附件3 的"按模块合并"在测试侧**独立复算**一遍（不是自证） ----
+   引擎的口径：**同名相邻**的模块合并成一行；`stage` 里的「（概念与公式梳理）」这类后缀要去掉。
+   放这一层（而不是 2.1 块里）是因为后面 2.2b 也要用它。 */
+const MERGED_MODULES = [];
+for (const r of DATA.rows) {
+  const mod = String(r.module || "").replace(/[（(][^（()）]*[)）]\s*$/, "").trim();
+  if (MERGED_MODULES.length && mod && MERGED_MODULES[MERGED_MODULES.length - 1] === mod) continue;
+  MERGED_MODULES.push(mod);
+}
+const N3 = MERGED_MODULES.length;
+
 /* ---- 2.1 尺寸与格式不走形 ---- */
 {
-  const dims = { "附件1": [13, 5], "附件2": [14, 7], "附件3": [39, 6] };   // 附件2 = 11 + 3 错题
+  // ⚠️ 顺序：**先算好各类"动态行数"与模板基线**，再拿它们去折算预期值
+  //    （第一版把这些放在下面，`dims` 用到了还没声明的变量 ⇒ TDZ 直接崩）。
+  const fp = Object.fromEntries(["附件1", "附件2", "附件3"].map(a => [a, templateFingerprint(a)]));
+  // 附件2 的错题行是**动态**的：样例 8 行 → 实际 N 行
+  const N = DATA.wrongRows.length, SAMPLE_ROWS = 8;
+  record(`（准备）附件3 的课表 ${DATA.rows.length} 条 → 按模块合并成 ${N3} 行（测试侧独立复算）`,
+    N3 === 2 && MERGED_MODULES[0] === "导数与函数单调性极值" && MERGED_MODULES[1] === "解析几何",
+    JSON.stringify(MERGED_MODULES));
+
+  // ⚠️ 预期值不再写死"39 行"这种数字，而是**从模板基线折算**：
+  //    · 附件1：13 行（不变）
+  //    · 附件2：11 固定 + N 错题行
+  //    · 附件3：**24 = 39 − 17 样例行 + 2 实际模块行**（2026-10 第十八批接了进度表之后）
+  //  ⚠️ 格式计数的**折算口径**（用 python 直接数模板反推出来的，别凭感觉改）：
+  //    模板里每个"进度/错题样例行"各带 1 个 tblBorders + 1 个 tblPrEx；
+  //    合并格：附件2 每样例行带 1 个 gridSpan + 2 个 vMerge，附件3 每样例行带 1 个 gridSpan + **2** 个 vMerge
+  //    （实测 34 → 14：少 20 = 10 行 × 2 —— 纵向合并"首格"与其延续格各算一次）。
+  const dims = { "附件1": [13, 5], "附件2": [11 + N, 7], "附件3": [39 - 17 + N3, 6] };
   for (const [att, [rows, cols]] of Object.entries(dims)) {
     const t = D[att]?.tables?.[0];
     record(`${att}：表格 ${rows} 行 × ${cols} 列（附件2 = 11 固定行 + 3 错题行）`,
@@ -148,24 +187,38 @@ for (const att of Object.keys(FILES)) {
     Object.values(D).every(d => JSON.stringify(d.page) === "[21,29.7]" &&
       JSON.stringify(d.margins) === "[2.54,1.91]"),
     JSON.stringify(D["附件2"]?.page) + " " + JSON.stringify(D["附件2"]?.margins));
-  const fp = Object.fromEntries(["附件1", "附件2", "附件3"].map(a => [a, templateFingerprint(a)]));
-  // 附件2 的错题行是**动态**的：样例 8 行 → 实际 3 行，合并格数按每行 2 个 gridSpan / 1 个 vMerge 折算
-  const N = DATA.wrongRows.length, SAMPLE_ROWS = 8;
-  const expectGrid = { "附件1": fp["附件1"].gridSpan, "附件3": fp["附件3"].gridSpan,
-                       "附件2": fp["附件2"].gridSpan - SAMPLE_ROWS * 2 + N * 2 };
-  const expectVMerge = { "附件1": fp["附件1"].vMerge, "附件3": fp["附件3"].vMerge,
-                         "附件2": fp["附件2"].vMerge - SAMPLE_ROWS * 1 + N * 1 };
+  // （模板基线 fp 与各类动态行数 N / N3 已在本段开头算好，见上面的说明）
   record("格式不走形①：表格边框（tblBorders）与**行级表格属性**（tblPrEx）都没丢",
-    ["附件1", "附件2", "附件3"].every(a =>
-      D[a].tblBorders === fp[a].tblBorders - (a === "附件2" ? SAMPLE_ROWS - N : 0) &&
-      D[a].tblPrEx === fp[a].tblPrEx - (a === "附件2" ? SAMPLE_ROWS - N : 0)),
+    ["附件1", "附件2", "附件3"].every(a => {
+      // 每个"被替换掉的样例行"少了 1 个 tblBorders + 1 个 tblPrEx（口径见上面的说明）
+      const cut = a === "附件2" ? SAMPLE_ROWS - N : a === "附件3" ? 17 - N3 : 0;
+      return D[a].tblBorders === fp[a].tblBorders - cut &&
+             D[a].tblPrEx === fp[a].tblPrEx - cut;
+    }),
     ["附件1", "附件2", "附件3"].map(a =>
       `${a}: tblBorders ${D[a]?.tblBorders}/${fp[a].tblBorders} tblPrEx ${D[a]?.tblPrEx}/${fp[a].tblPrEx}`).join(" | "));
-  record("格式不走形②：合并格数对得上（附件1/3 不变；附件2 按 8 样例行 → 3 实际行折算）",
-    ["附件1", "附件2", "附件3"].every(a =>
-      D[a].gridSpan === expectGrid[a] && D[a].vMerge === expectVMerge[a]),
+  record("格式不走形②：合并格数对得上（附件1 不变；附件2/3 按被替换掉的样例行折算）",
+    ["附件1", "附件2", "附件3"].every(a => {
+      // ⚠️ 口径（用 python 逐格数模板反推出来的，**别凭感觉"找规律"**）：
+      //    · 附件2 每个错题样例行 = **2 个 gridSpan + 1 个 vMerge**（实测 43→33 / 12→7，正好 5 行）
+      //    · 附件3 每个进度样例行 = **1 个 gridSpan**；vMerge 没有整齐规律
+      //      （r32 那行是 0 个、其余多为 2 个：15 行共 26 个 vMerge，但只能减掉 20 →
+      //       另有 6 个 vMerge 在"未被替换"的行上）。**第一版按"每行 2 个"算 ⇒ 假红**，
+      //       所以附件3 的 vMerge 直接钉实测值（种子固定，值是确定的）。
+      const cutRows = a === "附件2" ? SAMPLE_ROWS - N : a === "附件3" ? 17 - N3 : 0;
+      const gsPer = a === "附件2" ? 2 : 1;
+      const vmPer = a === "附件2" ? 1 : 0;
+      return D[a].gridSpan === fp[a].gridSpan - cutRows * gsPer &&
+             D[a].vMerge === fp[a].vMerge - cutRows * vmPer - (a === "附件3" ? 20 : 0);
+    }),
     ["附件1", "附件2", "附件3"].map(a =>
-      `${a}: gridSpan ${D[a]?.gridSpan}/${expectGrid[a]} vMerge ${D[a]?.vMerge}/${expectVMerge[a]}`).join(" | "));
+      `${a}: gridSpan ${D[a]?.gridSpan}/${fp[a].gridSpan} vMerge ${D[a]?.vMerge}/${fp[a].vMerge}`).join(" | "));
+  // ★ 这条才是"格式不走形"真正要防的事：**样例行没被清干净**（语文样例整块漏进导出件）。
+  //   因果护栏：进度表行数 = 模块数 ⇒ 合并格数必须**明显低于**模板基线（留 17 行就必然超标）。
+  record("★★格式护栏：附件3 的合并格数**明显少于**模板（证明确实把 17 行样例换掉了，而不是留着）",
+    D["附件3"].gridSpan <= fp["附件3"].gridSpan - 10 &&
+    D["附件3"].vMerge <= fp["附件3"].vMerge - 15,
+    `gridSpan ${D["附件3"].gridSpan} vs 基线 ${fp["附件3"].gridSpan}；vMerge ${D["附件3"].vMerge} vs 基线 ${fp["附件3"].vMerge}`);
   record("格式不走形③：单元格级边框（tcBorders）也没丢",
     ["附件1", "附件2", "附件3"].every(a => D[a].tcBorders === fp[a].tcBorders),
     ["附件1", "附件2", "附件3"].map(a => `${a}: ${D[a]?.tcBorders}/${fp[a].tcBorders}`).join(" | "));
@@ -207,6 +260,60 @@ record("附件3 抬头：学生姓名 / 学校年级 / 教师姓名 / 辅导课�
   cellOf("附件3", "学生姓名", "学生姓名") === "探针同学" &&
   cellOf("附件3", "教师姓名", "辅导课时") === "40小时",
   JSON.stringify([cellOf("附件3", "学生姓名", "学生姓名"), cellOf("附件3", "教师姓名", "辅导课时")]));
+
+/* ---- 2.2b ★ 附件3 进度表（2026-10 第十八批接线；逐格核对） ---- */
+{
+  const rows = D["附件3"].tables[0].cells;
+  const head = rowOf("附件3", "知识模块");
+  record("★附件3 进度表表头**原样保留**（知识模块 | 具体知识点（含检测）及预期目标 | 课时数 | 效果评估（比对目标）及方案调整）",
+    head && head.join("|") === "知识模块|具体知识点（含检测）及预期目标|课时数|效果评估（比对目标）及方案调整",
+    JSON.stringify(head));
+
+  const hi = rows.indexOf(head);
+  const dataRows = rows.slice(hi + 1, hi + 1 + N3);
+  const totalRow = rows[hi + 1 + N3];
+
+  record(`★★附件3 进度表 = **${N3} 行**（4 条课表按模块合并成 ${N3} 行，17 行语文样例一行不留）`,
+    dataRows.length === N3 && dataRows.every(r => r && r.length === 4),
+    `实际 ${dataRows.length} 行：${JSON.stringify(dataRows.map(r => r?.[0]))}`);
+
+  record("★★附件3 合并正确：模块列只在**第一行**写模块名、延续行留空（模板样例就是这个形状）",
+    dataRows[0]?.[0] === "导数与函数单调性极值" && dataRows[1]?.[0] === "解析几何",
+    JSON.stringify(dataRows.map(r => r?.[0])));
+
+  record("★★附件3 合并正确：课时数 = 该模块**各次课之和**（2+2=4、4+2=6）",
+    dataRows[0]?.[2] === "4小时" && dataRows[1]?.[2] === "6小时",
+    JSON.stringify(dataRows.map(r => r?.[2])));
+
+  record("★★附件3 合并正确：同一模块的多次课，知识点与目标**都保留**（用「；」连排，不是只留最后一次）",
+    /单调区间求解/.test(dataRows[0]?.[1] ?? "") && /含参分类讨论/.test(dataRows[0]?.[1] ?? "") &&
+    /联立求交点/.test(dataRows[1]?.[1] ?? "") && /定点定值/.test(dataRows[1]?.[1] ?? ""),
+    JSON.stringify(dataRows.map(r => (r?.[1] ?? "").slice(0, 40))));
+
+  record("★附件3 知识点的写法与模板样例同款（「知识点：…目标：…」两段连排）",
+    /^知识点：.+目标：/.test(dataRows[0]?.[1] ?? ""),
+    (dataRows[0]?.[1] ?? "").slice(0, 50));
+
+  record("★★附件3 合计行 = 课时数之和（2+2+4+2 = 10小时；**不是**模板样例的 40小时）",
+    totalRow?.[2] === "10小时" && !(totalRow ?? []).includes("40小时"),
+    `合计格=${JSON.stringify(totalRow?.[2])}（抬头那格「辅导课时」填的是计划总课时 40 小时，两者本来就不同：一个是计划、一个是逐次课表之和）`);
+
+  record("★附件3「效果评估」列一期留空（工具没有过程数据，不许编；也给老师手写留位置）",
+    dataRows.every(r => (r?.[3] ?? "") === "") && (totalRow?.[3] ?? "") === "",
+    JSON.stringify(dataRows.map(r => r?.[3])));
+
+  const dur = rowOf("附件3", "辅导进度及结果验收");
+  record("★附件3 辅导时间按输入填入固定那句话里（其余固定文字一个字没动）",
+    dur && dur[0] === "辅导进度及结果验收（辅导时间： 2026年10月--2027年1月；周课时: 2 课时/周）",
+    JSON.stringify(dur?.[0]));
+
+  // ⚠️ 「补习后」是那一行的**最后一格且是合并格**（后面没有别的格），所以不能用
+  //    `cellOf(...)` 那套"标签的下一格"去找它 —— 直接看整行（第一版就是这么假红的）。
+  const sr = rowOf("附件3", "成绩结果统计") ?? [];
+  record("★附件3 「入学成绩」填了、「补习后」留空（一期口径：只填能确定的，其余手写）",
+    sr.includes("90分") && sr.some(c => c === "") && !sr.some(c => /90.*-.*85/.test(c)),
+    JSON.stringify(sr));
+}
 
 /* ---- 2.3 附件2 错题表逐格 ---- */
 {
@@ -449,8 +556,169 @@ try {
     /附件1/.test(String(clicked?.hint ?? "")), JSON.stringify(clicked?.hint));
 
   /* ======================================================================
+     ★★ 附件3（辅导计划）接线（2026-10 第十八批）
+     ----------------------------------------------------------------------
+     验的是"**工具页真的把数据交给了引擎**"，而不是又跑一遍引擎（引擎那段在 §1/§2 已逐格核过）。
+     所以这里：填表 → 生成 → 面板取数 → 拿**真实字节** → 交给 python-docx 再核一次。
+     ====================================================================== */
+  {
+    await goto("/tools/math-plan", 5000);
+    const has3 = await inTool(`
+      return { btn: !!w.document.getElementById('btnCompany3'),
+               panel: !!w.document.getElementById('company3Panel'),
+               hooks: !!(w.MathPlanCompany3Hooks),
+               school: !!w.document.getElementById('co3School'),
+               dur: !!w.document.getElementById('co3Duration'),
+               freq: !!w.document.getElementById('co3Freq'),
+               entry: !!w.document.getElementById('co3EntryScore'),
+               mods: { engine: !!w.CompanyDocx, data: !!w.CompanyTemplateData } };
+    `);
+    record("★附件3：数学方案页有「🏢 公司模板导出（附件3）」按钮 + 面板（输入框齐全）",
+      has3?.btn === true && has3?.panel === true && has3?.school === true &&
+      has3?.dur === true && has3?.freq === true && has3?.entry === true,
+      JSON.stringify(has3));
+    record("★附件3：共用引擎与模板数据在数学方案页也加载成功（同一份 company-docx.js）",
+      has3?.mods?.engine === true && has3?.mods?.data === true && has3?.hooks === true,
+      JSON.stringify(has3?.mods));
+
+    const filled3 = await inTool(`
+      const setV = (id, v) => { const el = w.document.getElementById(id); if(!el) return false;
+        el.value = v; el.dispatchEvent(new w.Event('input', { bubbles: true })); return true; };
+      const okName = setV('f-name', '附件3探针同学');
+      setV('f-campus', '燕郊中学校区'); setV('f-teach', '郭庆杰');
+      const g = w.document.getElementById('f-grade');
+      if (g && g.options && g.options.length) { g.selectedIndex = Math.min(2, g.options.length - 1);
+        g.dispatchEvent(new w.Event('change', { bubbles: true })); }
+      w.document.getElementById('btnGen').click();
+      w.document.getElementById('btnCompany3').click();          // 展开面板 → 自动填默认值
+      const durDefault = w.document.getElementById('co3Duration').value;
+      const freqDefault = w.document.getElementById('co3Freq').value;
+      setV('co3School', '天津一中');                              // 决策1 的 A：手填学校（不是校区）
+      setV('co3Duration', '2026年10月--2027年1月');               // 老师改成自己的时间
+      setV('co3EntryScore', '90分');
+      const rows = w.MathPlanCompany3Hooks.collect().rows;
+      return { okName, durDefault, freqDefault, grade: g ? g.value : null,
+               rowCount: rows.length, firstModule: rows[0] && rows[0].module,
+               totalHours: w.MathPlanCompany3Hooks.collect().totalHours };
+    `);
+    record("★附件3（准备）：生成方案 → 展开面板（默认值自动填好、逐次课表取到了）",
+      filled3?.okName === true && filled3?.rowCount > 0,
+      JSON.stringify(filled3));
+    record("★附件3：面板默认值来自页面（辅导时间按今天+总周数推算、周课时=在校每周次数）",
+      /^\d{4}年\d{1,2}月--\d{4}年\d{1,2}月$/.test(String(filled3?.durDefault ?? "")) &&
+      String(filled3?.freqDefault ?? "") === "2",
+      `duration=${filled3?.durDefault} freq=${filled3?.freqDefault}`);
+
+    const built3 = await inTool(`
+      const out = { stage: 'start' };
+      const H = w.MathPlanCompany3Hooks;
+      out.hasHooks = !!H;
+      if (H) {
+        const r = H.buildBytes();
+        out.hasBytes = !!r;
+        if (r) {
+          const d = r.data;
+          const merged = [];
+          for (const x of d.rows) {
+            const m = String(x.module || '').replace(/[（(][^（()）]*[)）]\\s*$/, '').trim();
+            if (merged.length && m && merged[merged.length - 1] === m) continue;
+            merged.push(m);
+          }
+          // ⚠️ 十几万字节**不能**当数组原样返回（JSON 序列化会把它变成超大对象数组，
+          //    又慢又可能把 CDP 消息撑爆）→ 在页面里转成 base64 再传。
+          // ⚠️ 浏览器里 build() 返回的是**普通数组**（不是 Uint8Array）⇒ 不能用 subarray，
+          //    按下标循环（本轮实测就栽在这里：u8.subarray is not a function）。
+          let bin = '';
+          const u8 = r.bytes;
+          for (let i = 0; i < u8.length; i += 8192) {
+            const chunk = u8.slice ? u8.slice(i, i + 8192) : u8;
+            bin += String.fromCharCode.apply(null, chunk);
+          }
+          out.len = u8.length;
+          out.head = [u8[0], u8[1]];
+          out.b64 = w.btoa(bin);
+          out.student = d.student;
+          out.school = d.school;
+          out.dur = d.durationText;
+          out.rowCount = d.rows.length;
+          out.mergedCount = merged.length;
+          out.modules = merged;
+          out.stage = 'ok';
+        }
+      }
+      return out;
+    `);
+    record("★附件3：浏览器里能导出（拿到真实字节，PK 头正确）",
+      built3?.len > 20000 && built3?.head?.[0] === 80 && built3?.head?.[1] === 75,
+      `${built3?.len} 字节 head=${JSON.stringify(built3?.head)} stage=${built3?.stage} hasHooks=${built3?.hasHooks} hasBytes=${built3?.hasBytes} err=${built3?.__err ?? ""}`);
+    record("★附件3：取数取自**当前页面**（学生姓名/手填学校/改过的辅导时间都对）",
+      built3?.student === "附件3探针同学" && built3?.school === "天津一中" &&
+      built3?.dur === "2026年10月--2027年1月",
+      JSON.stringify({ student: built3?.student, school: built3?.school, dur: built3?.dur }));
+    record("★附件3：进度表行数会跟着课表变（课表 N 条 → 合并后 M 行），不是固定 17 行",
+      built3?.rowCount > 0 && built3?.mergedCount > 0 && built3?.mergedCount <= built3?.rowCount,
+      `课表 ${built3?.rowCount} 条 → 合并 ${built3?.mergedCount} 行：${JSON.stringify(built3?.modules)}`);
+
+    // 把浏览器拿到的**真实字节**写出来，交给 python-docx 独立核一次
+    if (typeof built3?.b64 === "string" && built3.b64.length > 1000) {
+      const f3 = `${OUT_DIR}\\浏览器导出-附件3.docx`;
+      writeFileSync(f3, Buffer.from(built3.b64, "base64"));
+      const d3 = dumpDocx(f3);
+      const r3 = d3.tables[0].cells;
+      const head3 = r3.find(r => r.some(c => c.indexOf("知识模块") >= 0));
+      const hi3 = r3.indexOf(head3);
+      const data3 = r3.slice(hi3 + 1, hi3 + 1 + built3.mergedCount);
+      record("★★附件3：浏览器导出件的进度表**逐格**与预期一致（模块名合并、课时为该模块之和）",
+        data3.length === built3.mergedCount &&
+        data3[0]?.[0] === built3.modules[0] &&
+        data3.every(r => r && r.length === 4),
+        JSON.stringify(data3.map(r => [r?.[0], r?.[2]])));
+      const flat = JSON.stringify(r3);
+      const hits = [];
+      for (const re of [/语病|文言文|图文转换|语言表达|敬辞|谦辞|非连续文本/]) {
+        const m = flat.match(new RegExp(re.source, "g"));
+        if (m) hits.push(re.source + "×" + m.length);
+      }
+      record("★★附件3：浏览器导出件**一个语文样例都不许有**（模板样例的语文内容，尤其进度表那 17 行）",
+        hits.length === 0,
+        hits.length ? "命中的样例字样：" + hits.join(" / ") : "没有任何模板样例字样");
+      record("★附件3：浏览器导出件的合计行 = 各模块课时之和",
+        data3.length > 0 && /^\d+小时$/.test(String(r3[hi3 + 1 + built3.mergedCount]?.[2] ?? "")),
+        `合计格=${JSON.stringify(r3[hi3 + 1 + built3.mergedCount]?.[2])}`);
+    } else {
+      record("★附件3：浏览器导出件能交给 python-docx 复核", false, "字节没拿到，跳过逐格复核");
+    }
+
+    // 一键开关（与附件1/2 同一套口径；这里验数学方案页也认）
+    await goto("/tools/math-plan?nocompanyexport=1", 4500);
+    const off3 = await inTool(`
+      return { disabled: w.MathPlanCompany3Hooks.disabled(),
+               btnShown: w.document.getElementById('btnCompany3').style.display !== 'none',
+               panelShown: w.document.getElementById('company3Panel').style.display !== 'none',
+               others: !!w.document.getElementById('btnDoc') && !!w.document.getElementById('btnGen') };
+    `);
+    record("⭐附件3：`?nocompanyexport=1` → 按钮与面板都消失",
+      off3?.disabled === true && off3?.btnShown === false && off3?.panelShown === false,
+      JSON.stringify(off3));
+    record("⭐附件3：关掉时**其它功能照常**（旧导出、生成方案按钮都在）",
+      off3?.others === true, JSON.stringify(off3));
+    // 关掉时点了也不导出（点不动）
+    const off3click = await inTool(`
+      const before = (w.MathPlanCompany3Hooks.disabled());
+      w.document.getElementById('btnCompany3Export').click();
+      return { disabled: before, hint: w.document.getElementById('co3Hint').textContent };
+    `);
+    record("⭐附件3：关掉后点导出按钮**什么都不会发生**（不报错、不产生文件、提示为空）",
+      off3click?.disabled === true && String(off3click?.hint ?? "") === "",
+      JSON.stringify(off3click));
+  }
+
+  /* ======================================================================
      ⭐ 一键开关（用户 2026-10 专门要求的）：三种关法都要真的管用
      ====================================================================== */
+  // ⚠️ 必须**先回到试卷分析页**：上一段测的是数学方案页，
+  //    不切回来的话下面这段会在错误的页面上找 CompanyExportHooks（本轮实测踩到）。
+  await goto("/tools/paper-analysis", 4500);
   {
     const on = await inTool(`
       const p = w.document.getElementById('companyPanel');
