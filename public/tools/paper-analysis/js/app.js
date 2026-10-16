@@ -234,6 +234,44 @@ async function loadFromCloud(){
   return { stuN: Object.keys(students).length, histN: Object.values(history).reduce((a, l) => a + l.length, 0) };
 }
 
+/* ---------- 状态 ---------- */
+/** ★ 2026-10 第二十批：「我的资料」（姓名/学科/校区/落款）。
+ *  它决定**导出的报告上写谁**（以前这里写死成 '郭庆杰'，会印进每一份导出）。
+ *  ⚠️ 读不到就是 null ⇒ 各处走原样（下划线/空），绝不因此导出空白或报错。 */
+let MY_PROFILE = null;
+
+/** 拉一次「我的资料」（只在云端模式下有意义；失败静默 —— 资料不该拦住工具） */
+async function loadMyProfile(){
+  if(!CLOUD_STORE.enabled) return;
+  try{
+    const d = await apiFetch('/api/profile');
+    MY_PROFILE = (d && d.ok && d.profile) ? d.profile : null;
+    hydrateProfileFields();
+  }catch(e){ /* 静默：资料拿不到不影响干活 */ }
+}
+
+/** 把资料填进输入框（**只填空着的**，不覆盖老师已经手填的内容） */
+function hydrateProfileFields(){
+  if(!MY_PROFILE) return;
+  const t = $('#stuTeacher');
+  if(t && !String(t.value || '').trim()){
+    // 优先用落款（例：数学郭老师），没有就用姓名
+    t.value = MY_PROFILE.signature || MY_PROFILE.teacherName || '';
+  }
+  const s = $('#stuSubject');
+  if(s && !String(s.value || '').trim() && MY_PROFILE.subject){ s.value = MY_PROFILE.subject; }
+  // 页头那行小字（以前写死成作者名字；现在按资料显示学科）
+  const who = document.getElementById('brandWho');
+  if(who) who.textContent = MY_PROFILE.subjectName || MY_PROFILE.teacherName || '';
+}
+
+/** 报告/导出里的「教师/分析人」：输入框优先 → 资料 → 空（**不再有写死的名字**） */
+function teacherForReport(){
+  const typed = val('stuTeacher');
+  if(typed) return typed;
+  return (MY_PROFILE && (MY_PROFILE.signature || MY_PROFILE.teacherName)) || '';
+}
+
 /* ---------- 存储 ---------- */
 const K_PAPER = 'paper_analysis_paper_v1';
 const K_STU   = 'paper_analysis_students_v1';
@@ -1808,7 +1846,7 @@ function generateReport(){
 
   const report = Narrator.buildReport({
     name, gender: val('stuGender'), grade: val('stuGrade'), subject: val('stuSubject'),
-    teacher: val('stuTeacher') || '郭庆杰', manager: val('stuManager'),
+    teacher: teacherForReport(), manager: val('stuManager'),
     paper, records,
     score:ctx.score, full:ctx.full,
     examDate: val('examDate'), examName: val('examName'),
@@ -1817,7 +1855,7 @@ function generateReport(){
     taughtContent: val('examTaught'),
     progress: val('stuProgress'),
     band:ctx.band, questionRows:ctx.questionRows, typeSummary:ctx.typeSummary,
-    advice, teacher: val('stuTeacher') || '郭庆杰'
+    advice, teacher: teacherForReport()
   });
 
   $('#reportText').textContent = report;
@@ -2259,7 +2297,7 @@ function exportDocx(){
 
   const payload = {
     name, gender: val('stuGender'), grade: val('stuGrade'), subject: val('stuSubject'),
-    teacher: val('stuTeacher') || '郭庆杰', manager: val('stuManager'),
+    teacher: teacherForReport(), manager: val('stuManager'),
     score: ctx.score, full: ctx.full,
     examDate: val('examDate'), examName: val('examName'),
     duration: val('examDuration') || '120min',
@@ -2375,7 +2413,7 @@ function collectCompanyData(){
     String(round2(Object.values(records).reduce((a, r) => a + num(r.got), 0)));
   return {
     student: val('stuName'), school: $('#coSchool').value.trim(), grade: val('stuGrade'),
-    teacher: val('stuTeacher') || '郭庆杰', subject: val('stuSubject') || '数学',
+    teacher: teacherForReport(), subject: val('stuSubject') || '数学',
     learnedHours: $('#coLearnedHours').value.trim(), totalHours: $('#coTotalHours').value.trim(),
     examType: $('#coExamType').value,
     entryScore: $('#coEntryScore').value.trim(), entryRank: $('#coEntryRank').value.trim(),
@@ -3043,6 +3081,9 @@ function init(){
 
     // 以账号里的数据为准（本机那份已经在上面画出来了，这里覆盖成云端真实数据）
     try{
+      // ★ 2026-10 第二十批：先把「我的资料」拉回来 —— 它决定**导出的报告上写谁**。
+      //   ⚠️ 拉不到/没填就什么都不做（走原样），**绝不让导出变空白**（有测试钉住）。
+      await loadMyProfile();
       const n = await loadFromCloud();
       if(hadLocal && n.histN === 0 && n.stuN === 0){
         // 本机有数据、账号里还是空的 → 正是要问用户的时候

@@ -19,9 +19,11 @@ type MembershipCardProps = {
   plan: "free" | "vip";
   isVip: boolean;
   expiresAt: string | null;
+  /** ★ 2026-10 第二十批：老师自己的资料（姓名/学科/校区）—— 没填就传 null */
+  profile?: { teacherName: string; subjectName: string; campus: string } | null;
 };
 
-export default function MembershipCard({ email, role, plan, isVip, expiresAt }: MembershipCardProps) {
+export default function MembershipCard({ email, role, plan, isVip, expiresAt, profile }: MembershipCardProps) {
   const days = remainingDays(expiresAt);
   // 会员已过期时按免费用户呈现，避免用户误以为仍是会员
   const planExpired = plan === "vip" && !isVip;
@@ -33,7 +35,21 @@ export default function MembershipCard({ email, role, plan, isVip, expiresAt }: 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1">
           <span className="text-xs text-zinc-500 dark:text-zinc-400">当前账号</span>
-          <span className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+          {/* ★ 2026-10 第二十批（用户口径）：这块显示**姓名 · 学科 · 校区**（主要信息），
+              邮箱挪到下面小字 —— 老师更需要一眼看到"我是谁/教什么/在哪个校区"。 */}
+          {profile?.teacherName ? (
+            <span className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              {[profile.teacherName, profile.subjectName, profile.campus].filter(Boolean).join(" · ")}
+            </span>
+          ) : (
+            <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              还没填资料
+              <Link href="/welcome" className="ml-2 font-normal text-zinc-500 underline dark:text-zinc-400">
+                现在填写
+              </Link>
+            </span>
+          )}
+          <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">
             {email ?? "（未取到邮箱）"}
           </span>
 
@@ -73,6 +89,14 @@ export default function MembershipCard({ email, role, plan, isVip, expiresAt }: 
               查看会员权益
             </Link>
           ) : null}
+          {/* ★ 2026-10 第二十批：「修改信息」的入口（用户点名要的功能）。
+              放这里的原因与「修改密码」一样：老师想改资料时，第一反应就是找"我的账号"这一块。 */}
+          <Link
+            href="/account/profile"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            修改信息
+          </Link>
           {/* ★ 2026-10 第十五批：「修改密码」的入口之一（另一个在登录页的"忘记密码"旁边）。
               放这里的原因：老师想改密码时，第一反应就是找"我的账号"这一块。 */}
           <Link

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>试卷分析工作台 · 郭庆杰</title>
+<title>试卷分析工作台</title>
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
 <header>
   <div class="brand">
     <span class="dot">📊</span>
-    <span>试卷分析工作台<small>郭庆杰</small></span>
+    <span>试卷分析工作台<small id="brandWho"></small></span>
     <span id="modeBadge" class="badge">💾 本机版</span>
   </div>
   <div class="spacer"></div>
@@ -128,7 +128,7 @@
         </div>
         <div class="f3">
           <div class="f"><label>科目</label><select id="stuSubject"></select></div>
-          <div class="f"><label>教师</label><input type="text" id="stuTeacher" value="郭庆杰"></div>
+          <div class="f"><label>教师</label><input type="text" id="stuTeacher" placeholder="留空则用「我的资料」里的姓名"></div>
           <div class="f"><label>学管师</label><input type="text" id="stuManager" placeholder="可不填"></div>
         </div>
         <div class="f3">

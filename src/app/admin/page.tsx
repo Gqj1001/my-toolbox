@@ -6,6 +6,8 @@ import RoleSelect from "@/components/role-select";
 import SiteHeader from "@/components/site-header";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
 import { getFeatureFlags } from "@/lib/feature-flags";
+import { getProfiles } from "@/lib/user-profile-db";
+import { subjectName } from "@/lib/user-profile";
 import { PLAN_LABELS, STATUS_LABELS, remainingDays } from "@/lib/membership-types";
 
 function formatTime(value: string | null) {
@@ -40,6 +42,11 @@ export default async function AdminPage() {
 
   // 功能开关（读不到表时 ready=false，功能一律保持开启）
   const flagState = await getFeatureFlags();
+
+  // ★ 2026-10 第二十批（用户要求）：用户列表要能看**老师姓名与校区**等基本信息。
+  //   一次批量查询取回所有资料（不是每人一次）—— 6 个用户一次请求。
+  //   ⚠️ 读不到（迁移 0021 没跑 / 没填）就是空对象 ⇒ 那一列退回显示邮箱，页面照常。
+  const profiles = await getProfiles(users.map((u) => u.user_id));
 
   return (
     <>
@@ -84,7 +91,7 @@ export default async function AdminPage() {
             <table className="w-full min-w-5xl border-collapse text-left text-sm">
               <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
-                  <th className="px-4 py-3 font-medium">邮箱</th>
+                  <th className="px-4 py-3 font-medium">姓名 / 邮箱</th>
                   <th className="px-4 py-3 font-medium">角色</th>
                   <th className="px-4 py-3 font-medium">会员状态</th>
                   <th className="px-4 py-3 font-medium">会员操作</th>
@@ -95,21 +102,52 @@ export default async function AdminPage() {
                 {users.map((item) => {
                   const isSelf = item.user_id === user?.id;
                   const days = remainingDays(item.expires_at);
+                  const p = profiles[item.user_id];
+                  const prof = {
+                    name: p?.teacherName ?? "",
+                    subjectName: subjectName(p?.subject ?? ""),
+                    campus: p?.campus ?? "",
+                  };
 
                   return (
                     <tr key={item.user_id} className="align-top">
                       <td className="px-4 py-3">
-                        <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                          {item.email ?? "(无邮箱)"}
-                        </span>
+                        {/* ★ 2026-10 第二十批（用户口径）：这一列改成显示**老师的姓名 + 校区**，
+                            邮箱挪到下面小字，那串 UUID **隐藏**（用户："这一堆字符码是啥我也不知道，
+                            可以直接隐藏掉"——它是 Supabase 的用户 ID，排障时才需要）。
+                            ⚠️ 没填资料的账号**仍然显示邮箱**（不能让人看起来像没有账号），
+                               并给一句"资料未填"的提示。 */}
+                        {prof.name || prof.campus ? (
+                          <>
+                            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                              {prof.name || "(未填姓名)"}
+                            </span>
+                            {prof.subjectName || prof.campus ? (
+                              <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                                {[prof.subjectName, prof.campus].filter(Boolean).join(" · ")}
+                              </div>
+                            ) : null}
+                            <div className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                              {item.email ?? "(无邮箱)"}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                              {item.email ?? "(无邮箱)"}
+                            </span>
+                            <div className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                              资料未填（姓名/校区）
+                            </div>
+                          </>
+                        )}
                         {isSelf ? (
                           <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                             你自己
                           </span>
                         ) : null}
-                        <div className="mt-0.5 font-mono text-xs text-zinc-400 dark:text-zinc-500">
-                          {item.user_id}
-                        </div>
+                        {/* UUID 保留在 HTML 里但**视觉隐藏**：排障时还能从页面源码拿到 */}
+                        <div className="sr-only" data-user-id>{item.user_id}</div>
                       </td>
 
                       <td className="px-4 py-3">

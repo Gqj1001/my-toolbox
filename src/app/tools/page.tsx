@@ -2,6 +2,8 @@ import MembershipCard from "@/components/membership-card";
 import SiteHeader from "@/components/site-header";
 import ToolGrid from "@/components/tool-grid";
 import { getViewer } from "@/lib/viewer";
+import { getUserProfile } from "@/lib/user-profile-db";
+import { subjectName } from "@/lib/user-profile";
 import { PLAN_LABELS } from "@/lib/membership-types";
 import { getActiveTools, toToolView } from "@/lib/tools-db";
 
@@ -31,6 +33,9 @@ export default async function ToolsPage({ searchParams }: PageProps<"/tools">) {
 
   const membership = viewer.membership;
   const { user, role } = viewer;
+  // ★ 2026-10 第二十批：老师自己的资料（姓名/学科/校区）—— 账号卡上要显示。
+  //   ⚠️ 读不到（迁移 0021 没跑 / 没填）就是 null ⇒ 卡片显示"还没填资料 + 现在填写"。
+  const userProfile = user ? await getUserProfile(user.id) : null;
   const tools = toolRows.map((row) => toToolView(row, membership));
   const lockedCount = tools.filter((t) => t.locked).length;
 
@@ -58,6 +63,15 @@ export default async function ToolsPage({ searchParams }: PageProps<"/tools">) {
           plan={membership.plan}
           isVip={membership.isVip}
           expiresAt={membership.expiresAt}
+          profile={
+            userProfile
+              ? {
+                  teacherName: userProfile.teacherName,
+                  subjectName: subjectName(userProfile.subject),
+                  campus: userProfile.campus,
+                }
+              : null
+          }
         />
 
         <div className="flex flex-col gap-1">

@@ -292,15 +292,16 @@ try {
       /三河一中|学校/.test(String(ed?.ph?.campus ?? "")) && !/校区/.test(String(ed?.ph?.campus ?? "")),
       JSON.stringify(ed?.ph));
 
-    // 详情页抬头与名单卡片都要能**一眼看到对接人**
+    // 详情页抬头与名单卡片都要能**一眼看到对接人**（只显示人名，前后不加"学管师"三个字）
     const head = await inDoc(`return document.body.innerText.replace(/\\s+/g,' ')`);
-    record("★★详情页抬头显示学管师（对接人一眼可见）",
-      /学管师\s*李学管/.test(String(head)),
+    record("★★详情页抬头显示学管师姓名（对接人一眼可见，**不带「学管师」三个字**）",
+      /·\s*李学管\s*·/.test(String(head)) && !/学管师\s*李学管/.test(String(head)),
       (String(head).match(/^[^]{0,120}/) ?? [""])[0]);
     await goto("/dashboard?q=" + encodeURIComponent("档案探针"), 4000);
     const listTxt = await inDoc(`return document.body.innerText.replace(/\\s+/g,' ')`);
-    record("★名单卡片也显示学管师（不用点进去就能看到对接人）",
-      /学管师\s*李学管/.test(String(listTxt)) && /三河一中/.test(String(listTxt)),
+    record("★名单卡片也显示学管师姓名（不用点进去就能看到对接人）",
+      /李学管/.test(String(listTxt)) && /三河一中/.test(String(listTxt)) &&
+        !/学管师\s*李学管/.test(String(listTxt)),
       String(listTxt).slice(0, 160));
     await goto(`/dashboard?name=${encodeURIComponent(STU)}`, 4000);
   }

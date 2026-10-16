@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>课后反馈工作台 · 郭庆杰</title>
+<title>课后反馈工作台</title>
 <style>
 /* ==================== 设计变量 ==================== */
 :root{
@@ -367,7 +367,7 @@ header .spacer{flex:1}
 <header>
   <div class="brand">
     <span class="dot">📋</span>
-    <span>课后反馈工作台<small>郭庆杰</small></span>
+    <span>课后反馈工作台<small id="brandWho"></small></span>
     <span id="modeBadge" style="font-size:11px;padding:3px 9px;border-radius:10px;background:rgba(255,255,255,.2);font-weight:600">💾 本机版</span>
   </div>
   <div class="spacer"></div>
@@ -709,7 +709,7 @@ const HIST_KEY    = 'feedback_history_v1';
 /* ⚠️ API.mode 在这里就**同步**定好初值（见下面 NEXT_MODE 的说明）。
    云端模式下如果等到异步回调里才设 'next'，徽章会先显示「💾 本机版」再跳成「☁️ 云端版」——
    那正是要消灭的闪烁。'connecting' 是云端模式「数据还没到」的中间态。 */
-const API = { mode:'local', isAdmin:false, serverCfg:{}, writeToken:'' };
+const API = { mode:'local', isAdmin:false, serverCfg:{}, writeToken:'', userId:'' };
 
 /* 集成到 Next 应用时使用内置接口；离线双击打开仍是 local 模式。
    注意：iframe 加载的是 /tools/feedback.html，因此用 startsWith 匹配前缀，
@@ -1002,6 +1002,84 @@ function askAccessPass(){
  *        这个项目已经在「标签有两个来源」上踩过一次，不再留第二套逻辑。
  *    `/api/feedback/mode` 这个**路由文件仍然保留**（将来别的入口可能要用），
  *    只是**不再出现在工具页的启动链路上**。 */
+/* =========================================================================
+   ★ 2026-10 第二十批：落款与学科「按账号记住」（用户原话："你把我的名字去了，改为填写的方式
+   …… 填写以后未来就会记忆我这个账号上次用的落款和学科，避免了重新等待加载的过程"）
+   -------------------------------------------------------------------------
+   三层取值，**先快后准**：
+     ① 本机记住的（localStorage，按账号 id 分开存）⇒ 打开页面**立刻**填好，不用等网络；
+     ② 云端「我的资料」（/api/profile，姓名+学科 ⇒ 落款）⇒ 换电脑/清缓存也能恢复；
+     ③ 都没有 ⇒ 留空让老师填（**绝不再写死作者的名字**）。
+   ⚠️ 老师手改过的落款会被记住（就是用户要的"记忆"），下次打开自动带回来。
+   ========================================================================= */
+const K_MYPREF = 'fb_my_prefs_v1';
+let MY_PROFILE = null;
+
+function myPrefKey(uid){ return K_MYPREF + ':' + (uid || 'anon'); }
+/** 读本机记忆：**优先账号键，其次匿名键**。
+ *  ⚠️ 为什么要两层：`userId` 是异步拿到的，而"打开就填好"必须**同步**完成。
+ *     第一版只读账号键 ⇒ 启动那一刻 userId 还没到 ⇒ 读到空、刷新后落款不回来（实测踩到）。
+ *     现在写入时**两个键都写**，读取时按顺序兜底，彻底不依赖时机。 */
+function loadMyPrefs(uid){
+  for(const k of [myPrefKey(uid), myPrefKey('')]){
+    try{
+      const v = JSON.parse(localStorage.getItem(k) || 'null');
+      if(v && v.sig) return v;
+    }catch(e){ /* 继续试下一个 */ }
+  }
+  return {};
+}
+function saveMyPrefs(uid, patch){
+  try{
+    const cur = loadMyPrefs(uid);
+    const next = JSON.stringify(Object.assign(cur, patch, { at: Date.now() }));
+    // 账号键（换账号互不影响）+ 匿名键（启动早期还没有 userId 时的兜底）
+    localStorage.setItem(myPrefKey(uid), next);
+    if(uid) localStorage.setItem(myPrefKey(''), next);
+  }catch(e){ /* 存不下就算了，不影响使用 */ }
+}
+/** ① 本机那份：打开就填（不覆盖老师已经手填/已经带出来的内容）
+ *  ⚠️ `API.userId` 来自云端数据（loadCloudScoped 里的 `d.userId`）。它**到得比较晚**，
+ *     所以这个函数要能被调用两次：init() 里先按 'anon' 填一次（按钮立刻可用），
+ *     云端 userId 回来后再调一次 —— 见 loadMyProfile()。
+ *  ⚠️ 第一版没有这一步：匿名键与账号键各存一份，"换账号"时会把别人的落款带出来（真 bug，已修）。 */
+function restoreMyPrefs(){
+  const uid = (typeof API !== 'undefined' && API.userId) ? API.userId : '';
+  const p = loadMyPrefs(uid);
+  const t = $('#teacherInput');
+  if(t && !String(t.value || '').trim() && p.sig) t.value = p.sig;
+  if(p.subject && $('#subjectSelect') && !$('#subjectSelect').value) $('#subjectSelect').value = p.subject;
+}
+/** ② 云端资料：本机没有时才兜底填 */
+async function loadMyProfile(){
+  try{
+    const d = await apiFetch('api/profile');
+    MY_PROFILE = (d && d.ok && d.profile) ? d.profile : null;
+    // ★ 这个接口会顺带回一份 userId（比云端数据到得早）⇒ 立刻就能按账号认本机记忆，
+    //   不必等 loadCloudScoped（那正是用户说的"避免了重新等待加载的过程"）。
+    if(d && d.userId && !API.userId) API.userId = d.userId;
+  }catch(e){ MY_PROFILE = null; }
+  restoreMyPrefs();
+  const uid = (typeof API !== 'undefined' && API.userId) ? API.userId : '';
+  const who = document.getElementById('brandWho');
+  if(who) who.textContent = MY_PROFILE ? (MY_PROFILE.subjectName || MY_PROFILE.teacherName || '') : '';
+  if(!MY_PROFILE) return;
+  const t = $('#teacherInput');
+  const local = loadMyPrefs(uid);
+  if(t && !String(t.value || '').trim()){
+    // 本机记过就用本机的；否则用云端资料拼出来的落款（学科+姓名+老师）
+    t.value = local.sig || MY_PROFILE.signature || '';
+  }
+  const sub = $('#subjectSelect');
+  if(sub && MY_PROFILE.subject && !String(sub.value || '').trim()) sub.value = MY_PROFILE.subject;
+}
+/** ③ 老师改过就记住（落款 + 科目）——正是用户要的"记忆上次用的" */
+function rememberMyPrefs(){
+  const uid = (typeof API !== 'undefined' && API.userId) ? API.userId : '';
+  const sub = $('#subjectSelect');
+  saveMyPrefs(uid, { sig: val('teacherInput'), subject: sub ? sub.value : '' });
+}
+
 function detectServer(){
   // 非 http/https（即 file:// 双击打开）直接判定为离线模式
   if(location.protocol !== 'http:' && location.protocol !== 'https:') return Promise.resolve(false);
@@ -2310,6 +2388,9 @@ function loadCloudScoped(){
       //    徽章一直是载入中，而内容其实早就好了）。
       API.mode = 'next';
       API.isAdmin = !!d.isAdmin;
+      // ★ 2026-10 第二十批：把 userId 记下来 —— "落款/学科按账号记住"要靠它当 storage key。
+      //   ⚠️ 第一版漏了这一步，于是记忆键退化成全局 'anon'（换账号会带出别人的落款）。
+      API.userId = d.userId || '';
       updateModeBadge();
       // 「☁️ 云端版 / 云端版（管理员）」那一行同理：首屏按最保守假设写的
       // （isAdmin=false），这里按服务端的答案纠正。
@@ -3040,9 +3121,14 @@ async function polish(){
    15. 事件绑定
    ========================================================================== */
 function bind(){
+  /* ★ 2026-10 第二十批：「落款」改成填写并**按账号记住**（用户要求）。
+     ⚠️ 只监听 input（不监听 change）：change 要等失焦才触发，老师填完就点"生成"会记不住。 */
+  const ti = $('#teacherInput');
+  if(ti) ti.addEventListener('input', rememberMyPrefs);
   $('#stageSelect').onchange = ()=>{ onScopeChanged(); refreshGreetingOptions(); renderManage(); };
   $('#subjectSelect').onchange = ()=>{
     rememberSubject();
+    rememberMyPrefs();      // 科目也一起记（用户要的"记忆学科"）
     try{ localStorage.removeItem(CLOUD_TB_KEY); localStorage.removeItem(CLOUD_CH_KEY); }catch(e){}
     cloudData = null;
     clearSelectedKeywords();
@@ -3308,7 +3394,12 @@ function init(){
   $('#dateInput').value = (now.getMonth()+1) + '月' + now.getDate() + '日';
   $('#subjectSelect').value = 'math';
   $('#templateSelect').value = 'regular';
-  $('#teacherInput').value = '数学郭老师';
+  // ★ 2026-10 第二十批（用户原话："你把我的名字去了，改为填写的方式 …… 填写以后未来就会
+  //   记忆我这个账号上次用的落款和学科，避免了重新等待加载的过程"）：
+  //   ⚠️ 这里以前**硬写成 '数学郭老师'**（作者的名字，印在每份反馈上）。
+  //   现在：① 先用本机记住的落款/科目（localStorage 按账号存）⇒ **打开就填好、不用等网络**；
+  //         ② 云端资料回来后再兜底填（见 loadMyProfile）。
+  restoreMyPrefs();
   refreshGreetingOptions();
   applyApiCfg();
   bind();
@@ -3338,6 +3429,10 @@ function init(){
 
   detectServer().then(isServer=>{
     updateModeBadge();
+    // ★ 2026-10 第二十批：联网模式下把「我的资料」拉回来（落款/学科的**云端兜底**）。
+    //   ⚠️ 不 await：本机记住的那份已经在 init() 里填好了，这里是"换电脑也能恢复"的补位，
+    //      慢一点没关系，**绝不能**让它挡住首屏。
+    if(isServer) loadMyProfile();
     const box = document.getElementById('serverBox');
     const line = document.getElementById('serverLine');
     if(isServer){

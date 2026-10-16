@@ -259,7 +259,9 @@
     d.school  = ctx.school || '';
     d.grade   = ctx.grade || '';
     d.mgr     = ctx.manager || '';
-    d.teacher = ctx.teacher || '郭庆杰';
+    // ⚠️ 2026-10 第二十批：不再写死老师姓名（见 report-docx.js 同一处说明）。
+    //    调用方用「我的资料」补；取不到就留空。
+    d.teacher = ctx.teacher || '';
     d.subject = ctx.subject || '数学';
     d.tscore  = fmt(r2(ctx.score));
 

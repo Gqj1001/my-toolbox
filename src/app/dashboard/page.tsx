@@ -140,9 +140,11 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           <header className="flex flex-col gap-1">
             <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{selected}</h1>
             {/* ★ 2026-10 第十九批（用户口径）：这一行就是"对接人一眼可见"的地方 ——
-                显示 年级 · 学校 · **学管师**。任课教师不再出现在这里（老师一般只教一门课）。 */}
+                显示 年级 · 学校 · **学管师姓名**。
+                ⚠️ 用户 2026-10 明确：学管师名字前**不要**加"学管师"三个字（只显示人名）。
+                任课教师不再出现在这里（老师一般只教一门课）。 */}
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              {[info.grade, info.campus, info.manager && `学管师 ${info.manager}`]
+              {[info.grade, info.campus, info.manager]
                 .filter(Boolean).join(" · ") || "还没有填年级 / 学校 / 学管师"}
               {" · 共 "}{items.length}{" 条记录"}
             </p>
@@ -263,8 +265,9 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           <ul className="grid gap-2 sm:grid-cols-2">
             {filtered.map((n) => {
               const info = all[n] as Record<string, unknown>;
-              // ★ 2026-10 第十九批：列表卡片显示 年级 · 学校 · **学管师**（对接人一眼可见）
-              const parts = [info.grade, info.campus, info.manager && `学管师 ${info.manager}`]
+              // ★ 2026-10 第十九批：列表卡片显示 年级 · 学校 · **学管师姓名**
+              //   （对接人一眼可见；用户明确**不要**在名字前加"学管师"三个字）
+              const parts = [info.grade, info.campus, info.manager]
                 .filter(Boolean) as string[];
               return (
                 <li key={n}>

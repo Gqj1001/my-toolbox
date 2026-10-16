@@ -18,6 +18,8 @@ import {
   studentsByName,
 } from "@/lib/feedback-db";
 import { parseScope, subjectHasTextbook } from "@/lib/feedback-taxonomy";
+import { getUserProfile } from "@/lib/user-profile-db";
+import { resolveSignature, subjectName } from "@/lib/user-profile";
 import { createClient } from "@/lib/supabase/server";
 import { getViewer } from "@/lib/viewer";
 
@@ -90,10 +92,13 @@ export async function GET(request: NextRequest) {
     // ⚠️ students / history 是**按用户**的数据，必须把 user.id 传进去当缓存 key ——
     //    不然会把别人的档案/历史缓存到共享桶里发出去（RLS 只保证「查出来的是本人的」，
     //    保证不了「缓存 key 不串号」）。
-    const [phrases, students, history] = await Promise.all([
+    const [phrases, students, history, profile] = await Promise.all([
       getPhrases(),
       getStudents(guard.user.id),
       getHistory(guard.user.id),
+      // ★ 2026-10 第二十批：老师自己的资料（姓名/学科/校区）。
+      //   ⚠️ 读不到（迁移 0021 没跑 / 没填）⇒ null ⇒ 前端走原来的兜底，**不会导出空白**。
+      getUserProfile(guard.user.id),
     ]);
 
     const categories = stage || subject ? await getCategories(stage) : await getCategories();
@@ -125,6 +130,18 @@ export async function GET(request: NextRequest) {
       history: historyByStudent(history),
       // 前端据此决定是否显示「管理关键词」入口
       isAdmin: guard.role === "admin",
+      // ★ 2026-10 第二十批：老师资料（工具用它拼落款、填导出抬头）。
+      //   ⚠️ 没填 / 表没建时为 null —— 前端必须走兜底（有断言钉住"不许导出空白"）。
+      profile: profile
+        ? {
+            teacherName: profile.teacherName,
+            subject: profile.subject,                       // code（math/chinese…）
+            subjectName: subjectName(profile.subject),       // 显示名（数学/语文…）
+            campus: profile.campus,
+            // 落款：手填优先，否则"学科+姓名+老师"（例：数学郭老师）
+            signature: resolveSignature(profile),
+          }
+        : null,
     };
 
     let fallbackTopics: Map<number, string[]> | null = null;

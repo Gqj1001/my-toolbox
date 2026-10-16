@@ -60,7 +60,9 @@
     const C = [];
     const name = ctx.name || '';
     const subject = ctx.subject || '数学';
-    const teacher = ctx.teacher || '郭庆杰';
+    // ⚠️ 2026-10 第二十批：**不再写死老师姓名**（以前是 `|| '郭庆杰'`，会印进每一份导出）。
+    //    调用方（app.js）会用「我的资料」里的姓名/落款补进来；真取不到就留空给老师手写。
+    const teacher = ctx.teacher || '';
     const score = r2(ctx.score);
     const full = r2(ctx.full) || 150;
     const paper = ctx.paper || {};

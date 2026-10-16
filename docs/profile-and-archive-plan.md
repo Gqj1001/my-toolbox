@@ -1,5 +1,9 @@
-# 学员档案「三格」+ 个人资料（姓名/学科/校区）· 方案与实做记录
+# 学员档案「三格」+ 个人资料（姓名/学科/校区）+ 后台用户列表 · 方案与实做记录
 
+> ✅ **三批全部完成**（2026-10，第十九～二十批）。第一批已上线；第二、三批见 §五/§六 的实做记录。
+> ⚠️ **第二、三批需要你在 Supabase 跑一次迁移 `0021_user_profiles.sql`**（只建一张新表；
+> **不跑也安全**：资料读不到时一切走兜底，功能照常，保存时才提示去跑）。
+>
 > 用户 2026-10 提的（逐字）：
 > 「在学生档案这部分，我想改一些东西，比如第二格我想把校区改为学校，第三格我想把教师改为学管师。
 > 改的原因是这样的：每一个老师使用时，自己保存的学生档案要做区分，一个老师一般只教一门课，
@@ -75,8 +79,7 @@
 | 存储 | **新表 `user_profiles`**（每人一行：`user_id` / `name` / `subject` / `campus` / `updated_at`）+ **迁移 `0021`**（要用户在 Supabase 跑一次） |
 | 注册后引导 | `/welcome`（**可"以后再说"**，不挡注册）；没填的话首页一直提示补 |
 | 首页账号卡 | 显示 **姓名 · 学科 · 校区** + 「**修改信息**」按钮（`/account/profile`） |
-| 工具读取 | 扩展**已有的** `/api/feedback/data` 的 GET 返回里加一个 `profile` 段（三个工具都已经在调它，不必新开接口）；数学方案的档案保存也在走 `/api/students` |
-| 清掉写死 | `public/tools/paper-analysis/js/narrator.js`（2 处）、`report-docx.js`、`report-template.js`、`app.js`（4 处）、两个 `index.html`/`feedback.html` 的标题与页头 |
+| 工具读取 | 扩展**已有**的 `/api/feedback/data` 的 GET 返回里加一个 `profile` 段（三个工具都已经在调它，不必新开接口）；数学方案的档案保存也在走 `/api/students` || 清掉写死 | `public/tools/paper-analysis/js/narrator.js`（2 处）、`report-docx.js`、`report-template.js`、`app.js`（4 处）、两个 `index.html`/`feedback.html` 的标题与页头 |
 | 兜底 | **读不到资料/表还没建 ⇒ 行为与现在完全一致**（不会变空、不会坏）。这条必须有断言钉住 |
 
 ### 2.3 ⚠️ 迁移没跑时也要能用（重要设计）
@@ -109,3 +112,66 @@
 - ❌ **不改数据库列名**（`campus`/`teacher`/`manager` 保持原样）：改列名要迁移，还会碰到三个工具的写入。
 - ❌ **不动旧数据**：已有记录里的「郭庆杰」继续在报告与 Word 里照常显示（那是"当时那份"）。
 - ❌ 不做"按账号切换工具内所有设置"：本批只收**姓名 / 学科 / 校区**三样。
+
+---
+
+## 五、✅ 第二批实做记录（个人资料）
+
+| 文件 | 性质 | 说明 |
+|---|---|---|
+| `supabase/migrations/0021_user_profiles.sql` | **新增（要你跑一次）** | `user_profiles`（user_id 主键 / teacher_name / subject / campus / sig_teacher）+ RLS（**只有本人能读写自己那行**）+ 自检 SQL |
+| `src/lib/user-profile.ts` | 新增 | 学科清单（与工具 `SUBJECTS` 同一套 code）、`subjectName()`、`defaultSignature()`、`resolveSignature()`、`checkProfileInput()`、迁移常量与提示文案 |
+| `src/lib/user-profile-db.ts` | 新增 | 读写 + **读不到就返回 null**（表没建 / DB 抖动都走兜底，**绝不抛错拦页面**）+ 批量读（后台用） |
+| `src/app/api/profile/route.ts` | 新增 | 给工具页读资料；**顺带回 userId**（工具用它当"按账号记住落款"的 key） |
+| `src/app/api/feedback/data/route.ts` | 改一行 | 响应里加 `profile` 段（课后反馈从它取落款）；与其它查询**并发**取，不拖慢 |
+| `src/app/account/profile/page.tsx` + `src/components/profile-form.tsx` + `src/app/account/profile-actions.ts` | 新增 | 「我的资料」页与保存动作（保存失败**分两种**：表没建→点名迁移，其它→重试） |
+| `src/app/welcome/page.tsx` | 新增 | 注册后的「完善资料」引导页（**可跳过**，用户拍板） |
+| `src/components/membership-card.tsx` + `src/app/tools/page.tsx` | 改 | 账号卡显示 **姓名 · 学科 · 校区**（邮箱挪到小字）+「**修改信息**」入口 |
+| `public/tools/paper-analysis/js/{narrator,report-docx,report-template,app}.js` | 改 | **清掉 4 处 `\|\| '郭庆杰'` 兜底**（它们会直接印进导出的 Word）；改为从资料取，取不到给**下划线** |
+| `public/tools/paper-analysis/index.html`、`public/tools/feedback.html` | 改 | 标题/页头不再写死名字；反馈的**落款**改成填写 + **按账号记住**（两个 localStorage 键兜底时机） |
+
+### 5.1 实做中抓到的两个**真问题**（都修了，都有断言钉住）
+
+1. **`API.userId` 从来没被赋值** ⇒ "落款按账号记住"退化成**全局一份**（换账号会带出别人的落款）。
+   修：云端数据与 `/api/profile` 都回 userId，写进 `API.userId`；并且**写两个键、读时按序兜底**，
+   彻底不依赖"userId 什么时候到"。
+2. **启动时序**：`restoreMyPrefs()` 跑在启动早期（那时 userId 还没到）⇒ 刷新后落款不回来。
+   这就是上面"双键兜底"要解决的；有断言"刷新后自动带出上次的落款"。
+
+### 5.2 测试与变异自证
+
+`tests/profile.test.mjs` **32 项**，最有价值的一条（兜底）：
+**资料没填 / 表没建时，报告里「教师/分析人」栏必须是下划线，绝不能是空白、更不能是别人的名字** ——
+实测输出：`教师：＿＿＿＿`、`分析人：＿＿＿＿`（而改动前是写死的「郭庆杰」）。
+
+| # | 变异 | 结果 |
+|---|---|---|
+| **P1** | 姓名不再必填 | **31/32**：红的是"姓名必填"那条校验 |
+| **P2** | 落款只写匿名键（就是上面那个真 bug 的形状） | **30/32**：红的是"**按账号**记住"那条 |
+
+### 5.3 实做中抓到的第三个真问题：热路径多了一次出网
+
+把 `profile` 段加进 `/api/feedback/data` 之后，`tests/feedback-data-cache.test.mjs` 立刻红：
+
+```
+FAIL | ★热请求只剩 ≤1 次出网 | 热请求 1 次出网 [user_profiles×1]
+```
+
+⚠️ 这条断言是**真的在防退化**（缓存命中就不该再查库），**不能靠放宽断言解决**。
+修法：`getUserProfile()` 也走**同一套进程内 TTL 缓存**（25 秒 / 按用户限量 2000 条），
+并在 `saveUserProfile()` 成功后**立刻清缓存**（否则老师刚改完 25 秒内看不到）。
+修完 **26/26**，而且热请求从"1 次出网"变成 **0 次**（比改动前更干净）。
+
+---
+
+## 六、✅ 第三批实做记录（管理后台用户列表）
+
+| 改动 | 说明 |
+|---|---|
+| 列头 | 「邮箱」→「**姓名 / 邮箱**」 |
+| 单元格 | 有资料 → **姓名**（大）+ **学科 · 校区**（小）+ 邮箱（小）；没资料 → **仍显示邮箱** + 一句"资料未填（姓名/校区）" |
+| UUID | 那串字符码（Supabase 用户 ID）**视觉隐藏**（`sr-only`，保留在 HTML 里 —— 排障时还能从页面源码拿到，不彻底删掉） |
+| 取数 | `getProfiles()` **一次批量查**（不是每人一次）；读不到就是空对象 ⇒ 退回显示邮箱，页面照常 |
+
+> 用户原话：「管理员在管理后台的开通会员的页面最好能看的是老师**姓名和所校区**等基本信息，
+> 然后邮箱放到现在的那一堆字符码的部分，这一堆字符码是啥我也不知道，可以直接隐藏掉。」
