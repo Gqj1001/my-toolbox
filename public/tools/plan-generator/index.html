@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>辅导方案生成器 · 全学科</title>
+<style>
+/* ============ 基础（与数学版同一套观感） ============ */
+*{box-sizing:border-box}
+:root{
+  --blue:#1f3864; --blue2:#2e5496; --line:#d9e2f3; --bg:#eef2f9;
+  --card:#fff; --ink:#1c2333; --muted:#6b7891; --ok:#1a7f4b; --warn:#b45309; --bad:#c0392b;
+  --shadow:0 1px 3px rgba(16,32,64,.08),0 8px 24px rgba(16,32,64,.06);
+}
+html,body{margin:0;padding:0;height:100%}
+body{
+  font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",
+       "PingFang SC","Hiragino Sans GB","Source Han Sans SC",sans-serif;
+  color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+a{color:var(--blue2)}
+header{
+  min-height:56px;display:flex;align-items:center;gap:12px;padding:8px 20px;flex-wrap:wrap;
+  background:linear-gradient(90deg,#1f3864,#2e5496);color:#fff;
+  position:sticky;top:0;z-index:50;box-shadow:0 2px 10px rgba(16,32,64,.18)
+}
+header .logo{font-size:16px;font-weight:700;letter-spacing:.3px;white-space:nowrap}
+header .logo span{opacity:.6;font-weight:400;font-size:12px;margin-left:8px}
+header .spacer{flex:1}
+header button{
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);color:#fff;
+  padding:7px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:.15s
+}
+header button:hover{background:rgba(255,255,255,.26)}
+header button.primary{background:#fff;color:var(--blue);border-color:#fff;font-weight:600}
+header button.primary:hover{background:#f0f4ff}
+header button:disabled{opacity:.45;cursor:not-allowed}
+.layout{display:grid;grid-template-columns:376px 1fr;height:calc(100vh - 56px)}
+aside{background:var(--card);border-right:1px solid var(--line);overflow-y:auto;padding:16px 18px 60px}
+main{overflow-y:auto;padding:20px 26px 80px}
+@media(max-width:1100px){
+  .layout{grid-template-columns:1fr;height:auto}
+  aside{border-right:0;border-bottom:1px solid var(--line)}
+  main{padding:16px}
+}
+.grp{margin-bottom:16px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.grp>h3{
+  margin:0;padding:9px 12px;font-size:13px;background:#f6f8fd;border-bottom:1px solid var(--line);
+  color:var(--blue);display:flex;align-items:center;gap:8px
+}
+.grp>h3 .badge{
+  font-size:11px;font-weight:400;background:var(--blue);color:#fff;border-radius:10px;
+  padding:1px 8px;margin-left:auto;opacity:.85
+}
+.grp .body{padding:12px}
+.row{display:grid;grid-template-columns:90px 1fr;gap:8px;align-items:center;margin-bottom:9px}
+.row>label{font-size:12.5px;color:var(--muted);text-align:right;padding-right:2px}
+.row.wide{grid-template-columns:1fr}
+.row.wide>label{text-align:left;margin-bottom:4px}
+select,input[type=text],input[type=number],input[type=date],textarea{
+  width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:#fdfefe;
+  outline:none;transition:.15s
+}
+select:focus,input:focus,textarea:focus{border-color:var(--blue2);box-shadow:0 0 0 3px rgba(46,84,150,.12)}
+textarea{resize:vertical;min-height:52px;line-height:1.5}
+.hint{font-size:11.5px;color:var(--muted);margin:4px 0 0;line-height:1.5}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.two>div>label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:3px}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.acts button{
+  flex:1;min-width:100px;padding:9px 12px;border-radius:8px;border:1px solid var(--line);
+  background:#fff;cursor:pointer;transition:.15s;font-weight:600;font-size:13px
+}
+.acts button:hover{border-color:var(--blue2);background:#f6f9ff}
+.acts button.go{background:var(--blue);color:#fff;border-color:var(--blue)}
+.acts button.go:hover{background:var(--blue2)}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.pill{
+  font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:20px;
+  background:#fff;cursor:pointer;transition:.15s;user-select:none
+}
+.pill:hover{border-color:var(--blue2)}
+.pill.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+
+/* ============ 右侧：方案 ============ */
+.card{background:var(--card);border-radius:12px;box-shadow:var(--shadow);padding:22px 26px;max-width:1180px;margin:0 auto 16px}
+.card h2{font-size:15px;color:var(--blue);margin:0 0 12px;padding-left:9px;border-left:4px solid var(--blue2)}
+.empty{background:var(--card);border-radius:12px;box-shadow:var(--shadow);padding:54px 40px;text-align:center;color:var(--muted);max-width:1180px;margin:0 auto}
+.empty h2{color:var(--blue);font-size:17px;margin:0 0 10px;border:0;padding:0}
+.empty ol{display:inline-block;text-align:left;margin:12px 0 0;font-size:13px;line-height:2}
+table.mods{width:100%;border-collapse:collapse;font-size:12.5px}
+table.mods th,table.mods td{border:1px solid #c9d4e8;padding:6px 8px;vertical-align:top;line-height:1.55}
+table.mods th{background:#dce6f1;font-weight:700;text-align:center;color:var(--blue)}
+table.mods td.c{text-align:center;white-space:nowrap}
+table.mods tr.stage td{background:#eef3fb;font-weight:700;color:var(--blue)}
+table.mods td input{width:100%;border:1px solid transparent;background:transparent;padding:3px 4px;border-radius:5px}
+table.mods td input:hover{border-color:var(--line);background:#fff}
+table.mods td input:focus{border-color:var(--blue2);background:#fffdf3;box-shadow:0 0 0 3px rgba(46,84,150,.12)}
+table.mods td input.h{text-align:center}
+table.mods td .mini{
+  font-size:11px;padding:3px 7px;border-radius:6px;border:1px solid var(--line);
+  background:#fff;cursor:pointer;white-space:nowrap
+}
+table.mods td .mini:hover{border-color:var(--blue2);color:var(--blue2)}
+table.mods td .mini:disabled{opacity:.5;cursor:progress}
+.hours-total{font-weight:700;color:var(--blue)}
+.notes{margin:0;padding-left:18px;font-size:12.5px;color:var(--warn)}
+.checks{display:flex;flex-wrap:wrap;gap:8px;font-size:12.5px}
+.chk{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;border:1px solid var(--line);background:#fff}
+.chk.ok{border-color:#c6e8d3;background:#f2fbf5;color:var(--ok)}
+.chk.bad{border-color:#f5cdc9;background:#fdeceb;color:var(--bad)}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.toolbar button{
+  padding:6px 12px;border-radius:7px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:12.5px
+}
+.toolbar button:hover{border-color:var(--blue2);color:var(--blue2)}
+.toolbar .spacer{flex:1}
+.toast{
+  position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);
+  background:#1c2333;color:#fff;padding:10px 22px;border-radius:9px;font-size:13px;
+  opacity:0;pointer-events:none;transition:.25s;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.25);
+  max-width:min(760px,92vw);white-space:pre-wrap
+}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.panel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 auto 16px;max-width:1180px}
+.panel .line{display:flex;gap:10px 18px;flex-wrap:wrap;align-items:flex-end}
+.panel label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#52525b}
+.panel input{height:32px;padding:0 8px;border:1px solid #d4d4d8;border-radius:8px}
+@media print{header,aside,.toast,.toolbar,.panel{display:none!important}.layout{display:block;height:auto}main{overflow:visible;padding:0}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">锐满分 · 辅导方案生成器<span>全学科 · 一行一模块</span></div>
+  <div class="spacer"></div>
+  <button id="btnSavePlan" title="把这一次生成的方案存到该学生的档案里（必须在网站上打开）">📥 存入档案</button>
+  <button id="btnCompany3" title="按公司「附件3 辅导计划」模板导出（抬头 + 进度表已填，过程内容留空）">🏢 公司模板导出（附件3）</button>
+  <button class="primary" id="btnWord" title="按本工具的《辅导计划》Word 模板导出">⬇ 导出 Word（模板）</button>
+</header>
+
+<!-- 附件3 的面板（默认隐藏，点按钮展开） -->
+<div id="company3Panel" class="panel" style="display:none">
+  <div style="font-weight:600;margin-bottom:6px">🏢 公司模板导出 · 附件3（辅导计划）</div>
+  <div class="hint" style="margin-bottom:10px">
+    以公司原件为底、只替换文字：<b>抬头 + 进度表</b>自动填；
+    <b>学情分析 / 措施 / 预期效果 / 效果评估 / 签字栏</b>留空给你在 Word 里写（打印后手签）。
+  </div>
+  <div class="line">
+    <label>学校（模板要「学校+年级」，不是校区）
+      <input type="text" id="co3School" placeholder="如 三河一中" style="width:170px">
+    </label>
+    <label>辅导时间
+      <input type="text" id="co3Duration" style="width:230px">
+    </label>
+    <label>周课时
+      <input type="text" id="co3Freq" style="width:70px">
+    </label>
+    <label>入学成绩（可留空）
+      <input type="text" id="co3EntryScore" style="width:90px">
+    </label>
+    <button id="btnCompany3Export" style="height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:600">⬇ 导出附件3</button>
+    <span id="co3Hint" style="font-size:12px;color:var(--ok)"></span>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- ================= 左：参数 ================= -->
+  <aside>
+    <div class="grp">
+      <h3>① 学科与学段 <span class="badge">决定用哪份科目包</span></h3>
+      <div class="body">
+        <div class="row"><label>学科</label><select id="f-subject"></select></div>
+        <div class="row"><label>学段</label><select id="f-stage"></select></div>
+        <div class="row"><label>年级</label><select id="f-grade"></select></div>
+        <div class="row"><label>教材版本</label><select id="f-book"></select></div>
+        <p class="hint" id="h-pack">—</p>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>② 学生与教师 <span class="badge">只存身份，不存方案参数</span></h3>
+      <div class="body">
+        <div class="row"><label>学生</label><input type="text" id="f-name" placeholder="可留空"></div>
+        <div class="row wide" id="stuRow" style="display:none">
+          <label>学生档案　<span class="hint" style="display:inline">点名字一键带出；「保存档案」只存学生身份</span></label>
+          <div class="pills" id="stuChips"></div>
+        </div>
+        <div class="row"><label>学校</label><input type="text" id="f-school" placeholder="如 三河一中"></div>
+        <div class="row"><label>教师</label><input type="text" id="f-teach" placeholder="如 王老师"></div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>③ 学情与分数 <span class="badge">决定模块取舍与课时权重</span></h3>
+      <div class="body">
+        <div class="row"><label>当前分数</label><input type="number" id="f-score" min="0" max="150" step="1" value="62"></div>
+        <div class="row"><label>目标分数</label><input type="number" id="f-target" min="0" max="150" step="1" value="85"></div>
+        <p class="hint" id="h-band">档位：—</p>
+        <div class="row wide"><label>薄弱模块（可多选，会加权提前）</label><div class="pills" id="f-weak"></div></div>
+        <div class="row wide"><label>学校已复习过的模块（会跳过、不重复排）</label><div class="pills" id="f-done"></div></div>
+        <div class="row wide"><label>学习特点 / 补充说明</label><textarea id="f-note" placeholder="如：计算能力弱、畏难留白、需强督促"></textarea></div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>④ 课时 <span class="badge">一行 = 一个模块</span></h3>
+      <div class="body">
+        <div class="row"><label>总课时</label>
+          <input type="number" id="f-hours" min="1" max="500" step="0.5" value="80"></div>
+        <div class="row"><label>周课时</label>
+          <input type="number" id="f-freq" min="1" max="20" step="0.5" value="4"></div>
+        <p class="hint" id="h-hours">—</p>
+      </div>
+    </div>
+
+    <div class="acts">
+      <button class="go" id="btnGen">生成方案</button>
+      <button id="btnAiAll" title="给还没写的行生成教学目标（会员功能）">✨ AI 生成目标</button>
+    </div>
+    <p class="hint" style="margin-top:10px">
+      生成后可直接在右侧表格里改「内容 / 课时 / 教学目标」，<b>改完请先导出</b>——重新生成会覆盖手改内容。
+      AI 只写「教学目标」，<b>内容那一列是照教材目录填好的真实小节</b>，不由 AI 编造。
+    </p>
+  </aside>
+
+  <!-- ================= 右：方案 ================= -->
+  <main id="out">
+    <div class="empty">
+      <h2>先设参数，再点「生成方案」</h2>
+      <p>生成后你会得到一张模块级进度表（一行一个模块）：</p>
+      <ol>
+        <li>模块名 + 教材真实小节（照人教版目录，不由 AI 编）</li>
+        <li>每个模块的建议课时（按总课时自动分摊，保留小数）</li>
+        <li>每行的「教学目标」——可让 AI 写初稿，你再改</li>
+        <li>一键导出：公司附件3 / 本工具 Word 模板</li>
+      </ol>
+      <p class="hint" style="margin-top:16px">物理初高中已就绪；其他学科以后只是"加一份配置"。</p>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ===== 依赖脚本（顺序不能改）=====
+     1) 模板数据（物理《辅导计划》Word 模板的零件）
+     2) 通用 ZIP/OOXML 打包器
+     3) 模板替换引擎
+     4) 公司附件3 引擎（复用数学版已上线的那份，**未改动**）
+
+     ⚠️ **路径口径**（本轮真踩到，记下来）：本页在网站上由
+        `/tools/plan-generator/index.html` 提供，所以 `./` 就是 **/tools/plan-generator/**。
+        第一版写成 `./plan-generator/js/engine.js` ⇒ 解析成
+        `/tools/plan-generator/plan-generator/js/engine.js` ⇒ **8 个脚本全 404**、整页不能用。
+        正确写法：本目录内的用 `./js/…`、`./subjects/…`；**跨目录一律用绝对路径** `/tools/…`
+        （数学版也踩过同一类坑：相对路径在 iframe 里解析结果会变）。 -->
+<script src="./template-data.js"></script>
+<script src="./js/docx-builder.js"></script>
+<script src="./js/report-template.js"></script>
+<script src="/tools/company-template/template-data.js"></script>
+<script src="/tools/company-template/company-docx.js"></script>
+<!-- ===== 科目包（加学科只改 manifest 一行）===== -->
+<script src="./subjects/manifest.js"></script>
+<script src="./subjects/physics-senior.js"></script>
+<script src="./subjects/physics-junior.js"></script>
+<script src="./subjects/math-junior.js"></script>
+<script src="./subjects/english-senior.js"></script>
+<script src="./subjects/english-junior.js"></script>
+<script src="./subjects/chinese.js"></script>
+<!-- ===== 本工具的逻辑 ===== -->
+<script src="./js/subjects.js"></script>
+<script src="./js/engine.js"></script>
+<script src="./js/ai.js"></script>
+<script src="./js/company.js"></script>
+<script src="./js/archive.js"></script>
+
+<script>
+"use strict";
+/* =========================================================================
+   辅导方案生成器 · 界面层
+   -------------------------------------------------------------------------
+   这个文件**只做界面**：取值 → 调引擎/导出模块 → 渲染。
+   学科内容在 subjects/、算在 js/engine.js、导出在 js/company.js|report-template.js、
+   存档案在 js/archive.js —— 这里一行学科判断都没有。
+   ========================================================================= */
+
+var $ = function(sel){ return document.querySelector(sel); };
+var $$ = function(sel){ return Array.prototype.slice.call(document.querySelectorAll(sel)); };
+function esc(s){
+  return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+/* ---------- 提示条 ---------- */
+var toastTimer = null;
+function toast(msg, ms){
+  var t = $("#toast");
+  if(!t) return;
+  t.textContent = String(msg == null ? "" : msg);
+  t.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove("on"); }, ms || 2600);
+}
+
+/* ---------- 状态 ---------- */
+var CURRENT = null;      // { pack, rows:[{id,name,stage,stageName,term,chapters,content,goal,hours,lv,tags}], totalHours, band, notes, check }
+var WEAK = {};           // 薄弱模块 id 集合
+var DONE = {};           // 已完成模块 id 集合
+
+/* ---------- 科目包与下拉 ---------- */
+function currentKey(){ return $("#f-subject").value; }
+function currentStage(){ return $("#f-stage").value; }
+function currentPack(){ return window.PlanGenSubjects.loadPack(currentKey(), currentStage()); }
+
+function fillSubjects(){
+  var list = window.PlanGenSubjects.subjectList();
+  $("#f-subject").innerHTML = list.map(function(s){
+    return '<option value="' + esc(s.key) + '">' + esc(s.name) + '</option>';
+  }).join("");
+}
+function fillStages(){
+  var list = window.PlanGenSubjects.stageListOf(currentKey());
+  $("#f-stage").innerHTML = list.map(function(s){
+    return '<option value="' + esc(s.key) + '">' + esc(s.name) + '</option>';
+  }).join("");
+  // 默认选高中（有就选）
+  var hasSenior = list.some(function(s){ return s.key === "senior"; });
+  if(hasSenior) $("#f-stage").value = "senior";
+}
+function fillGrades(){
+  var gs = window.PlanGenSubjects.gradesOf(currentKey(), currentStage());
+  $("#f-grade").innerHTML = gs.map(function(g){
+    return '<option value="' + esc(g) + '">' + esc(g) + '</option>';
+  }).join("");
+  // 默认选"高三/九年级"这种"最后一年"，最常用
+  var prefer = ["高三","九年级","初三","高二","八年级"];
+  for(var i=0;i<prefer.length;i++){
+    if(gs.indexOf(prefer[i]) >= 0){ $("#f-grade").value = prefer[i]; break; }
+  }
+}
+function fillBooks(){
+  var pack = currentPack();
+  var books = (pack && pack.books) ? pack.books : ["人教版"];
+  $("#f-book").innerHTML = books.map(function(b){
+    return '<option value="' + esc(b) + '">' + esc(b) + '</option>';
+  }).join("");
+}
+
+/** 科目包/学段/年级变了 → 重画知识点多选 + 档位提示 */
+function refreshPackUI(){
+  var pack = currentPack();
+  if(!pack){
+    $("#h-pack").textContent = "这个「学科 + 学段」还没有科目包。";
+    $("#f-weak").innerHTML = ""; $("#f-done").innerHTML = "";
+    return;
+  }
+  var mods = window.PlanGenEngine.modulesForGrade(pack, $("#f-grade").value);
+  // ⚠️ 薄弱/已完成用"模块 id"记（不是名字，名字后来会改）
+  var stillWeak = {}, stillDone = {};
+  mods.forEach(function(m){ if(WEAK[m.id]) stillWeak[m.id] = 1; if(DONE[m.id]) stillDone[m.id] = 1; });
+  WEAK = stillWeak; DONE = stillDone;
+  var opts = mods.map(function(m){
+    return '<span class="pill' + (WEAK[m.id] ? " on" : "") + '" data-weak="' + esc(m.id) + '">' + esc(m.name) + '</span>';
+  }).join("");
+  $("#f-weak").innerHTML = opts;
+  $("#f-done").innerHTML = mods.map(function(m){
+    return '<span class="pill' + (DONE[m.id] ? " on" : "") + '" data-done="' + esc(m.id) + '">' + esc(m.name) + '</span>';
+  }).join("");
+  $$("#f-weak [data-weak]").forEach(function(el){
+    el.addEventListener("click", function(){
+      var id = el.dataset.weak;
+      if(WEAK[id]) delete WEAK[id]; else WEAK[id] = 1;
+      el.classList.toggle("on");
+      refreshBand();
+    });
+  });
+  $$("#f-done [data-done]").forEach(function(el){
+    el.addEventListener("click", function(){
+      var id = el.dataset.done;
+      if(DONE[id]) delete DONE[id]; else DONE[id] = 1;
+      el.classList.toggle("on");
+    });
+  });
+  $("#h-pack").textContent = pack.stageName + pack.name + "：" + mods.length + " 个模块可选（"
+    + pack.stages.map(function(s){ return s.name; }).join(" / ") + "）";
+  refreshBand();
+}
+
+/** 档位提示（按科目包的分段线，**不写死分数**） */
+function refreshBand(){
+  var pack = currentPack();
+  if(!pack) return;
+  var b = window.PlanGenEngine.bandOf(pack, Number($("#f-score").value));
+  $("#h-band").textContent = "档位：" + ((b && b.name) || "—")
+    + "（本学科满分 " + (pack.fullScore || "—") + " 分，分段线 " 
+    + pack.bands.slice().sort(function(a,c){ return (c.min||0)-(a.min||0); })
+        .map(function(x){ return "≥" + x.min + " " + x.name; }).join("，") + "）";
+  var hrs = Number($("#f-hours").value) || 0;
+  $("#h-hours").textContent = "总课时 " + hrs + " 课时；按周课时 "
+    + ($("#f-freq").value || 1) + " 算，约 " 
+    + Math.max(1, Math.ceil(hrs / (Number($("#f-freq").value) || 1))) + " 周";
+}
+
+/* ---------- 生成 ---------- */
+function generate(){
+  var pack = currentPack();
+  if(!pack){ toast("这个「学科 + 学段」还没有科目包"); return; }
+  var grade = $("#f-grade").value;
+  var weakTopics = {};
+  pack.modules.forEach(function(m){ if(WEAK[m.id]) weakTopics[m.topic || m.name] = true; });
+  var plan;
+  try{
+    plan = window.PlanGenEngine.buildPlan(pack, {
+      grade: grade,
+      score: Number($("#f-score").value),
+      targetScore: Number($("#f-target").value),
+      totalHours: Number($("#f-hours").value),
+      focus: "auto",
+      weakTopics: weakTopics,
+      done: Object.keys(DONE)
+    });
+  }catch(e){
+    toast("生成失败：" + (e && e.message ? e.message : e));
+    return;
+  }
+  CURRENT = plan;
+  CURRENT.packRef = pack;
+  CURRENT.note = $("#f-note").value.trim();
+  CURRENT.check = window.PlanGenEngine.selfCheck(plan);
+  render();
+  toast("已生成 " + plan.rows.length + " 个模块（合计 " + plan.allocated + " 课时）");
+}
+
+/* ---------- 渲染 ---------- */
+function render(){
+  if(!CURRENT){ return; }
+  var pack = CURRENT.packRef;
+  var groups = window.PlanGenEngine.groupByStage(pack, CURRENT.rows);
+  var total = Math.round(CURRENT.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10;
+
+  var html = "";
+  if(!window.PlanGenCompany.browserDisabled()){
+    html += '<div class="panel" id="co3Mini" style="display:none"></div>';
+  }
+  html += '<div class="card">'
+    + '<h2>模块进度表（一行一个模块）</h2>'
+    + '<div class="toolbar">'
+    +   '<button id="btnAiAll2">✨ AI 生成目标（只补空行）</button>'
+    +   '<button id="btnFillHours">↺ 重算课时</button>'
+    +   '<span class="spacer"></span>'
+    +   '<span class="hint">合计 <b class="hours-total">' + total + '</b> 课时 ／ 老师填 ' + CURRENT.totalHours + ' 课时</span>'
+    + '</div>'
+    + '<table class="mods"><thead><tr>'
+    +   '<th style="width:150px">模块</th><th>内容（教材小节）</th>'
+    +   '<th style="width:74px">课时数</th><th style="width:38%">教学目标</th><th style="width:74px">AI</th>'
+    + '</tr></thead><tbody>';
+
+  groups.forEach(function(g){
+    html += '<tr class="stage"><td colspan="5">' + esc(g.name) + '（' + g.rows.length + ' 个模块）</td></tr>';
+    g.rows.forEach(function(r){
+      var idx = CURRENT.rows.indexOf(r);
+      html += '<tr data-row="' + idx + '">'
+        + '<td>' + esc(r.name) + '<div class="hint" style="margin:2px 0 0">' + esc(r.term || "") + '</div></td>'
+        + '<td><input type="text" data-f="content" value="' + esc(r.content || "") + '"></td>'
+        + '<td class="c"><input class="h" type="number" step="0.5" min="0" data-f="hours" value="' + esc(r.hours) + '"></td>'
+        + '<td><input type="text" data-f="goal" value="' + esc(r.goal || "") + '" placeholder="可点右边 AI 生成，再自己改"></td>'
+        + '<td class="c"><button class="mini" data-ai="' + idx + '">重写</button></td>'
+        + '</tr>';
+    });
+  });
+  html += '</tbody></table></div>';
+
+  // 提示与自检
+  if(CURRENT.notes && CURRENT.notes.length){
+    html += '<div class="card"><h2>提示</h2><ul class="notes">'
+      + CURRENT.notes.map(function(n){ return "<li>" + esc(n) + "</li>"; }).join("") + '</ul></div>';
+  }
+  var chk = window.PlanGenEngine.selfCheck(CURRENT);
+  html += '<div class="card"><h2>交前自检</h2><div class="checks">'
+    + '<span class="chk ' + (chk.sumMatches ? "ok" : "bad") + '">合计 = 各行之和（' + chk.sum + ' / ' + chk.total + '）</span>'
+    + '<span class="chk ' + (chk.problems.length ? "bad" : "ok") + '">'
+      + (chk.problems.length ? esc(chk.problems.slice(0,2).join("；")) : "没有重名模块、课时都是一位小数") + '</span>'
+    + '<span class="chk ok">' + CURRENT.rows.length + ' 个模块</span>'
+    + '</div></div>';
+
+  $("#out").innerHTML = html;
+  bindTable();
+  syncButtons();
+}
+
+function bindTable(){
+  $$("table.mods td input").forEach(function(inp){
+    inp.addEventListener("input", function(){
+      var tr = inp.closest("tr");
+      var idx = Number(tr.dataset.row);
+      var f = inp.dataset.f;
+      var row = CURRENT.rows[idx];
+      if(!row) return;
+      if(f === "hours"){
+        var v = Number(inp.value);
+        row.hours = isFinite(v) && v >= 0 ? Math.round(v * 10) / 10 : 0;
+      }else{
+        row[f] = inp.value;
+      }
+    });
+    inp.addEventListener("change", function(){
+      if(inp.dataset.f === "hours") render();
+    });
+  });
+  $$("table.mods [data-ai]").forEach(function(b){
+    b.addEventListener("click", function(){ aiOne(Number(b.dataset.ai), b); });
+  });
+  var b1 = $("#btnAiAll2"); if(b1) b1.addEventListener("click", function(){ aiAll(b1); });
+  var b2 = $("#btnFillHours"); if(b2) b2.addEventListener("click", recalcHours);
+}
+
+/** 重算课时：把老师手改的课时丢掉，用引擎按总课时重新分摊 */
+function recalcHours(){
+  if(!CURRENT) return;
+  var pack = CURRENT.packRef;
+  var alloc = window.PlanGenEngine.allocateHours(CURRENT.rows.map(function(r){
+    // 用科目包里的"建议课时"当权重（引擎自己会去 pack 里找，这里把当前行还原成模块）
+    var m = null;
+    pack.modules.forEach(function(x){ if(x.id === r.id) m = x; });
+    return m || r;
+  }), Number($("#f-hours").value));
+  alloc.rows.forEach(function(r, i){
+    // 只更新课时，不动老师改过的内容/目标
+    if(CURRENT.rows[i]) CURRENT.rows[i].hours = r.hours;
+  });
+  CURRENT.allocated = Math.round(CURRENT.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10;
+  render();
+  toast("已按总课时重算课时（内容/目标没动）");
+}
+
+/* ---------- AI ---------- */
+function aiContext(){
+  var pack = CURRENT.packRef;
+  var b = window.PlanGenEngine.bandOf(pack, Number($("#f-score").value));
+  return {
+    pack: pack,
+    subjectName: window.PlanGenSubjects.subjectNameOf(pack.key),
+    grade: $("#f-grade").value,
+    bandName: b ? b.name : "",
+    score: $("#f-score").value,
+    targetScore: $("#f-target").value,
+    totalHours: $("#f-hours").value
+  };
+}
+async function aiAll(btn){
+  if(!CURRENT){ toast("请先生成方案"); return; }
+  var empty = CURRENT.rows.filter(function(r){ return !String(r.goal || "").trim(); });
+  if(!empty.length){ toast("每一行的教学目标都写好了；要整批重写请先清空它们"); return; }
+  var old = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "AI 生成中…"; }
+  try{
+    var res = await window.PlanGenAI.generate(Object.assign(aiContext(), {
+      rows: CURRENT.rows, force: false
+    }));
+    if(!res.ok){
+      toast("AI 生成失败：" + res.error, 5200);
+      return;
+    }
+    CURRENT.rows = res.rows;
+    render();
+    toast("AI 写好了 " + res.applied + " 行的教学目标（" + res.batches + " 批）；请自己过一遍再导出");
+  }catch(e){
+    toast("AI 生成出错：" + (e && e.message ? e.message : e), 4600);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = old || "✨ AI 生成目标"; }
+  }
+}
+async function aiOne(idx, btn){
+  if(!CURRENT) return;
+  var old = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "…"; }
+  try{
+    var res = await window.PlanGenAI.generate(Object.assign(aiContext(), {
+      rows: CURRENT.rows, indexes: [idx]
+    }));
+    if(!res.ok){ toast("AI 重写失败：" + res.error, 5200); return; }
+    CURRENT.rows = res.rows;
+    render();
+    toast("这一行的教学目标已重写");
+  }catch(e){
+    toast("AI 重写出错：" + (e && e.message ? e.message : e), 4600);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = old || "重写"; }
+  }
+}
+
+/* ---------- 导出：本工具 Word 模板 ---------- */
+function exportWord(){
+  if(!CURRENT){ toast("请先生成方案"); return; }
+  if(typeof window.PlanGenTemplateData === "undefined" || typeof window.PlanGenReportTemplate === "undefined"){
+    toast("导出模块没加载，请刷新页面"); return;
+  }
+  var pack = CURRENT.packRef;
+  var subjectName = window.PlanGenSubjects.subjectNameOf(pack.key);
+  var total = Math.round(CURRENT.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10;
+  var freq = $("#f-freq").value || "2";
+  var payload = {
+    title: subjectName + "辅导计划",
+    grade: $("#f-grade").value,
+    subject: subjectName,
+    book: $("#f-book").value,
+    teacher: $("#f-teach").value.trim(),
+    campus: $("#f-school").value.trim(),   // 本工具的模板抬头里有「学校」这一格
+    // 课时分配那一句：标签与格式都由程序拼（模板那格只有一个占位符）
+    hoursLine: "课时分配（需要课时 " + total + "h；辅导时间 "
+      + window.PlanGenCompany.durationText(total, freq) + "； " + freq + "次/周，" + freq + "课时/次）",
+    method: methodText(),
+    rows: CURRENT.rows.map(function(r, i){
+      return { stage: r.stageName || "", content: r.content || "", hours: r.hours, goal: r.goal || "" };
+    })
+  };
+  var res;
+  try{
+    res = window.PlanGenReportTemplate.build(payload, { template: window.PlanGenTemplateData });
+  }catch(e){
+    toast("导出失败：" + (e && e.message ? e.message : e), 4600);
+    return;
+  }
+  if(res.warnings && res.warnings.length) console.warn("[plan-generator] 导出警告", res.warnings);
+  downloadBytes(res.blob, ($("#f-name").value.trim() || "学生") + "-" + subjectName + "辅导计划.docx");
+  toast("已导出 Word 模板（" + res.rows + " 行）" + (res.warnings.length ? "，有 " + res.warnings.length + " 条警告（控制台可看）" : ""));
+}
+
+/** 教学方法那一段：按**科目包里的复习阶段**拼（不是数学版的三轮） */
+function methodText(){
+  var pack = CURRENT.packRef;
+  var groups = window.PlanGenEngine.groupByStage(pack, CURRENT.rows);
+  var parts = groups.filter(function(g){ return g.rows.length; }).map(function(g){
+    var h = Math.round(g.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10;
+    return g.name + " " + h + " 课时（" + g.rows.length + " 个模块）";
+  });
+  var note = $("#f-note").value.trim();
+  return "整体分 " + parts.length + " 步走：" + parts.join("；") + "。"
+    + (note ? "针对学生情况：" + note + "。" : "");
+}
+
+function downloadBytes(bytes, name){
+  var blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+  var a = document.createElement("a");
+  var url = URL.createObjectURL(blob);
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+}
+
+/* ---------- 导出：公司附件3 ---------- */
+function company3Disabled(){ return window.PlanGenCompany.browserDisabled(); }
+function primeCompany3(){
+  var dur = $("#co3Duration");
+  if(dur && !dur.value){
+    var total = CURRENT ? Math.round(CURRENT.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10
+                        : Number($("#f-hours").value);
+    dur.value = window.PlanGenCompany.durationText(total, $("#f-freq").value || "2");
+  }
+  var f = $("#co3Freq");
+  if(f && !f.value) f.value = window.PlanGenCompany.defaultHoursPerWeek($("#f-freq").value);
+  var sc = $("#co3School");
+  if(sc && !sc.value) sc.value = $("#f-school").value.trim();
+}
+function exportCompany3(){
+  if(company3Disabled()){ toast("公司模板导出已关闭"); return; }
+  if(!CURRENT){ toast("请先生成方案"); return; }
+  if(typeof window.CompanyDocx === "undefined"){ toast("公司导出模块没加载，请刷新页面"); return; }
+  if(!$("#f-name").value.trim()){ toast("请先填学生姓名"); return; }
+  primeCompany3();
+  var pack = CURRENT.packRef;
+  var total = Math.round(CURRENT.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10;
+  var data = window.PlanGenCompany.buildCompany3Data({
+    student: $("#f-name").value.trim(),
+    school: $("#co3School").value.trim(),
+    grade: $("#f-grade").value,
+    teacher: $("#f-teach").value.trim(),
+    totalHours: total,
+    hoursPerWeek: $("#co3Freq").value,
+    durationText: $("#co3Duration").value.trim(),
+    entryScore: $("#co3EntryScore").value.trim(),
+    rows: CURRENT.rows
+  });
+  var r;
+  try{
+    r = window.PlanGenCompany.download(window.CompanyDocx, data);
+  }catch(e){
+    toast("导出失败：" + (e && e.message ? e.message : e), 4600);
+    return;
+  }
+  $("#co3Hint").textContent = "已导出（" + CURRENT.rows.length + " 行）";
+  toast("已按公司模板导出附件3：" + r.name, 3400);
+}
+
+/* ---------- 存入档案 ---------- */
+var ARCHIVE = null;
+function syncButtons(){
+  var has = !!CURRENT;
+  $("#btnWord").disabled = !has;
+  $("#btnCompany3").disabled = !has;
+}
+async function savePlanToArchive(){
+  if(!CURRENT){ toast("请先点「生成方案」"); return; }
+  if(!$("#f-name").value.trim()){ toast("请先填学生姓名（档案是按学生存的）"); return; }
+  if(!ARCHIVE || !ARCHIVE.enabled){ toast("双击打开的版本没有账号档案，请从网站上进入本工具", 4600); return; }
+  var pack = CURRENT.packRef;
+  var total = Math.round(CURRENT.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10;
+  var b = window.PlanGenEngine.bandOf(pack, Number($("#f-score").value));
+  var plan = {
+    pack: pack, subjectName: window.PlanGenSubjects.subjectNameOf(pack.key),
+    stageName: pack.stageName, grade: $("#f-grade").value, book: $("#f-book").value,
+    bandName: b ? b.name : "", score: $("#f-score").value, targetScore: $("#f-target").value,
+    totalHours: total,
+    periodText: window.PlanGenCompany.durationText(total, $("#f-freq").value || "2"),
+    hoursPerWeekText: $("#f-freq").value,
+    rows: CURRENT.rows, note: $("#f-note").value.trim()
+  };
+  plan.student = $("#f-name").value.trim();
+  plan.text = window.PlanGenArchive.planText(plan);
+  var btn = $("#btnSavePlan");
+  var old = btn.textContent;
+  btn.disabled = true; btn.textContent = "保存中…";
+  try{
+    var d = await ARCHIVE.savePlan(plan);
+    var n = d && typeof d.inserted === "number" ? d.inserted : 0;
+    toast(n ? "已存入「" + plan.student + "」的档案" : "这条方案已经在档案里了（没有重复存）", 3600);
+  }catch(e){
+    toast("存入档案失败：" + (e && e.message ? e.message : e), 5200);
+  }finally{
+    btn.disabled = false; btn.textContent = old || "📥 存入档案";
+  }
+}
+
+/* ---------- 档案：拉取与「已保存学生」圆片 ---------- */
+function renderStuRow(){
+  var row = $("#stuRow"), box = $("#stuChips");
+  if(!row || !box) return;
+  if(!ARCHIVE || !ARCHIVE.enabled){ row.style.display = "none"; return; }
+  row.style.display = "";
+  var names = Object.keys(ARCHIVE.students);
+  box.innerHTML = (names.length
+      ? names.map(function(n){
+          return '<span class="pill" data-stu="' + esc(n) + '" title="点一下带出「' + esc(n) + '」的信息">'
+            + esc(n) + '</span>';
+        }).join("")
+      : '<span class="hint">还没有档案。填好姓名与学校/教师后，点下面「保存档案」。</span>')
+    + '<span class="pill" id="btnSaveStu" style="border-style:dashed" title="把「学生是谁」存到账号（不存这一次的分数与课时）">💾 保存档案</span>';
+  $$("#stuChips [data-stu]").forEach(function(el){
+    el.addEventListener("click", function(){ pickStudent(el.dataset.stu); });
+  });
+  var b = $("#btnSaveStu");
+  if(b) b.addEventListener("click", saveCurrentStudent);
+}
+function pickStudent(name){
+  var s = ARCHIVE.students[name];
+  if(!s) return;
+  $("#f-name").value = name;
+  // ⚠️ 一律**重新赋值**（含空值）：否则先点甲（有学校）再点乙（没学校），乙会留着甲的学校
+  var gs = window.PlanGenSubjects.gradesOf(currentKey(), currentStage());
+  if(s.grade && gs.indexOf(s.grade) >= 0) $("#f-grade").value = s.grade;
+  var books = $$("#f-book option").map(function(o){ return o.value; });
+  if(s.book && books.indexOf(s.book) >= 0) $("#f-book").value = s.book;
+  $("#f-school").value = s.campus || "";
+  $("#f-teach").value = s.teacher || "";
+  refreshPackUI();
+  toast("已带出「" + name + "」的信息");
+}
+async function saveCurrentStudent(){
+  var name = $("#f-name").value.trim();
+  if(!name){ toast("请先填学生姓名，再保存档案"); return; }
+  if(!ARCHIVE || !ARCHIVE.enabled){ toast("双击打开的版本没有账号档案，请从网站上进入本工具", 4600); return; }
+  var btn = $("#btnSaveStu");
+  if(btn) btn.textContent = "保存中…";
+  try{
+    await ARCHIVE.persistStudent(name, window.PlanGenArchive.readIdentity({
+      grade: $("#f-grade").value, campus: $("#f-school").value,
+      teacher: $("#f-teach").value, book: $("#f-book").value, stage: currentStage()
+    }));
+    renderStuRow();
+    toast("已保存「" + name + "」的档案");
+  }catch(e){
+    toast("保存失败：" + (e && e.message ? e.message : e), 4600);
+  }finally{
+    if($("#btnSaveStu")) $("#btnSaveStu").textContent = "💾 保存档案";
+  }
+}
+
+/* ---------- 启动 ---------- */
+function boot(){
+  // 科目包自检（配置写错时早点告诉老师，而不是生成出奇怪的表）
+  try{
+    var v = window.PlanGenSubjects.validate();
+    if(!v.ok) console.warn("[plan-generator] 科目包自检有问题：", v.problems);
+  }catch(e){ /* 忽略 */ }
+
+  fillSubjects(); fillStages(); fillGrades(); fillBooks();
+  refreshPackUI();
+
+  $("#f-subject").addEventListener("change", function(){ fillStages(); fillGrades(); fillBooks(); refreshPackUI(); });
+  $("#f-stage").addEventListener("change", function(){ fillGrades(); fillBooks(); refreshPackUI(); });
+  $("#f-grade").addEventListener("change", refreshPackUI);
+  $("#f-score").addEventListener("input", refreshBand);
+  $("#f-hours").addEventListener("input", refreshBand);
+  $("#f-freq").addEventListener("input", refreshBand);
+  $("#btnGen").addEventListener("click", generate);
+  $("#btnWord").addEventListener("click", exportWord);
+  $("#btnSavePlan").addEventListener("click", savePlanToArchive);
+  $("#btnAiAll").addEventListener("click", function(){ aiAll($("#btnAiAll")); });
+
+  // 公司附件3：按钮开合 + 导出
+  var b3 = $("#btnCompany3");
+  b3.addEventListener("click", function(){
+    var p = $("#company3Panel");
+    var show = p.style.display === "none" || !p.style.display;
+    if(show) primeCompany3();
+    p.style.display = show ? "" : "none";
+  });
+  $("#btnCompany3Export").addEventListener("click", exportCompany3);
+  if(company3Disabled()){
+    b3.style.display = "none";
+    $("#company3Panel").style.display = "none";
+  }
+
+  syncButtons();
+  refreshBand();
+
+  // 档案（只有在本站打开时才开云；双击 HTML 时是 no-op 并给一句人话）
+  ARCHIVE = window.PlanGenArchive.create({});
+  ARCHIVE.boot().then(function(){
+    renderStuRow();
+  }).catch(function(e){
+    renderStuRow();
+    toast("读不到账号里的学生档案，本页暂时只能用本机输入：" + (e && e.message ? e.message : e), 4600);
+  });
+}
+
+if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+else boot();
+
+/* ---------- 测试钩子（只读，供自动化测试用；无副作用） ---------- */
+window.PlanGenHooks = {
+  disabled: function(){ return company3Disabled(); },
+  state: function(){ return CURRENT ? {
+    rows: CURRENT.rows, totalHours: CURRENT.totalHours, allocated: CURRENT.allocated,
+    notes: CURRENT.notes, pack: { key: CURRENT.packRef.key, stage: CURRENT.packRef.stage },
+    grade: $("#f-grade").value
+  } : null; },
+  generate: generate,
+  setForm: function(o){
+    if(o.subject) $("#f-subject").value = o.subject;
+    if(o.stage) $("#f-stage").value = o.stage;
+    fillGrades(); fillBooks(); refreshPackUI();
+    if(o.grade) $("#f-grade").value = o.grade;
+    if(o.hours != null) $("#f-hours").value = o.hours;
+    if(o.freq != null) $("#f-freq").value = o.freq;
+    if(o.score != null) $("#f-score").value = o.score;
+    if(o.name != null) $("#f-name").value = o.name;
+    if(o.school != null) $("#f-school").value = o.school;
+    if(o.teacher != null) $("#f-teach").value = o.teacher;
+    refreshPackUI();
+    return true;
+  },
+  /** 只读地导出字节（测试要拿真实字节去 python-docx 复核） */
+  buildWordBytes: function(){
+    if(!CURRENT) return null;
+    var pack = CURRENT.packRef;
+    var subjectName = window.PlanGenSubjects.subjectNameOf(pack.key);
+    var total = Math.round(CURRENT.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10;
+    var freq = $("#f-freq").value || "2";
+    var payload = {
+      title: subjectName + "辅导计划", grade: $("#f-grade").value, subject: subjectName,
+      book: $("#f-book").value, teacher: $("#f-teach").value.trim(),
+      campus: $("#f-school").value.trim(),
+      hoursLine: "课时分配（需要课时 " + total + "h；辅导时间 "
+        + window.PlanGenCompany.durationText(total, freq) + "； " + freq + "次/周，" + freq + "课时/次）",
+      method: methodText(),
+      rows: CURRENT.rows.map(function(r){
+        return { stage: r.stageName || "", content: r.content || "", hours: r.hours, goal: r.goal || "" };
+      })
+    };
+    var res = window.PlanGenReportTemplate.build(payload, { template: window.PlanGenTemplateData });
+    return { bytes: Array.prototype.slice.call(res.blob), warnings: res.warnings, rows: res.rows };
+  },
+  buildCompany3: function(){
+    if(!CURRENT) return null;
+    var total = Math.round(CURRENT.rows.reduce(function(a,r){ return a + r.hours; }, 0) * 10) / 10;
+    var data = window.PlanGenCompany.buildCompany3Data({
+      student: $("#f-name").value.trim(), school: $("#f-school").value.trim(),
+      grade: $("#f-grade").value, teacher: $("#f-teach").value.trim(),
+      totalHours: total, hoursPerWeek: $("#f-freq").value,
+      durationText: window.PlanGenCompany.durationText(total, $("#f-freq").value),
+      entryScore: "", rows: CURRENT.rows
+    });
+    var bin = window.CompanyDocx.build("附件3", data);
+    return { bytes: Array.prototype.slice.call(bin), rows: CURRENT.rows.length };
+  },
+  /** 改一行（模拟老师在表格里手改） */
+  editRow: function(idx, field, value){
+    if(!CURRENT || !CURRENT.rows[idx]) return false;
+    CURRENT.rows[idx][field] = value;
+    render();
+    return true;
+  }
+};
+</script>
+</body>
+</html>

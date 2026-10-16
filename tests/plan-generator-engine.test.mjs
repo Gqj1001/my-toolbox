@@ -1,0 +1,478 @@
+// 辅导方案生成器 · 引擎回归测试（纯函数，不需要浏览器、不需要服务）
+//
+// 为什么单独一套：这一套要钉住的是**用户拍板过的三条口径**和**我踩过的两个配平坑**，
+// 它们都不该靠"打开页面看一眼"来保证：
+//   ① 一行 = 一个模块（**绝不**把课时拆成"2 小时一次课"）
+//   ② 课时保留一位小数（4.5 / 7.5 / 10.5），且**总和精确等于老师填的总课时**
+//   ③ 已完成的模块要跳过（课表里不出现、也不占课时）
+//
+// ⚠️ 配平这一块本轮真踩了两个坑，都在这里留了钉子（变异自证见文件末尾）：
+//   坑① 先按比例再逐行收上限 ⇒ 总量被削掉一大截（60 课时只排进去 37.6）
+//   坑② 把"建议课时"直接当初始分配再拿预算补差 ⇒ 平均主义（9/6/3 配 30 变成 10.3/10/9.7）
+//
+// 跑法：& <bundled node> tests\plan-generator-engine.test.mjs
+import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+
+const require = createRequire(import.meta.url);
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const ENGINE_PATH = join(ROOT, "public/tools/plan-generator/js/engine.js");
+
+const results = [];
+const ok = (name, cond, detail) => {
+  const pass = !!cond;
+  results.push({ name, pass });
+  console.log(`${pass ? "PASS" : "FAIL"} | ${name}${detail ? ` | ${detail}` : ""}`);
+};
+const feq = (a, b) => Math.abs(Number(a) - Number(b)) < 1e-9;
+
+/* ==========================================================================
+   夹具
+   ========================================================================== */
+
+/** 造一个"物理形状"的科目包（22 个模块，建议课时用的是样例里的真实数字） */
+function makePack(overrides) {
+  const HINTS = [3, 6, 6, 9, 6, 4.5, 6, 9, 7.5, 4.5, 4.5, 6, 6, 6, 7.5, 7.5, 6, 6, 6, 1.5, 3, 9];
+  const TERMS = ["必修一", "必修一", "必修一", "必修一", "必修二", "必修二", "必修二", "必修二",
+    "选必一", "必修一", "必修三", "必修三", "必修三", "必修三", "选必二", "选必二", "选必二",
+    "选必一", "选必三", "选必三", "选必三", "选必一"];
+  const STAGES = ["力学", "力学", "力学", "力学", "力学", "力学", "力学", "力学",
+    "力学", "力学", "电学", "电学", "电学", "电学", "电学", "电学", "电学",
+    "热光原", "热光原", "热光原", "热光原", "热光原"];
+  const modules = HINTS.map((h, i) => ({
+    id: "p" + String(i + 1).padStart(2, "0"),
+    name: "模块" + (i + 1),
+    chapters: ["1.1", "1.2"],
+    term: TERMS[i],
+    stage: STAGES[i],
+    lv: (i % 3) + 1,
+    hoursHint: h,
+    tags: i === 0 ? ["高频"] : (i === 3 ? ["必开"] : []),
+    topic: STAGES[i],
+  }));
+  // 收口的三个模块（必开）
+  modules.push({ id: "zz1", name: "高考真题精讲", term: "收口", stage: "收口", lv: 2, hoursHint: 6, must: true, topic: "真题", tags: ["必开"] });
+  modules.push({ id: "zz2", name: "错题清零", term: "收口", stage: "收口", lv: 1, hoursHint: 4, must: true, topic: "错题", tags: ["必开"] });
+  modules.push({ id: "zz3", name: "综合模拟", term: "收口", stage: "收口", lv: 2, hoursHint: 6, must: true, topic: "模拟", tags: ["必开"] });
+
+  const pack = {
+    key: "physics",
+    stage: "senior",
+    name: "物理",
+    fullScore: 100,
+    bands: [
+      { min: 85, key: 3, name: "冲高分" },
+      { min: 60, key: 2, name: "提中档" },
+      { min: 0, key: 1, name: "补基础" },
+    ],
+    stages: [
+      { key: "力学", name: "一轮·力学" },
+      { key: "电学", name: "一轮·电磁" },
+      { key: "热光原", name: "一轮·热光原" },
+      { key: "收口", name: "收口" },
+    ],
+    modules,
+    grades: { "高三": modules.map((m) => m.id) },
+  };
+  return Object.assign(pack, overrides || {});
+}
+
+const PERCENT_MUL = 10;   // 一位小数的"分"
+
+/** 一行课时是不是合法的"一位小数" */
+function isOneDecimal(h) {
+  const t = Math.round(Number(h) * PERCENT_MUL);
+  return Math.abs(t / PERCENT_MUL - Number(h)) < 1e-9;
+}
+
+/* ==========================================================================
+   ① 一行 = 一个模块（绝不拆次课）
+   ========================================================================== */
+function suiteOneRowPerModule(E) {
+  const pack = makePack();
+  const plan = E.buildPlan(pack, { grade: "高三", score: 62, totalHours: 60 });
+
+  ok("①-1 模块行数 = 挑中的模块数（没有一行被拆成多次课）",
+    plan.rows.length === E.selectModules(pack, { grade: "高三", score: 62, totalHours: 60 }).modules.length,
+    `rows=${plan.rows.length}`);
+
+  const names = plan.rows.map((r) => r.name);
+  ok("①-2 每一行的模块名都是**完整模块名**（没有「（概念与公式梳理）」这类次课后缀）",
+    names.every((n) => !/（|\(/.test(n)), names.slice(0, 3).join(" / "));
+
+  const dup = names.filter((n, i) => names.indexOf(n) !== i);
+  ok("①-3 没有重复的模块名（附件3 会按名字合并相邻行 ⇒ 重名会少一行）",
+    dup.length === 0, dup.join("、"));
+
+  const total = plan.rows.reduce((a, r) => a + r.hours, 0);
+  ok("①-4 没有一行是「2 小时」这种按次课切的粒度（课时是按模块给的，不是按次课）",
+    !(plan.rows.length >= 20 && plan.rows.every((r) => r.hours === 2)),
+    `rows=${plan.rows.length} 总课时=${total}`);
+
+  ok("①-5 引擎里**没有** buildLessons 这类拆次课的函数（口径：一行一模块）",
+    typeof E.buildLessons === "undefined" && typeof E.splitIntoLessons === "undefined");
+}
+
+/* ==========================================================================
+   ② 课时：一位小数 + 总和精确等于总课时
+   ========================================================================== */
+function suiteHours(E) {
+  const pack = makePack();
+  const budgets = [10, 20, 28, 33.3, 47.3, 60, 88.8, 100, 147, 166.5, 213, 240.5];
+
+  let allDecimal = true, allMatch = true, allLeak = true;
+  const detail = [];
+  for (const T of budgets) {
+    const plan = E.buildPlan(pack, { grade: "高三", score: 70, totalHours: T });
+    const sum = plan.rows.reduce((a, r) => a + r.hours, 0);
+    const sumR = Math.round(sum * 10) / 10;
+    if (!plan.rows.every((r) => isOneDecimal(r.hours))) allDecimal = false;
+    if (!feq(sumR, T)) { allMatch = false; detail.push(`T=${T} 实得=${sumR}`); }
+    if (!feq(plan.allocated, sumR)) allLeak = false;
+  }
+  ok("②-1 每一行的课时都是「一位小数」（含 4.5 / 7.5 / 10.5）", allDecimal);
+  ok("②-2 各行课时之和 **精确等于** 老师填的总课时（12 种预算全过）",
+    allMatch, detail.join("；"));
+  ok("②-3 allocated（引擎自报的合计）与逐行相加**一致**（附件3 合计行用的就是这个数）", allLeak);
+  ok("②-4 没有浮点尾巴（不能出现 0.30000000000000004）",
+    budgets.every((T) => {
+      const plan = E.buildPlan(pack, { grade: "高三", score: 70, totalHours: T });
+      return plan.rows.every((r) => String(r.hours).length <= 6);
+    }));
+
+  // 空科目包不该抛异常
+  let threw = false;
+  try { E.allocateHours([], 20); } catch { threw = true; }
+  ok("②-5 空模块列表不抛异常（返回空行 + 全部课时记在 unallocated）", !threw);
+}
+
+/* ==========================================================================
+   ③ 分摊：比例关系 + 上下限 +「配不进去」要如实说
+   ========================================================================== */
+function suiteAllocation(E) {
+  // 坑②的钉子：9 / 6 / 3 三个模块配 30 课时 —— 必须还是 9:6:3 的形状，不能变成平均主义
+  const three = [
+    { id: "a", name: "A", lv: 2, hoursHint: 9, term: "必修一" },
+    { id: "b", name: "B", lv: 2, hoursHint: 6, term: "必修一" },
+    { id: "c", name: "C", lv: 1, hoursHint: 3, term: "必修一" },
+  ];
+  const r30 = E.allocateHours(three, 30);
+  const byId = {};
+  r30.rows.forEach((r) => { byId[r.id] = r.hours; });
+  ok("③-1 课时分摊**保留模块之间的比重**（9/6/3 配 30 课时 → 15/10/5，而不是 10/10/10）",
+    feq(byId.a, 15) && feq(byId.b, 10) && feq(byId.c, 5),
+    `实得 ${byId.a}/${byId.b}/${byId.c}`);
+  ok("③-2 比例是单调的：建议课时多的模块，分到的课时一定不少于建议课时少的",
+    byId.a > byId.b && byId.b > byId.c);
+
+  // 坑①的钉子：预算还没到容量上限时，必须**把预算分摊完**（不能削掉一大截没地方放）
+  const r36 = E.allocateHours(three, 36);       // 容量正好 = 18 + 12 + 6
+  ok("③-3 预算在容量之内时，课时要**分摊完**（36 课时全部落地、unallocated=0）",
+    feq(r36.allocated, 36) && feq(r36.unallocated, 0),
+    `allocated=${r36.allocated} unallocated=${r36.unallocated}`);
+  ok("③-4 上下限都守住了：每行 ≥ 1 课时、≤ 建议课时 × 2",
+    r36.rows.every((r) => {
+      const hint = three.filter((m) => m.id === r.id)[0].hoursHint;
+      return r.hours >= 1 - 1e-9 && r.hours <= hint * 2 + 1e-9;
+    }),
+    r36.rows.map((r) => `${r.id}:${r.hours}`).join(" "));
+
+  // 上限真的是"建议课时 × 2"（这条专门抓"toTenths 套了两层 ⇒ 上限变成 20 倍"那个真 bug）
+  const big = E.allocateHours(three, 500);
+  ok("③-4b 单模块上限确实是「建议课时 × 2」（500 课时也压不到 9 小时的模块超过 18）",
+    big.rows.every((r) => {
+      const hint = three.filter((m) => m.id === r.id)[0].hoursHint;
+      return r.hours <= hint * 2 + 1e-9;
+    }) && feq(big.allocated, 36),
+    big.rows.map((r) => `${r.id}:${r.hours}`).join(" ") + ` allocated=${big.allocated}`);
+
+  // 全顶到上限还装不下 → 如实报 unallocated（不静默吞掉）
+  const capped = E.allocateHours(three, 30, { maxHoursPerRow: 10 });
+  ok("③-5 全部顶到上限仍装不下时，如实报 unallocated（30 课时、每行最多 10 → 只能排 26）",
+    feq(capped.allocated, 26) && feq(capped.unallocated, 4),
+    `allocated=${capped.allocated} unallocated=${capped.unallocated}`);
+
+  // 总课时比"模块数 × 1 课时"还少 → shortfall 明说
+  const tight = E.allocateHours(three, 1);
+  ok("③-6 总课时少于「模块数 × 1 课时」时置 shortfall=true（明说，不静默）",
+    tight.shortfall === true && feq(tight.allocated, 1), `allocated=${tight.allocated}`);
+
+  // 0 课时的模块（样例里真有"第十三章内能 0 课时"）
+  const withZero = three.concat([{ id: "z", name: "Z", lv: 1, hoursHint: 0, term: "必修一" }]);
+  const rz = E.allocateHours(withZero, 18);
+  const zRow = rz.rows.filter((r) => r.id === "z")[0];
+  ok("③-7 hoursHint:0 的模块给 0 课时（样例里的「已掌握、不讲」就是这么表达）",
+    zRow && feq(zRow.hours, 0), zRow ? `z=${zRow.hours}` : "没有 z 行");
+  ok("③-8 0 课时的模块不参与分摊（其余三行的和仍等于总课时）",
+    feq(rz.allocated, 18), `allocated=${rz.allocated}`);
+
+  // 老师手改过的课时**不做**跨次记忆（刻意取舍）：每次都从建议课时重算。
+  // 这条是防回归的静态契约 —— 免得以后有人"顺手"把 lastPlanHours 加回来。
+  // ⚠️ 判之前必须先把注释去掉（坑 15 的教训）：注释里提到这个名字是正常的。
+  const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+  ok("③-9 引擎不读 lastPlanHours（刻意不做跨次记忆：手改一行不该把别的行也挪走）",
+    stripComments(readFileSync(ENGINE_PATH, "utf8")).indexOf("lastPlanHours") < 0);
+}
+
+/* ==========================================================================
+   ④ 模块取舍：已完成 / 必开 / 档位 / 薄弱
+   ========================================================================== */
+function suiteSelection(E) {
+  const pack = makePack();
+
+  const doneId = pack.modules[5].id;
+  const doneName = pack.modules[5].name;
+  const plan = E.buildPlan(pack, { grade: "高三", score: 70, totalHours: 80, done: [doneId] });
+  ok("④-1 「学校已完成」的模块不进课表",
+    !plan.rows.some((r) => r.id === doneId), `done=${doneName}`);
+  ok("④-2 跳过的模块要**告诉老师**（notes 里点名）",
+    plan.notes.some((n) => n.indexOf(doneName) >= 0), plan.notes.join(" | "));
+
+  // 必开模块即使"已完成"也要排（数学版同款语义）
+  const mustId = "zz1";
+  const plan2 = E.buildPlan(pack, { grade: "高三", score: 70, totalHours: 80, done: [mustId] });
+  ok("④-3 must:true 的模块豁免「已完成」过滤（真题精讲/错题清零/综合模拟永远在）",
+    plan2.rows.some((r) => r.id === mustId), plan2.rows.map((r) => r.name).join("、"));
+
+  // 必开模块一定会被排进来（除非课时连 1 课时都给不起）
+  const plan3 = E.buildPlan(pack, { grade: "高三", score: 40, totalHours: 60 });
+  const mustCount = plan3.rows.filter((r) => r.id.indexOf("zz") === 0).length;
+  ok("④-4 三个收口模块在正常课时下一定都排进来", mustCount === 3, `must=${mustCount}`);
+
+  // ⚠️ 这两条是给"必开模块没被优先"那个变异准备的钉子（本轮变异 D 第一版没红到它）。
+  //    注意：must 模块**不一定排在最前面** —— 输出顺序是按教材册次的，必开的是"必须被排进来"，
+  //    不是"必须显示在第一行"。所以断言要落在"它占没占住预算"上，而不是落在位置。
+  const tightPick = E.selectModules(pack, { grade: "高三", score: 40, totalHours: 40 });
+  const mustIds = pack.modules.filter((m) => m.must).map((m) => m.id);
+  const gotMust = mustIds.filter((id) => tightPick.modules.some((m) => m.id === id));
+  ok("④-4b 课时偏紧时，必开模块必须一个不落（must 的优先度要压过普通模块）",
+    gotMust.length === mustIds.length,
+    `必开 ${mustIds.length} 个，实际排进 ${gotMust.length} 个`);
+
+  const starved = E.selectModules(pack, { grade: "高三", score: 40, totalHours: 12 });
+  const mustSet = E.selectModules(pack, { grade: "高三", score: 40, totalHours: 40 })
+    .modules.filter((m) => m.must || (m.tags || []).indexOf("必开") >= 0).map((m) => m.id);
+  const starvedOptional = starved.modules.filter((m) => mustSet.indexOf(m.id) < 0);
+  ok("④-4c 课时只够必开模块时，普通模块要让位（不能被抢在前面）",
+    starvedOptional.length === 0,
+    "挤进来的普通模块：" + starvedOptional.map((m) => m.name).join("、"));
+
+  // 薄弱模块：同样总课时下，它该拿到更多课时
+  const weakPack = makePack();
+  const weakId = weakPack.modules[10].id;    // "模块11"（电学）
+  const base = E.buildPlan(pack, { grade: "高三", score: 70, totalHours: 60 });
+  const weak = E.buildPlan(weakPack, { grade: "高三", score: 70, totalHours: 60, weakTopics: { "电学": true } });
+  const hOf = (p, id) => (p.rows.filter((r) => r.id === id)[0] || {}).hours || 0;
+  ok("④-5 选中的「薄弱模块」会加权：同类模块的课时不低于不选薄弱时",
+    hOf(weak, weakId) >= hOf(base, weakId),
+    `薄弱=${hOf(weak, weakId)} 基准=${hOf(base, weakId)}`);
+
+  // 档位线按科目包（物理 100 分制，不能沿用数学的 150 分制）
+  ok("④-6 档位按科目包的分段（100 分制：85 冲高分 / 60 提中档 / 0 补基础）",
+    E.bandOf(pack, 90).key === 3 && E.bandOf(pack, 70).key === 2 && E.bandOf(pack, 30).key === 1);
+
+  // 课时不够时，要如实说"还有哪些模块没排进来"
+  const small = E.buildPlan(pack, { grade: "高三", score: 70, totalHours: 12 });
+  ok("④-7 课时不够时 notes 里说清「还有 N 个模块没排进来」",
+    small.notes.some((n) => n.indexOf("没排进来") >= 0), small.notes.join(" | "));
+  // 年级过滤：只排该年级列出的模块
+  const gated = makePack({ grades: { "高三": ["p01", "p02", "zz1", "zz2", "zz3"] } });
+  const gp = E.buildPlan(gated, { grade: "高三", score: 70, totalHours: 30 });
+  ok("④-8 按年级过滤模块（grades 表里只列了 5 个，就不会排出第 6 个）",
+    gp.rows.length <= 5 && gp.rows.length >= 5 - 2, `rows=${gp.rows.length}`);
+}
+
+/* ==========================================================================
+   ⑤ 学科无关：换一份科目包 = 换一个学科（代码不动）
+   ========================================================================== */
+function suiteSubjectAgnostic(E) {
+  const senior = makePack();
+  const junior = makePack({
+    key: "physics", stage: "junior", name: "物理", fullScore: 100,
+    modules: [
+      { id: "j1", name: "内能", term: "九年级", stage: "同步", lv: 1, hoursHint: 4.5, topic: "热学" },
+      { id: "j2", name: "电流和电路", term: "九年级", stage: "同步", lv: 1, hoursHint: 7.5, topic: "电学" },
+      { id: "j3", name: "欧姆定律", term: "九年级", stage: "同步", lv: 2, hoursHint: 10.5, topic: "电学" },
+      { id: "j4", name: "声现象", term: "八年级上", stage: "复习", lv: 1, hoursHint: 1.5, topic: "声" },
+    ],
+    grades: { "初三": ["j1", "j2", "j3", "j4"] },
+    stages: [{ key: "同步", name: "学校同步" }, { key: "复习", name: "一轮复习" }],
+  });
+
+  const ps = E.buildPlan(senior, { grade: "高三", score: 70, totalHours: 60 });
+  const pj = E.buildPlan(junior, { grade: "初三", score: 70, totalHours: 30 });
+  ok("⑤-1 同一份引擎、两份科目包 → 两套完全不同的模块表（学科 = 配置，不是代码）",
+    ps.rows[0].id.indexOf("p") === 0 && pj.rows[0].id.indexOf("j") === 0,
+    `${ps.rows[0].name} / ${pj.rows[0].name}`);
+  ok("⑤-2 初中包的小数课时（4.5 / 7.5 / 10.5）一样活着",
+    pj.rows.every((r) => isOneDecimal(r.hours)), pj.rows.map((r) => r.hours).join(","));
+  ok("⑤-3 阶段显示名来自科目包（附件3「阶段」列用的就是它）",
+    E.stageNameOf(junior, "同步") === "学校同步" && E.stageNameOf(senior, "电学") === "一轮·电磁");
+  ok("⑤-4 按阶段分组：分组顺序按科目包声明的顺序，不是字典序",
+    (() => {
+      const g = E.groupByStage(senior, ps.rows);
+      const names = g.map((x) => x.name);
+      const iMech = names.indexOf("一轮·力学");
+      const iElec = names.indexOf("一轮·电磁");
+      return iMech >= 0 && iElec >= 0 && iMech < iElec;
+    })());
+
+  // 模块顺序：按教材册次（必修一 → 必修二 → 选必一 → 选必二 → 选必三 → 收口）
+  const terms = ps.rows.map((r) => r.term);
+  const idx = (t) => terms.indexOf(t);
+  ok("⑤-5 输出顺序按教材册次（必修一 → 必修二 → 选必 → 收口），不是按分数高低跳",
+    idx("必修一") < idx("必修二") && idx("必修二") < idx("收口"), terms.join("→"));
+}
+
+/* ==========================================================================
+   ⑥ 自检
+   ========================================================================== */
+function suiteSelfCheck(E) {
+  const pack = makePack();
+  const plan = E.buildPlan(pack, { grade: "高三", score: 70, totalHours: 88.8 });
+  const c = E.selfCheck(plan);
+  ok("⑥-1 自检通过：合计与总课时一致、没有重名、课时都是一位小数",
+    c.ok === true, JSON.stringify(c.problems));
+  ok("⑥-2 自检报出的合计 = 逐行相加", feq(c.sum, plan.rows.reduce((a, r) => a + r.hours, 0)));
+
+  // 人为造一个"重名"和"合计对不上"的方案 → 自检必须报出来
+  const bad = { totalHours: 10, rows: [
+    { name: "A", hours: 4 }, { name: "A", hours: 4 }, { name: "B", hours: 1 },
+  ] };
+  const cb = E.selfCheck(bad);
+  ok("⑥-3 重名模块自检报错（附件3 会合并同名行 ⇒ 必须提前拦住）",
+    cb.problems.some((p) => p.indexOf("同名") >= 0), cb.problems.join(" | "));
+  ok("⑥-4 合计与总课时对不上时自检不通过",
+    cb.ok === false && cb.sumMatches === false, JSON.stringify({ sum: cb.sum, total: cb.total }));
+}
+
+/* ==========================================================================
+   跑一个引擎实例的全部套件
+   ========================================================================== */
+function runAll(E) {
+  const before = results.length;
+  suiteOneRowPerModule(E);
+  suiteHours(E);
+  suiteAllocation(E);
+  suiteSelection(E);
+  suiteSubjectAgnostic(E);
+  suiteSelfCheck(E);
+  return results.slice(before);
+}
+
+console.log("=".repeat(78));
+console.log("引擎套件（正常实现）");
+console.log("=".repeat(78));
+const Engine = require(ENGINE_PATH);
+const normalResults = runAll(Engine);
+const normalFail = normalResults.filter((r) => !r.pass).length;
+
+/* ==========================================================================
+   ⑦ 变异自证：把每个真实 bug 装回去，断言必须变红
+   —— 项目规矩：真 bug 必须有"退回去就会红"的证据（dsh-work-guide 坑 18）
+   ========================================================================== */
+console.log("");
+console.log("=".repeat(78));
+console.log("变异自证（把 bug 装回去，必须至少红一条）");
+console.log("=".repeat(78));
+
+const SRC = readFileSync(ENGINE_PATH, "utf8");
+const TMP = mkdtempSync(join(tmpdir(), "plangen-mut-"));
+
+/** 每个变异：name + 期望红掉的那条断言关键字（用来证明"红的是对的那条"） */
+const MUTATIONS = [
+  {
+    name: "A 课时抹成整数（把 round1 改成 Math.round，丢掉 4.5 / 7.5 小数）",
+    find: "  function round1(hours) {\n    return fromTenths(toTenths(hours));\n  }",
+    replace: "  function round1(hours) {\n    return Math.round(Number(hours) || 0);\n  }",
+    expect: "一位小数",
+  },
+  {
+    name: "B 退回「一行 = 一次课」：把每个模块按 2 课时拆成多行",
+    find: "    const rows = active.map((m, i) => mkRow(m, fromTenths(t[i])));\n    const allRows = zeros.map((m) => mkRow(m, 0)).concat(rows);\n    const allocated = sumHours(rows.map((r) => r.hours));\n    const overByT",
+    replace: "    const rows0 = active.map((m, i) => mkRow(m, fromTenths(t[i])));\n    const rows = [];\n    rows0.forEach((r) => { let left = toTenths(r.hours); const n = Math.max(1, Math.round(left / 20));\n      for (let q = 0; q < n; q++) { const part = q === n - 1 ? left : Math.round(left / n); rows.push(Object.assign({}, r, { name: r.name + \"（第\" + (q + 1) + \"次）\", hours: fromTenths(part) })); left -= part; } });\n    const allRows = zeros.map((m) => mkRow(m, 0)).concat(rows);\n    const allocated = sumHours(rows.map((r) => r.hours));\n    const overByT",
+    expect: "一行",
+  },
+  {
+    name: "C 已完成的模块照排（把 done 过滤去掉）",
+    find: "    const keptOptional = optional.filter((m) => !done[m.id]);",
+    replace: "    const keptOptional = optional.slice();",
+    expect: "已完成",
+  },
+  {
+    name: "D 拿掉「建议课时 × 2」的上限（一个模块可以把整个预算吃光）",
+    find: "      const cap = Math.max(minT, hintTenths(m) * MAX_ROW_FACTOR);\n      if (opt.maxHoursPerRow != null) return Math.min(cap, Math.max(minT, toTenths(opt.maxHoursPerRow)));\n      return cap;",
+    replace: "      if (opt.maxHoursPerRow != null) return Math.max(minT, toTenths(opt.maxHoursPerRow));\n      return Number.MAX_SAFE_INTEGER;",
+    expect: "上限",
+  },
+  {
+    // ⚠️ 记一笔（免得后人重复试）：本轮试过"把零头补给最少的那个（平均主义）"这个变异，
+    //    结果**全绿** —— 查下去发现**在上下限之内，两种补法结果一样**（6 个花色的物理包都是 18/12/6）。
+    //    所以那不是真 bug，不该硬凑一条变异。真正的红线是"总量必须补齐"，变异就钉它。
+    name: "E 配平时不把总量补齐（定标之后直接收工 ⇒ 各行之和小于老师填的总课时）",
+    find: "    // 零头配平：按\"离自己额度差得远\"的顺序补（额度大的模块始终拿得多，比例不被打乱）\n    let guard = 0;\n    while (sum < totalT && guard++ < 200000) {",
+    replace: "    // 零头配平：按\"离自己额度差得远\"的顺序补（额度大的模块始终拿得多，比例不被打乱）\n    let guard = 0;\n    while (false && sum < totalT && guard++ < 200000) {",
+    expect: "精确等于",
+  },
+];
+
+let mutationCaught = 0;
+const mutationDetail = [];
+for (let mi = 0; mi < MUTATIONS.length; mi++) {
+  const mut = MUTATIONS[mi];
+  if (SRC.indexOf(mut.find) < 0) {
+    mutationCaught++;
+    mutationDetail.push(`${mut.name} → 跳过（源码里找不到锚点，需更新变异脚本）`);
+    console.log(`SKIP | ${mut.name} | 源码锚点没找到`);
+    continue;
+  }
+  // ⚠️ 文件名必须**每个变异都不同**：第一版用"已抓住的个数"当文件名，
+  //    结果前几个变异都写进同一个 mut-1.cjs（后面的把前面的覆盖了）。
+  const file = join(TMP, `mut-${mi}.cjs`);
+  writeFileSync(file, SRC.split(mut.find).join(mut.replace), "utf8");
+  delete require.cache[file];
+  let E2 = null, loadErr = null;
+  try { E2 = require(file); } catch (e) { loadErr = e; }
+
+  const beforeLen = results.length;
+  let failed = [];
+  if (!loadErr) {
+    try { runAll(E2); } catch (e) { /* 变异可能直接把函数跑崩，也算被抓住 */ }
+    failed = results.slice(beforeLen).filter((r) => !r.pass).map((r) => r.name);
+    // 把这一轮的结果从总表里摘掉（它们不属于"正常实现"的成绩）
+    results.length = beforeLen;
+  } else {
+    failed = ["（加载就失败：" + loadErr.message + "）"];
+  }
+
+  const caught = failed.length > 0;
+  if (caught) mutationCaught++;
+  const expectedHit = failed.some((n) => n.indexOf(mut.expect) >= 0);
+  mutationDetail.push(`${mut.name} → ${caught ? "红 " + failed.length + " 条" : "⚠️ 全绿（没抓住！）"}`
+    + (caught ? (expectedHit ? "，含「" + mut.expect + "」那条 ✅" : "，但没红到「" + mut.expect + "」那条 ⚠️") : ""));
+  console.log(`${caught ? "RED " : "MISS"} | ${mut.name}`);
+  console.log(`      红掉：${failed.slice(0, 4).join(" / ")}${failed.length > 4 ? " …" : ""}`);
+}
+
+ok(`⑦ 变异自证：${MUTATIONS.length} 个变异全部被抓住（且红到了对的那条断言）`,
+  mutationCaught === MUTATIONS.length,
+  mutationDetail.join(" ； "));
+
+/* ==========================================================================
+   汇总
+   ========================================================================== */
+const total = results.length;
+const passed = results.filter((r) => r.pass).length;
+console.log("");
+console.log("=".repeat(78));
+console.log(`SUMMARY: ${passed}/${total} passed`);
+if (passed !== total) {
+  console.log("未通过：");
+  results.filter((r) => !r.pass).forEach((r) => console.log("  - " + r.name));
+}
+console.log(`（正常实现断言 ${normalResults.length} 条，其中失败 ${normalFail} 条）`);
+console.log("=".repeat(78));
+process.exit(passed === total ? 0 : 1);

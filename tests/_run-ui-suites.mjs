@@ -27,9 +27,15 @@ const DEFAULT_NEED_SERVER = [
   "paper-score-ui.test.mjs",
   "math-plan-ai-sections.test.mjs",
   "math-plan-export-ui.test.mjs",
+  // ★ 2026-10 全学科扩展：plan-generator 的真浏览器套件（起 iframe + 登录 + 两份导出件复核）
+  "plan-generator-ui.test.mjs",
 ];
 /** 自己起服务（会先杀掉 3000）的套件 —— 必须放在最后，且要先停掉我们的服务 */
-const DEFAULT_OWN_SERVER = ["math-plan-ai-vip-path.test.mjs"];
+const DEFAULT_OWN_SERVER = [
+  "math-plan-ai-vip-path.test.mjs",
+  // ★ plan-generator 的 AI 路由套件：自带桩上游（4571）+ 自己起 next start
+  "plan-generator-ai.test.mjs",
+];
 
 // 允许临时指定要跑的套件（调试单套时用）：只传文件名 = 当作「需要外部服务」那一组。
 //   & <node> tests\_run-ui-suites.mjs paper-regression.test.mjs
