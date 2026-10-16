@@ -77,8 +77,27 @@ try {
       rec("sort_order = 6", data.sort_order === 6, String(data.sort_order));
     }
     // 确认没有破坏其他工具
-    const { data: all } = await db.from("tools").select("route, active").order("sort_order");
-    rec("其他工具未被影响（共 8 条）", (all ?? []).length === 8, `${(all ?? []).length} 条`);
+    //
+    // ⚠️ 2026-10 修：这条原来写的是 `(all ?? []).length === 8` —— **写死了行数**，
+    //    结果是"每加一个工具就假红一次"（本轮加 `plan-generator`（迁移 0022）时又红了一遍）。
+    //    这正是 `dsh-work-guide.md` 坑 1 说的那类漂移。
+    //    改成**看具体的工具在不在、关键字段对不对**：加新工具不会影响它，
+    //    而"某个工具被误删/被改坏"照样能抓到（比数数更准）。
+    const { data: all } = await db.from("tools").select("route, active, min_plan").order("sort_order");
+    const byRoute = new Map((all ?? []).map((t) => [t.route, t]));
+    const MUST_HAVE = [
+      ["/tools/math-plan", "free"],
+      ["/tools/paper-analysis", "free"],
+      ["/tools/feedback", "free"],
+    ];
+    const missing = MUST_HAVE.filter(([r]) => !byRoute.has(r)).map(([r]) => r);
+    const wrongPlan = MUST_HAVE.filter(([r, p]) => byRoute.has(r) && byRoute.get(r).min_plan !== p)
+      .map(([r]) => r);
+    const inactive = MUST_HAVE.filter(([r]) => byRoute.has(r) && byRoute.get(r).active !== true)
+      .map(([r]) => r);
+    rec("其他工具未被影响（三个在用的工具都还在、级别没变、没被下线）",
+      missing.length === 0 && wrongPlan.length === 0 && inactive.length === 0,
+      `共 ${(all ?? []).length} 条；缺=${missing.join(",") || "无"}；级别错=${wrongPlan.join(",") || "无"}；被下线=${inactive.join(",") || "无"}`);
   }
 
   // ================= 2. 未登录访问 =================

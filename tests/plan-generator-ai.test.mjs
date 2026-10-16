@@ -113,6 +113,58 @@ ok("①-11 条数 = 模块数（提示词里逐条编号，与行数契约对得
     return last.indexOf("第1条") >= 0 && last.indexOf("第2条") >= 0 && last.indexOf("第3条") < 0;
   })());
 
+/* ---------- ①-12 学科参数化（2026-10 扩到四学科时新增）----------
+   ⚠️ 每个学科的老师**写法不一样**，这不是我编的 —— 是从各自真实样例里看出来的：
+     物理「知道/理解/掌握」+「重点与难点：」；数学"会算会判断"；
+     英语「语言模块：…；语法模块：…」两段式；语文「知识点：…；目标：…」两段式。
+   判据用"该学科的特征串"是否出现 —— 换学科只改 prompts.ts，别的地方不用动。 */
+const SUBJ_CASES = [
+  { subject: "物理", stage: "senior", must: ["重点与难点：", "分值："], label: "物理·高中" },
+  { subject: "物理", stage: "junior", must: ["重点："], label: "物理·初中" },
+  { subject: "数学", stage: "junior", must: ["会算、会判断"], label: "数学·初中" },
+  { subject: "英语", stage: "junior", must: ["语言模块", "语法模块"], label: "英语·初中" },
+  { subject: "英语", stage: "senior", must: ["核心词汇与重点句型", "语法要点"], label: "英语·高中" },
+  { subject: "语文", stage: "senior", must: ["知识点：", "目标："], label: "语文·高中" },
+  { subject: "语文", stage: "junior", must: ["知识点：", "目标："], label: "语文·初中" },
+];
+{
+  let allOk = true;
+  const detail = [];
+  for (const c of SUBJ_CASES) {
+    const b = P.buildGoalsMessages({
+      subjectName: c.subject, stage: c.stage, grade: "高三", bandName: "提中档",
+      rows: [{ name: "信息类文本阅读", term: "一轮", lv: 2, stageName: "一轮专题复习",
+        chapters: ["客观题命题陷阱与答题技巧"] }],
+    });
+    const sys = b.messages[0].content;
+    const okAll = c.must.every((m) => sys.indexOf(m) >= 0)
+      && sys.indexOf("高中" + c.subject + "教师") + sys.indexOf("初中" + c.subject + "教师") >= -1;
+    if (!okAll) { allOk = false; detail.push(c.label); }
+  }
+  ok("①-12 四个学科的话术规则**各按各的样例参数化**（英语两段式 / 语文两段式 / 数学会算会判断）",
+    allOk, allOk ? "全部命中特征串" : "未命中：" + detail.join("、"));
+}
+{
+  // few-shot 也要按学科换（不能拿物理的目标去示范语文）
+  const en = P.buildGoalsMessages({
+    subjectName: "英语", stage: "junior", grade: "九年级", rows: twoRows,
+  });
+  const enFirst = en.messages.filter((m) => m.role === "assistant")[0].content;
+  const ph = P.buildGoalsMessages({
+    subjectName: "物理", stage: "senior", grade: "高三", rows: twoRows,
+  });
+  const phFirst = ph.messages.filter((m) => m.role === "assistant")[0].content;
+  ok("①-13 few-shot 风格范例**按学科换**（英语示范是「语言模块…」而不是物理那套）",
+    enFirst.indexOf("语言模块") >= 0 && phFirst.indexOf("质点") >= 0,
+    "英:" + enFirst.slice(0, 16) + " / 物:" + phFirst.slice(0, 16));
+}
+{
+  // 还没做科目包的学科（如化学）要**安全退回物理模板**，不能崩、也不能空
+  const ch = P.buildGoalsMessages({ subjectName: "化学", stage: "senior", grade: "高三", rows: twoRows });
+  ok("①-14 未接入的学科（化学）安全退回默认规则，提示词非空且含硬性约束",
+    ch.messages[0].content.indexOf("硬性约束") >= 0 && ch.messages.length >= 3);
+}
+
 /* ==========================================================================
    ② 静态契约：路由源码上的护栏
    ========================================================================== */

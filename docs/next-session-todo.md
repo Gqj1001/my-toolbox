@@ -210,7 +210,6 @@
 ---
 
 ## 七、环境备忘（新会话不用再问用户）
-
 | 项 | 值 |
 |---|---|
 | 仓库 | `D:\my-website\my-toolbox`（注意：工作目录可能是 `D:\my-website`，**仓库在子目录里**） |
@@ -220,6 +219,8 @@
 | 跑测试 | `C:\Users\郭庆杰\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe tests\<套件>`；**先 `next build`** |
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
+| ⚠️ 测试环境坑（2026-10 新增） | **`profile` 套件会因为你机器上"测试账号已存过资料"而假红 2 条**（`stuTeacher="数学测试老师老师"` / `brandWho="数学"`）。根因是 `user_profiles` 里 `roleb` 那行残留（第二十批测试在"表没建"分支提交时写的），而试卷分析页会把资料填进教师框。`resolveSignature()` = 学科+姓名+"老师" ⇒ 正好是这个串。**anon 删不掉**（delete 策略只给 admin）⇒ 要在 Supabase 控制台用 service_role 删，或**换一对新测试账号**。详见 `tests/profile.test.mjs` 顶部注释。 |
+| ⚠️ 回归怎么跑（2026-10 新增） | **一次只跑一个 runner**。`paper-analysis` 等套件**需要外面先起好服务**，单独跑会干等 ⇒ 别用"一把梭"的批量 runner 跑全套，按 `tests/_run-ui-suites.mjs` 的名单分两批（需要外部服务的 / 自己起服务的）。`plan-generator-ui` 与 `plan-generator-ai` 已登记进那个 runner。 |
 
 **全套回归现状（2026-10 第二十批实测：38 个 `*.test.mjs` + `verify-checklist.mjs` = 39 套，全绿 ✅）**：
 
@@ -256,8 +257,7 @@ admin-feature-flags 25/25  profile 32/32
 >    而"自己起服务"的套件早就有 28 套（见上一节）。**要跑全套就得按那串名单一套一套来**，
 >    别以为跑完那个脚本就等于全套回归。
 
-> ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。第一批实测时就发现旧表有几处**过期或漏项**：
-> `math-plan-students` 实际是 **37**（旧表写 29）、`students-unified` 曾经写 62 而实际 64，
+> ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。第一批实测时就发现旧表有几处**过期或漏项**：> `math-plan-students` 实际是 **37**（旧表写 29）、`students-unified` 曾经写 62 而实际 64，
 > 而且**整个 `archive-students`（17 项）被漏掉了**。这正是 `dsh-work-guide.md` 坑 1 说的那类问题。
 >
 > 变化说明（最近三批，更早的见 `project-overview.md` §十）：
