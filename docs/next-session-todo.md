@@ -198,9 +198,9 @@
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
 
-**全套回归现状（2026-10 第十八批实测：37 个 `*.test.mjs` + `verify-checklist.mjs` = 38 套，全绿 ✅）**：
+**全套回归现状（2026-10 第十九批实测：37 个 `*.test.mjs` + `verify-checklist.mjs` = 38 套，全绿 ✅）**：
 
-- **全部 38 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1229 项断言**：
+- **全部 38 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1235 项断言**：
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -215,11 +215,15 @@ vision-paper 41/41
 school-paper 43/43
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 81/81     date-input 15/15           admin-grant90 18/18
-archive-students 28/28     vision-scores 15/15
+archive-students 36/36     vision-scores 15/15
 manual-score 45/45         student-report 45/45       password-flows 42/42
 student-analysis 21/21     company-export 74/74       backfill 39/39
 admin-feature-flags 25/25
 ```
+
+> ⚠️ **看汇总时的一个坑（本轮我自己踩到）**：`company-export` 有一条断言详情里会出现
+> `附件2: 0/0`（那是"单元格级边框数"），用 `Select-String "0/0"` 之类的粗筛会把它
+> **误判成某个套件"0 项通过"**。要判断套件结果请认 `=== SUMMARY ===` 后面那行或 exit code。
 
 > ⚠️ **本轮的两个新认识（都写进实际文档了）**：
 > 1. **`student-report` 实际是 45 项**（旧文档写 37，是"加断言时忘了改"的漂移）——

@@ -139,8 +139,11 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
 
           <header className="flex flex-col gap-1">
             <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{selected}</h1>
+            {/* ★ 2026-10 第十九批（用户口径）：这一行就是"对接人一眼可见"的地方 ——
+                显示 年级 · 学校 · **学管师**。任课教师不再出现在这里（老师一般只教一门课）。 */}
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              {[info.grade, info.campus, info.teacher].filter(Boolean).join(" · ") || "还没有填年级 / 校区 / 教师"}
+              {[info.grade, info.campus, info.manager && `学管师 ${info.manager}`]
+                .filter(Boolean).join(" · ") || "还没有填年级 / 学校 / 学管师"}
               {" · 共 "}{items.length}{" 条记录"}
             </p>
           </header>
@@ -155,7 +158,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
             name={selected}
             grade={String(info.grade ?? "")}
             campus={String(info.campus ?? "")}
-            teacher={String(info.teacher ?? "")}
+            manager={String(info.manager ?? "")}
           />
 
           {/* ★ 第十四批：手动补录成绩（在别处考的试也记进档案）。
@@ -260,7 +263,9 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           <ul className="grid gap-2 sm:grid-cols-2">
             {filtered.map((n) => {
               const info = all[n] as Record<string, unknown>;
-              const parts = [info.grade, info.campus, info.teacher].filter(Boolean) as string[];
+              // ★ 2026-10 第十九批：列表卡片显示 年级 · 学校 · **学管师**（对接人一眼可见）
+              const parts = [info.grade, info.campus, info.manager && `学管师 ${info.manager}`]
+                .filter(Boolean) as string[];
               return (
                 <li key={n}>
                   <Link href={`/dashboard?name=${encodeURIComponent(n)}`} className={`${card} block`}>
@@ -269,7 +274,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
                       <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{countOf(n)} 条记录</span>
                     </div>
                     <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                      {parts.length ? parts.join(" · ") : "还没填年级 / 校区 / 教师"}
+                      {parts.length ? parts.join(" · ") : "还没填年级 / 学校 / 学管师"}
                     </p>
                   </Link>
                 </li>

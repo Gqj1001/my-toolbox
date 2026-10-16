@@ -53,7 +53,9 @@ async function requireWriter() {
  *  空串不进 patch（新建时留空 = 没填，不该把空值写上去）。 */
 function newStudentPatch(formData: FormData): StudentPatch {
   const patch: StudentPatch = {};
-  for (const key of ["grade", "campus", "teacher"] as const) {
+  // ★ 2026-10 第十九批：新建表单的第三格由「教师」改为「**学管师**」(`manager`)。
+  //   ⚠️ `teacher` 不再从这里收 —— 它没有消失，只是不再占档案编辑区一格（旧数据照常）。
+  for (const key of ["grade", "campus", "manager"] as const) {
     const v = String(formData.get(key) ?? "").trim();
     if (v) patch[key] = v;
   }
@@ -64,13 +66,15 @@ function newStudentPatch(formData: FormData): StudentPatch {
  *
  *  ⚠️ 「改这一项」的勾选框（`change_<字段>`）是**必须**的，不是装饰：
  *     不勾 = 这个字段根本不进 patch = 保留原值。
- *     光靠「留空＝不改」的话，「把校区清空」就永远做不到（空值被当成没改，静默不生效）。
+ *     光靠「留空＝不改」的话，「把学校清空」就永远做不到（空值被当成没改，静默不生效）。
  *     勾上但留空 = **明确清空**（写空串）—— 两种意图都能表达。
  *
- *  ⚠️ 只放**身份字段**：分数 / 课时 / 薄弱模块属于「某一次方案」，不在档案这一层。 */
+ *  ⚠️ 只放**身份字段**：分数 / 课时 / 薄弱模块属于「某一次方案」，不在档案这一层。
+ *  ★ 2026-10 第十九批：三格 = 年级 / 学校(`campus`) / 学管师(`manager`)。
+ *    `teacher`（任课教师）**从这里移除**：它仍在库里、仍进报告与 Word，只是不再可编辑。 */
 function patchFromForm(formData: FormData): StudentPatch {
   const patch: StudentPatch = {};
-  for (const key of ["grade", "campus", "teacher"] as const) {
+  for (const key of ["grade", "campus", "manager"] as const) {
     if (formData.get(`change_${key}`) == null) continue;      // 没勾 → 不动这一项
     patch[key] = String(formData.get(key) ?? "").trim();       // 勾了 → 原样写（空串=清空）
   }

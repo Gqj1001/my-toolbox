@@ -103,8 +103,8 @@ try {
     if(!n) return { err: '没有姓名框' };
     setVal(n, ${JSON.stringify(STU)});
     setVal(form.querySelector('input[name="grade"]'), '高二');
-    setVal(form.querySelector('input[name="campus"]'), '燕郊中学校区');
-    setVal(form.querySelector('input[name="teacher"]'), '郭庆杰');
+    setVal(form.querySelector('input[name="campus"]'), '三河一中');
+    setVal(form.querySelector('input[name="manager"]'), '李学管');
     form.requestSubmit();
     return 'submitted';
   `);
@@ -116,9 +116,10 @@ try {
     if (String(p).includes("name=")) break;
   }
   const afterCreate = await api(`/api/students?name=${encodeURIComponent(STU)}`);
-  record("★新建学生：服务器上真的有了这位学生",
-    afterCreate.body?.student?.grade === "高二" && afterCreate.body?.student?.campus === "燕郊中学校区",
-    JSON.stringify(afterCreate.body?.student ?? {}).slice(0, 160));
+  record("★新建学生：服务器上真的有了这位学生（年级/学校/学管师都进去了）",
+    afterCreate.body?.student?.grade === "高二" && afterCreate.body?.student?.campus === "三河一中" &&
+      afterCreate.body?.student?.manager === "李学管",
+    JSON.stringify(afterCreate.body?.student ?? {}).slice(0, 200));
   record("★新建学生：提交后被带到这位学生的详情页（不用自己再点进去）",
     String(await ev(`location.search`)).includes(encodeURIComponent(STU)),
     String(await ev(`location.pathname + location.search`)).slice(0, 80));
@@ -259,6 +260,51 @@ try {
       `库里行=${JSON.stringify(rawRow)} 接口 student.grade=${JSON.stringify(afterDel.body?.student?.grade ?? null)}`);
   }
 
+  // ---- 3d. ★第十九批：档案编辑区是**三格 = 年级 / 学校 / 学管师** ----
+  //   用户原话："第二格我想把校区改为学校，第三格我想把教师改为学管师 …… 我希望学员档案的
+  //   页面中能直观的看到老师的对接人是谁"。这一组就把这两件事钉住。
+  {
+    await goto(`/dashboard?name=${encodeURIComponent(STU)}`, 4000);
+    const ed = await inDoc(`
+      const form = [...document.querySelectorAll('form')].find(f => f.querySelector('input[name="change_grade"]'));
+      if(!form) return { err: '没有修改表单' };
+      const names = [...form.querySelectorAll('input[type="checkbox"]')]
+        .map(c => c.getAttribute('name')).filter(Boolean).sort();
+      const labels = [...form.querySelectorAll('label')].map(l => l.innerText.replace(/\\s+/g,'')).filter(Boolean);
+      const inputs = [...form.querySelectorAll('input:not([type="checkbox"]):not([type="hidden"]):not([type="submit"])')]
+        .map(i => i.getAttribute('name')).filter(n => n !== 'name');
+      const ph = {};
+      form.querySelectorAll('input[name]').forEach(i => { ph[i.getAttribute('name')] = i.getAttribute('placeholder') || ''; });
+      return { names, labels, inputs, ph, hasTeacherInput: !!form.querySelector('input[name="teacher"]') };
+    `);
+    record("★★档案编辑区正好**三格**：年级 / 学校 / 学管师（勾选框与输入框一一对应）",
+      JSON.stringify(ed?.names) === JSON.stringify(["change_campus", "change_grade", "change_manager"]) &&
+      JSON.stringify(ed?.inputs) === JSON.stringify(["grade", "campus", "manager"]),
+      JSON.stringify({ 勾选框: ed?.names, 输入框: ed?.inputs }));
+    record("★★第二格显示名是「学校」（不再叫「校区」）、第三格是「学管师」（不再叫「教师」）",
+      /改「年级」/.test(ed?.labels?.join("|") ?? "") && /改「学校」/.test(ed?.labels?.join("|") ?? "") &&
+      /改「学管师」/.test(ed?.labels?.join("|") ?? "") && !/改「校区」/.test(ed?.labels?.join("|") ?? "") &&
+      !/改「教师」/.test(ed?.labels?.join("|") ?? ""),
+      JSON.stringify(ed?.labels));
+    record("★★「任课教师」不再占编辑区一格（但它没有被删除：库里、报告里都还在）",
+      ed?.hasTeacherInput === false, `有 teacher 输入框=${ed?.hasTeacherInput}`);
+    record("★占位提示也换了（学校给的是真学校的例子，不是「燕郊中学校区」）",
+      /三河一中|学校/.test(String(ed?.ph?.campus ?? "")) && !/校区/.test(String(ed?.ph?.campus ?? "")),
+      JSON.stringify(ed?.ph));
+
+    // 详情页抬头与名单卡片都要能**一眼看到对接人**
+    const head = await inDoc(`return document.body.innerText.replace(/\\s+/g,' ')`);
+    record("★★详情页抬头显示学管师（对接人一眼可见）",
+      /学管师\s*李学管/.test(String(head)),
+      (String(head).match(/^[^]{0,120}/) ?? [""])[0]);
+    await goto("/dashboard?q=" + encodeURIComponent("档案探针"), 4000);
+    const listTxt = await inDoc(`return document.body.innerText.replace(/\\s+/g,' ')`);
+    record("★名单卡片也显示学管师（不用点进去就能看到对接人）",
+      /学管师\s*李学管/.test(String(listTxt)) && /三河一中/.test(String(listTxt)),
+      String(listTxt).slice(0, 160));
+    await goto(`/dashboard?name=${encodeURIComponent(STU)}`, 4000);
+  }
+
   // ---- 4. 修改：**不勾任何框**直接提交 → 什么都不该变 ----
   const noChange = await inDoc(`
     const form = [...document.querySelectorAll('form')].find(f => f.querySelector('input[name="change_grade"]'));
@@ -294,10 +340,36 @@ try {
   record("★修改：勾上「改年级」并提交 → 服务器上真的变成高三",
     afterChange.body?.student?.grade === "高三",
     `grade=${JSON.stringify(afterChange.body?.student?.grade)}`);
-  record("★修改：没勾的项（校区/教师）保持原值，没有被清掉",
-    afterChange.body?.student?.campus === "燕郊中学校区" &&
-      afterChange.body?.student?.teacher === "郭庆杰",
-    JSON.stringify({ campus: afterChange.body?.student?.campus, teacher: afterChange.body?.student?.teacher }));
+  record("★修改：没勾的项（学校/学管师）保持原值，没有被清掉",
+    afterChange.body?.student?.campus === "三河一中" &&
+      afterChange.body?.student?.manager === "李学管",
+    JSON.stringify({ campus: afterChange.body?.student?.campus, manager: afterChange.body?.student?.manager }));
+
+  // ---- 5b. ★第十九批：**学管师那一格真的能改动**（换个对接人）----
+  //   ⚠️ 上一条只验了"格子存在"，没验"改了能存进去" —— 而"新增的格能不能写"正是这次改动的
+  //      核心风险（漏把 manager 加进 patch 列表，页面看起来完全正常、就是存不上）。
+  //      所以这里必须**真的勾框、真的改值、真的提交**，再回服务器核对。
+  {
+    const chgMgr = await inDoc(`
+      const form = [...document.querySelectorAll('form')].find(f => f.querySelector('input[name="change_manager"]'));
+      if(!form) return { err: '没有「改学管师」勾选框' };
+      const el = form.querySelector('input[name="manager"]');
+      const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+      d.set.call(el, '王学管'); el.dispatchEvent(new Event('input', { bubbles: true }));
+      form.querySelector('input[name="change_manager"]').checked = true;
+      form.requestSubmit();
+      return 'submitted';
+    `);
+    if (chgMgr && chgMgr.err) record("（准备）勾「改学管师」提交", false, chgMgr.err);
+    await sleepMs(2500);
+    const afterMgr = await api(`/api/students?name=${encodeURIComponent(STU)}`);
+    record("★★修改学管师：勾框改值并提交 → 服务器上真的从「李学管」变成「王学管」",
+      afterMgr.body?.student?.manager === "王学管",
+      `manager=${JSON.stringify(afterMgr.body?.student?.manager)}`);
+    record("★★改学管师**没有连带改别的**（年级仍是高三、学校仍是三河一中）",
+      afterMgr.body?.student?.grade === "高三" && afterMgr.body?.student?.campus === "三河一中",
+      JSON.stringify({ grade: afterMgr.body?.student?.grade, campus: afterMgr.body?.student?.campus }));
+  }
 
   // ---- 6. 名单页搜索 ----
   await goto("/dashboard?q=" + encodeURIComponent("档案探针"), 4000);

@@ -11,29 +11,39 @@ const field =
 type Props = {
   name: string;
   grade: string;
+  /** 学生的**学校**（数据库列名仍叫 campus —— 见下面说明，不改列名、不动历史数据） */
   campus: string;
-  teacher: string;
+  /** 学管师（该学生的对接人）。⚠️ 列名是 `manager`，与"任课教师"不是一回事。 */
+  manager: string;
 };
 
 /**
  * 一位学生的「改档案」与「删除」。
  *
  * ⚠️ **每个字段配一个「改」勾选框**，勾了才提交这个字段。为什么不用「留空＝不改」：
- *    那样的话「把校区清空」这个合法操作就**没法表达**（留空被当成没改，静默不生效）。
+ *    那样的话「把学校清空」这个合法操作就**没法表达**（留空被当成没改，静默不生效）。
  *    勾选框把「改」和「改成空」分开，两种意图都能表达，也不会有静默失败。
  *    ——服务端 `patchFromForm()` 只把**存在且非空**的字段写进 patch（合并语义）。
+ *
+ * ★ 2026-10 第十九批（用户口径）：三格 = **年级 / 学校 / 学管师**。
+ *   · 第二格：原来叫「校区」，但老师填的其实就是**学生就读的学校**（截图里是「三河一中」）
+ *     ⇒ 只改**显示名**，数据库列 `campus` 一个字不动（改列名要迁移 + 会碰到数学方案的写入）。
+ *   · 第三格：由「教师」改为「**学管师**」——老师一般只教一门课，任课教师不必每格都填；
+ *     而每个学生有独立的学管师，老师要**一眼看到对接人是谁**。
+ *     ⚠️ `teacher`（任课教师）**没有被删除**：它仍在库里、仍进学情报告与试卷分析 Word
+ *     （"分析人/教师"栏），只是**不再占用档案编辑区的一格**。旧数据一个字不动。
  *
  * ⚠️ 删除是**不可逆**的，而且会连带删掉这个学生在**别家工具**里的记录 —— 必须二次确认，
  *    并且把这一点明说（服务端 `deleteStudentByName` 就是连历史一起删的）。
  */
-export default function StudentEditor({ name, grade, campus, teacher }: Props) {
+export default function StudentEditor({ name, grade, campus, manager }: Props) {
   const [updateState, updateAction, updating] = useActionState(updateStudent, initialState);
   const [delState, delAction, deleting] = useActionState(deleteStudent, initialState);
 
-  const rows: { key: string; label: string; value: string }[] = [
-    { key: "grade", label: "年级", value: grade },
-    { key: "campus", label: "校区", value: campus },
-    { key: "teacher", label: "教师", value: teacher },
+  const rows: { key: string; label: string; value: string; placeholder?: string }[] = [
+    { key: "grade", label: "年级", value: grade, placeholder: "如 高三" },
+    { key: "campus", label: "学校", value: campus, placeholder: "如 三河一中" },
+    { key: "manager", label: "学管师", value: manager, placeholder: "如 李老师" },
   ];
 
   return (
@@ -52,7 +62,7 @@ export default function StudentEditor({ name, grade, campus, teacher }: Props) {
                 <input type="checkbox" name={`change_${r.key}`} value="1" className="accent-zinc-900 dark:accent-zinc-100" />
                 改「{r.label}」
               </label>
-              <input name={r.key} defaultValue={r.value} placeholder={r.value || "未填"} className={field} />
+              <input name={r.key} defaultValue={r.value} placeholder={r.placeholder ?? (r.value || "未填")} className={field} />
             </div>
           ))}
         </div>

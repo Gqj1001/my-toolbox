@@ -11,8 +11,12 @@ const field =
 /**
  * 「新建学生」表单。
  *
- * ⚠️ 只收**身份字段**（姓名/年级/校区/教师）—— 分数、课时、薄弱模块属于「某一次方案」，
+ * ⚠️ 只收**身份字段**（姓名/年级/学校/学管师）—— 分数、课时、薄弱模块属于「某一次方案」，
  *    不在档案这一层。这与两个工具里「保存档案」的口径一致。
+ *
+ * ★ 2026-10 第十九批（用户口径）：第二格显示名由「校区」改为「**学校**」
+ *   （老师填的本来就是学生就读的学校），第三格由「教师」改为「**学管师**」（每个学生的对接人）。
+ *   ⚠️ 数据库列名不变（`campus` / `manager`），历史数据一个字不动。
  */
 export default function NewStudentForm() {
   const [state, formAction, isPending] = useActionState(createStudent, initialState);
@@ -34,12 +38,12 @@ export default function NewStudentForm() {
           <input name="grade" placeholder="如 高三" className={field} />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">校区</span>
-          <input name="campus" placeholder="如 燕郊中学校区" className={field} />
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">学校</span>
+          <input name="campus" placeholder="如 三河一中" className={field} />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">教师</span>
-          <input name="teacher" placeholder="如 郭庆杰" className={field} />
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">学管师</span>
+          <input name="manager" placeholder="如 李老师" className={field} />
         </label>
       </div>
 
