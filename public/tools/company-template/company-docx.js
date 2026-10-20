@@ -404,6 +404,10 @@
       const totalKi = k3.totalKi;
       const headKi = k3.headKi;
 
+      /* ★ 2026-10：课时单位可配。默认仍是「小时」（**数学版一直这么用、验收过，不动**）；
+         「辅导方案生成器」传「课时」（用户线上验收要求：导出的 Word 里别写 1.1小时）。 */
+      const UNIT = data.hoursUnit ? String(data.hoursUnit) : '小时';
+
       const built = merged.map(function (m) {
         // ⚠️ 用"某一行"当格模板（只取它的 4 个 `<w:tc>`，丢弃其余行），**不要克隆整行** ——
         //    被克隆的行可能在「效果评估」列带 `vMerge`（纵向合并），克隆出来会互相吞格。
@@ -411,7 +415,7 @@
         return replaceCells(rows[headKi + 1], [
           setCellText(tpl[0], m.module),
           setCellText(tpl[1], kpLine(m.topics.join('；'), m.goals.join('；'))),
-          setCellText(tpl[2], m.hours ? m.hours + '小时' : ''),
+          setCellText(tpl[2], m.hours ? m.hours + UNIT : ''),
           setCellText(tpl[3], (data.lessonEval && data.lessonEval[m.module]) || ''),   // 一期留空
         ]);
       });
@@ -421,7 +425,7 @@
       /* ④ 合计行：用**清空前**记下的行号（替换后位置会变，所以按"数据行数"重算） */
       const totalKi2 = sampleIdx[0] + built.length;
       const tot = merged.reduce(function (a, m) { return a + (Number(m.hours) || 0); }, 0);
-      rows[totalKi2] = fillCell(rows[totalKi2], 2, tot ? tot + '小时' : '', att);
+      rows[totalKi2] = fillCell(rows[totalKi2], 2, tot ? tot + UNIT : '', att);
 
       /* ⑤ 成绩结果统计：「入学成绩」可以填（面板上有个可选输入框），
          「补习后」一期**留空**（要读档案里的历次成绩 = 跨工具取数，见方案 §4 决策 2）。

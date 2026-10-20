@@ -322,7 +322,8 @@ const CASES = [
   { tag: "高中/高三/28h", pack: SENIOR, grade: "高三", score: 45, hours: 28 },
   { tag: "高中/高三/213h", pack: SENIOR, grade: "高三", score: 90, hours: 213 },
   { tag: "高中/新高二/28h", pack: SENIOR, grade: "新高二", score: 70, hours: 28 },
-  { tag: "初中/九年级/166.5h", pack: JUNIOR, grade: "九年级", score: 60, hours: 166.5 },
+  // ⚠️ 原来是 166.5（小数总课时）；2026-10 课时改整数后，总课时也是整数输入
+  { tag: "初中/九年级/166h", pack: JUNIOR, grade: "九年级", score: 60, hours: 166 },
   { tag: "初中/八年级/60h", pack: JUNIOR, grade: "八年级", score: 70, hours: 60 },
   { tag: "初中/中考冲刺/51h", pack: JUNIOR, grade: "中考冲刺", score: 55, hours: 51 },
 ];
@@ -331,21 +332,21 @@ let allExact = true, allSelfCheck = true, allOneRow = true, allUnit = true;
 const detail = [];
 for (const c of CASES) {
   const plan = Engine.buildPlan(c.pack, { grade: c.grade, score: c.score, totalHours: c.hours });
-  const sum = Math.round(plan.rows.reduce((a, r) => a + r.hours, 0) * 10) / 10;
+  const sum = plan.rows.reduce((a, r) => a + r.hours, 0);
   if (sum !== c.hours) { allExact = false; detail.push(`${c.tag}: ${sum}≠${c.hours}`); }
   const chk = Engine.selfCheck(plan);
   if (!chk.ok) { allSelfCheck = false; detail.push(`${c.tag}: ${chk.problems.join("/")}`); }
-  // 一行一模块 ⇒ 行数 = 挑中的模块数；每行课时是 0.1 的整数倍
+  // 一行一模块 ⇒ 行数 = 挑中的模块数；每行课时是**整数**
   const mods = Engine.selectModules(c.pack, { grade: c.grade, score: c.score, totalHours: c.hours }).modules;
   if (plan.rows.length !== mods.length) { allOneRow = false; detail.push(`${c.tag}: rows=${plan.rows.length} mods=${mods.length}`); }
-  if (!plan.rows.every((r) => Math.abs(Math.round(r.hours * 10) / 10 - r.hours) < 1e-9)) {
-    allUnit = false; detail.push(`${c.tag}: 有非一位小数的课时`);
+  if (!plan.rows.every((r) => Number.isInteger(r.hours))) {
+    allUnit = false; detail.push(`${c.tag}: 有非整数的课时`);
   }
 }
 ok("⑥-1 真科目包跑真引擎：各行课时之和**精确等于**总课时（7 种组合全过）", allExact, detail.join("；"));
-ok("⑥-2 真科目包跑真引擎：自检（合计/重名/小数）全部通过", allSelfCheck, detail.join("；"));
+ok("⑥-2 真科目包跑真引擎：自检（合计/重名/整数）全部通过", allSelfCheck, detail.join("；"));
 ok("⑥-3 真科目包跑真引擎：行数 = 选中的模块数（一行一模块，没拆次课）", allOneRow);
-ok("⑥-4 真科目包跑真引擎：课时都是一位小数", allUnit);
+ok("⑥-4 真科目包跑真引擎：课时**全是整数**（2026-10 口径：不要 1.5 / 3.1 / 4.6）", allUnit);
 
 // 选中的模块必须都属于该年级 —— 这是"八年级不会排到九全内容"的真正保证
 let gradeLeak = [];
@@ -397,25 +398,25 @@ const zeroPack = {
   stages: [{ key: "g9", name: "九年级" }],
   modules: [
     { id: "z1", name: "内能", stage: "g9", term: "九年级", lv: 1, hoursHint: 0, topic: "热学", tags: [], chapters: ["13.1分子热运动"], content: "13.1分子热运动", goal: "" },
-    { id: "z2", name: "电流和电路", stage: "g9", term: "九年级", lv: 1, hoursHint: 7.5, topic: "电学", tags: [], chapters: ["15.1两种电荷"], content: "15.1两种电荷", goal: "" },
-    { id: "z3", name: "欧姆定律", stage: "g9", term: "九年级", lv: 2, hoursHint: 10.5, topic: "电学", tags: [], chapters: ["17.1电流与电压和电阻的关系"], content: "17.1电流与电压和电阻的关系", goal: "" }
+    { id: "z2", name: "电流和电路", stage: "g9", term: "九年级", lv: 1, hoursHint: 8, topic: "电学", tags: [], chapters: ["15.1两种电荷"], content: "15.1两种电荷", goal: "" },
+    { id: "z3", name: "欧姆定律", stage: "g9", term: "九年级", lv: 2, hoursHint: 10, topic: "电学", tags: [], chapters: ["17.1电流与电压和电阻的关系"], content: "17.1电流与电压和电阻的关系", goal: "" }
   ],
   grades: { "九年级": ["z1", "z2", "z3"] }
 };
 const zp = Engine.buildPlan(zeroPack, { grade: "九年级", score: 50, totalHours: 20 });
-const zsum = Math.round(zp.rows.reduce((a, r) => a + r.hours, 0) * 10) / 10;
+const zsum = zp.rows.reduce((a, r) => a + r.hours, 0);
 ok("⑥-9 hoursHint:0 的模块（样例里的「已掌握、不讲」）给 0 课时，且不占预算",
   zp.rows.filter((r) => r.id === "z1")[0].hours === 0 && zsum === 20,
   zp.rows.map((r) => r.id + ":" + r.hours).join(" ") + ` 合计=${zsum}`);
 
 // 上限的口径（顺带钉住）：单模块最多排"建议课时 × 2"，
-// 所以一个 7.5h 的模块在 20h 预算下**最多 15h**，剩下的会如实报在 unallocated 里（不静默吞）
+// 所以一个 8 课时的模块在 20 课时预算下**最多 16 课时**，剩下的会如实报在 unallocated 里（不静默吞）
 const zOnly = { key: "physics", stage: "junior", name: "物理", fullScore: 100,
   bands: [{ min: 0, key: 1, name: "补基础" }], stages: [{ key: "g9", name: "九年级" }],
   modules: [zeroPack.modules[1]], grades: { "九年级": ["z2"] } };
 const zo = Engine.buildPlan(zOnly, { grade: "九年级", score: 50, totalHours: 20 });
-ok("⑥-10 单个 7.5h 模块在 20h 预算下最多排 15h（建议课时×2），余量如实报在 unallocated",
-  zo.rows[0].hours === 15 && zo.unallocated === 5,
+ok("⑥-10 单个 8 课时的模块在 20 课时预算下最多排 16（建议课时×2），余量如实报在 unallocated",
+  zo.rows[0].hours === 16 && zo.unallocated === 4,
   `hours=${zo.rows[0].hours} unallocated=${zo.unallocated}`);
 
 /* ==========================================================================

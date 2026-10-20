@@ -668,6 +668,93 @@ try {
     myHist.some((h) => h.tool === "paper" && h.score === 86 && h.fullScore === 150),
     JSON.stringify(myHist[0] || {}).slice(0, 160));
 
+  // ================================================================
+  // 第 5 组：改一条记录的日期（2026-10 用户验收后新增的 `op:"setDate"`）
+  //
+  // 为什么必须有这个口子：补录历史材料时日期只靠 AI 从原文抽，抽不到就存 NULL，
+  // 档案详情页显示「未填日期」、学情分析排不了序。老师必须能事后自己补。
+  // ================================================================
+  {
+    // 找到那条"日期解析不出来"的记录（导入时 date=null）
+    // ⚠️ 这个套件没有 `db` 句柄（不是 supabase-js 客户端），统一走 REST。
+    const probeHist = await (await fetch(
+      `${SUPABASE_URL}/rest/v1/feedback_history?student_name=eq.${encodeURIComponent(MERGE)}&title=eq.${encodeURIComponent("日期无法识别")}&select=id,title,date`,
+      { headers: H },
+    )).json().catch(() => null);
+    const target = (probeHist ?? [])[0];
+    record("（准备）找到那条没有日期的导入记录（date 是 null，不是空字符串）",
+      !!target && target.date === null,
+      `id=${target?.id} date=${JSON.stringify(target?.date)}`);
+
+    // ① 正常改：null → 2026-10-20
+    const s1 = await studentsPost({ op: "setDate", id: target.id, date: "2026-10-20" });
+    const s1b = await s1.json().catch(() => null);
+    record("★setDate：没有日期的记录能补上（200 + 返回新日期）",
+      s1.status === 200 && s1b?.ok === true && s1b?.date === "2026-10-20",
+      `status=${s1.status} body=${JSON.stringify(s1b)}`);
+
+    // ② 读回来确实是新日期
+    // ⚠️ 老实说一句：这条**不是**在验"缓存失效"——`/api/students` 的 GET 走的是
+    //    `getHistoryFresh()`（**不走缓存**）。所以它钉的是"写真的落库了、读接口也换新了"。
+    //    缓存那一环（`invalidateHistory()`）服务的是 `/api/feedback/data` 的 GET（走缓存版本），
+    //    这套测试打不到它，别在这里假装覆盖了。
+    const after1 = await (await studentsApi(`?name=${encodeURIComponent(MERGE)}&withHistory=1`)).json().catch(() => null);
+    const h1 = (after1?.history?.[MERGE] || []).filter((h) => h.id === target.id)[0];
+    record("★★setDate：写进库了 —— 读回来 date 已经变成「10月20日」",
+      h1?.date === "10月20日", `date=${JSON.stringify(h1?.date)}`);
+
+    // ③ 再改成另一天（覆盖已有日期也要能改）
+    const s2 = await studentsPost({ op: "setDate", id: target.id, date: "10月4日" });
+    const s2b = await s2.json().catch(() => null);
+    record("★setDate：显示格式「10月4日」也认（与 feedback 同一个解析器）",
+      s2.status === 200 && s2b?.ok === true && s2b?.date === "2026-10-04",
+      `status=${s2.status} body=${JSON.stringify(s2b)}`);
+
+    // ④ 非法日期必须**明确拒绝**（不能静默写成 null 或 500）
+    const bad = await studentsPost({ op: "setDate", id: target.id, date: "2026-02-30" });
+    const badb = await bad.json().catch(() => null);
+    record("★setDate：非法日期（2026-02-30）被 400 拒，且提示能照着改",
+      bad.status === 400 && /认不出来|格式/.test(String(badb?.error ?? "")),
+      `status=${bad.status} error=${JSON.stringify(badb?.error)}`);
+
+    // ⑤ 不存在的 id → 404（不是 200 假装成功）
+    const miss = await studentsPost({ op: "setDate", id: 999999999, date: "2026-10-20" });
+    record("★setDate：不存在的记录 → 404（不假装成功）", miss.status === 404, `status=${miss.status}`);
+
+    // ⑥ 跨账号隔离：B 账号改不动 A 的记录（RLS 挡住 ⇒ update 影响 0 行 ⇒ 404）
+    const cross = await fetch(`${BASE}/api/students`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: cookieB },
+      body: JSON.stringify({ op: "setDate", id: target.id, date: "2026-01-01" }),
+    });
+    record("★红线2 setDate 也受 RLS 隔离：B 账号改不动 A 的记录", cross.status === 404, `status=${cross.status}`);
+
+    // ⑦ A 的记录没被 B 碰过（还是 10月4日）
+    const after2 = await (await studentsApi(`?name=${encodeURIComponent(MERGE)}&withHistory=1`)).json().catch(() => null);
+    const h2 = (after2?.history?.[MERGE] || []).filter((h) => h.id === target.id)[0];
+    record("★红线2 A 的记录日期仍是 10月4日（没被 B 改掉）", h2?.date === "10月4日", `date=${JSON.stringify(h2?.date)}`);
+  }
+
+  // ================================================================
+  // 第 6 组：**不许出现「未填日期」**（用户要求）
+  //
+  // ⚠️ 这里**不调** `/api/students/analysis`：那个路由只接受 POST（生成 AI 报告，会员功能），
+  //    统计是页面里由 `buildStudentReport()` 直接算的（没有 GET 端点）。
+  //    第一版我去 GET 它，拿到 `report=undefined`，断言被"跳过"——看着绿、其实没测到。
+  //    真正该在这里钉的是**数据层**：补录进来的记录条条都有日期（界面上就不会出现"未填日期"）；
+  //    「按日期排序」由 `tests/student-report.test.mjs` 用纯函数钉（那里能直接 import）。
+  // ================================================================
+  {
+    const after = await (await studentsApi(`?name=${encodeURIComponent(MERGE)}&withHistory=1`)).json().catch(() => null);
+    const hs = after?.history?.[MERGE] || [];
+    record("★★补录进来的记录**条条都有日期**（界面上不会出现「未填日期」）",
+      hs.length > 0 && hs.every((h) => String(h.date ?? "").trim() !== ""),
+      `共 ${hs.length} 条；没有日期的：${hs.filter((h) => !String(h.date ?? "").trim()).map((h) => h.title).join("、") || "无"}`);
+    record("★★日期是给人看的「M月D日」（与 feedback 同一套显示口径，不是 ISO 原串）",
+      hs.every((h) => /^\d{1,2}月\d{1,2}日$/.test(String(h.date))),
+      JSON.stringify(hs.map((h) => h.date)));
+  }
+
   // 清理：两个账号的探针都删掉（B 端要单独删，跨账号删不到）
   await fetch(`${BASE}/api/students?name=${encodeURIComponent(MERGE)}`, { method: "DELETE", headers: { cookie } });
   await fetch(`${BASE}/api/students?name=${encodeURIComponent(MERGE)}`, { method: "DELETE", headers: { cookie: cookieB } });

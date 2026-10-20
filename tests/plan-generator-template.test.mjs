@@ -39,7 +39,7 @@ const EXPECT_PLACEHOLDERS = ["book", "grade", "hoursLine", "method",
 const sampleRows = Array.from({ length: 25 }, (_, i) => ({
   stage: "一轮·力学",
   content: `1.1质点 参考系 1.2时间 位移（第${i + 1}个模块）`,
-  hours: i % 2 ? 4.5 : 6,
+  hours: i % 2 ? 4 : 6,
   goal: "掌握相关规律，正确率≥85%．重点与难点：图像分析．",
 }));
 
@@ -188,7 +188,7 @@ chk("每行 4 格", all(len(rinfo(t)[0]) == 4 for t in data))
 got = [tuple(ctext(c) for c in rinfo(t)[0][:4]) for t in data]
 chk("阶段名逐行正确", all(g[0] == "一轮·力学" for g in got))
 chk("内容逐行正确且互不相同", len({g[1] for g in got}) == 25 and all(("第%d个模块" % (i+1)) in g[1] for i,g in enumerate(got)))
-chk("课时数逐行等于传入值（含 4.5）", [g[2] for g in got] == [("4.5" if i%2 else "6") for i in range(25)])
+chk("课时数逐行等于传入值（整数）", [g[2] for g in got] == [("4" if i%2 else "6") for i in range(25)])
 chk("教学目标逐行正确", all("正确率≥85%" in g[3] for g in got))
 alltext = "\\n".join("".join(t.text or "" for t in p.iter(W+"t")) for p in rs.iter(W+"p"))
 chk("标题已替换", "物理辅导计划" in alltext)

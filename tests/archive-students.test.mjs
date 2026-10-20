@@ -199,19 +199,31 @@ try {
     const withAnalysis = await inDoc(`
       const rows = [...document.querySelectorAll('li')];
       const findRow = (t) => rows.find(li => li.innerText.includes(t)) || null;
+      // ⚠️ 2026-10 修：**不能再拿"这一行有没有 button"当判据** ——
+      //    用户验收后每条记录都多了一个「补日期 / 改日期」按钮（那是另一个功能）。
+      //    改成**按文案找按钮**：删除按钮 = 文案含「删除」。
+      const btns = (row) => row ? [...row.querySelectorAll('button')] : [];
+      const hasDelete = (row) => btns(row).some(b => b.innerText.includes('删除'));
+      const hasDate   = (row) => btns(row).some(b => /改日期|补日期/.test(b.innerText));
       const a = findRow('学情报告 · 测试用');
       const p = findRow('不该被删的卷子');
       return {
-        analysisHasDelete: !!(a && a.querySelector('button')),
-        paperHasDelete: !!(p && p.querySelector('button')),
+        analysisHasDelete: hasDelete(a),
+        paperHasDelete: hasDelete(p),
+        analysisHasDate: hasDate(a),
+        paperHasDate: hasDate(p),
         analysisText: a ? a.innerText.replace(/\\s+/g,' ').slice(0, 120) : null,
       };
     `);
     record("★学情报告在详情页有「删除」按钮（老师终于能自己删掉多余的报告）",
       withAnalysis?.analysisHasDelete === true, JSON.stringify(withAnalysis));
-    record("★别的归属（试卷分析）**没有被误开**删除按钮（仍由各自的工具管理）",
+    record("★别的归属（试卷分析）**没有被误开删除**按钮（仍由各自的工具管理）",
       withAnalysis?.paperHasDelete === false,
       `analysis=${withAnalysis?.analysisHasDelete} paper=${withAnalysis?.paperHasDelete}`);
+    // ⭐ 2026-10 用户验收（问题 2）：**每条记录的日期都能改**（不分归属）
+    record("★★每条记录都有「改日期 / 补日期」按钮（不分归属：学情报告与试卷分析都有）",
+      withAnalysis?.analysisHasDate === true && withAnalysis?.paperHasDate === true,
+      `analysis=${withAnalysis?.analysisHasDate} paper=${withAnalysis?.paperHasDate}`);
 
     // 点删除 —— ⚠️ 无头浏览器里 confirm 会**阻塞页面**，必须用 CDP 自动点"确定"
     let dialogMsg = "";
@@ -227,7 +239,9 @@ try {
       await inDoc(`
         const rows = [...document.querySelectorAll('li')];
         const a = rows.find(li => li.innerText.includes('学情报告 · 测试用'));
-        if(a) a.querySelector('button').click();
+        // ⚠️ 按文案点「删除」那个按钮，别点"第一个按钮"（现在第一个是「改日期」）
+        const del = a ? [...a.querySelectorAll('button')].find(b => b.innerText.includes('删除')) : null;
+        if (del) del.click();
         return true;
       `);
       await sleepMs(3000);

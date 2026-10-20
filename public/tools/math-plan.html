@@ -2120,6 +2120,11 @@ function collectCompany3Data(){
     hoursPerWeekText: mp3val("co3Freq") || String(mp3val("f-freq") || "2"),
     entryScore: mp3val("co3EntryScore"),   // 只填「入学成绩」；「补习后」留空（口径见方案 §4 决策 2）
     rows: rows,
+    // ★ 2026-10 用户拍板：附件3 的课时单位统一写「**课时**」（以前是「小时」，
+    //    导出件里会出现「1.1小时」这种看着不像课时表的写法）。
+    //    公司引擎 `company-docx.js` 的默认值仍是「小时」，这里**显式传**「课时」——
+    //    另两个工具（试卷分析的附件1/2）不传，所以它们的输出一个字没变。
+    hoursUnit: "课时",
     lessonEval: {},                        // 一期留空：效果评估由老师在 Word 里写
   };
 }

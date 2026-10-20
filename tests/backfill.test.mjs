@@ -338,6 +338,54 @@ try {
   })()`);
   record("④ 档案详情页有「📥 补录历史材料」入口且能展开", !opened?.err, opened?.err || "已展开");
 
+  /* ---------------------------------------------------------------------
+     ⭐ 2026-10 用户线上验收（问题 1）：**粘贴后自动整理，不用再点按钮**
+     --------------------------------------------------------------------- */
+  await sleep(400);
+  const autoFilled = await ev(`(() => {
+    const f = [...document.querySelectorAll('section')].find((s) => s.innerText.includes('补录历史材料') && s.querySelector('textarea'));
+    if (!f) return { err: '面板没展开' };
+    const ta = f.querySelector('textarea');
+    const d = Object.getOwnPropertyDescriptor(ta.constructor.prototype, 'value');
+    // 模拟"粘进来一段"：真实粘贴会先把值落进 textarea，然后派发 paste 事件 —— 这里照做
+    d.set.call(ta, '2025年3月月考，数学 100/150。错题：第9题立体几何。');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true }));
+    return { ok: true };
+  })()`);
+  record("④（准备）模拟粘贴：只派发 paste 事件，**不点任何按钮**", !autoFilled?.err, autoFilled?.err || "已粘贴");
+
+  let autoPreview = null;
+  for (let i = 0; i < 30; i++) {
+    await sleep(500);
+    autoPreview = await ev(`(() => {
+      const ta = [...document.querySelectorAll('textarea')].find((t) => /核心薄弱板块|辅导方案/.test(t.value));
+      return ta ? { text: ta.value.slice(0, 80) } : null;
+    })()`);
+    if (autoPreview) break;
+  }
+  record("★★④ **只粘贴、不点「整理」，预览也会自己出现**（用户要的「少点一次」）",
+    !!autoPreview, autoPreview ? String(autoPreview.text).slice(0, 60) : "等了 15 秒还没出现");
+
+  // 日期输入框（问题 2）：补录必须能让老师选哪天
+  const dateBox = await ev(`(() => {
+    const f = [...document.querySelectorAll('section')].find((s) => s.innerText.includes('补录历史材料'));
+    if (!f) return { err: '面板没找到' };
+    const inp = f.querySelector('input[type="date"]');
+    return inp ? { value: inp.value, hasLabel: /哪天的/.test(f.innerText) } : { err: '没有日期输入框' };
+  })()`);
+  record("★★④ 预览里**有「这条记录是哪天的？」日期框，且有默认值**（问题 2：补录必须选日期）",
+    !dateBox?.err && !!dateBox?.value && dateBox?.hasLabel === true,
+    JSON.stringify(dateBox));
+
+  // 放弃这次的自动预览，回到干净状态继续走下面的主流程（那里验"老师改一处再存"）
+  await ev(`(() => {
+    const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes('放弃这次'));
+    if (b) b.click();
+    return true;
+  })()`);
+  await sleep(500);
+
   await sleep(500);
   const filled = await ev(`(() => {
     const f = [...document.querySelectorAll('section')].find((s) => s.innerText.includes('补录历史材料') && s.querySelector('textarea'));
@@ -348,12 +396,14 @@ try {
       d.set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true }));
     };
     setV(ta, '2024年4月期中考试，数学 88/150。错题：第12题导数单调性；第13题解析几何联立。\\n建议多练导数。');
-    const go = [...f.querySelectorAll('button')].find((x) => x.textContent.includes('让 AI 整理'));
+    // ⚠️ 2026-10 起按钮文案从「让 AI 整理成统一格式」改成了「重新整理」
+    //    （因为上传/粘贴现在**会自动整理**，这个按钮只是"重跑"）。选择器用「整理」两个字兜住两种文案。
+    const go = [...f.querySelectorAll('button')].find((x) => x.textContent.includes('整理'));
     if (!go) return { err: '找不到整理按钮' };
     go.click();
     return { ok: true };
   })()`);
-  record("④ 粘贴旧材料文字并点「让 AI 整理成统一格式」", !filled?.err, filled?.err || "已提交");
+  record("④ 粘贴旧材料文字并点「整理」", !filled?.err, filled?.err || "已提交");
 
   let preview = null;
   for (let i = 0; i < 40; i++) {
@@ -413,6 +463,11 @@ try {
   record("④ 分数与满分也落库了（学情分析的成绩趋势要用）",
     rec0?.score === 88 && rec0?.fullScore === 150,
     `score=${rec0?.score} fullScore=${rec0?.fullScore}`);
+  // ⭐ 2026-10 用户线上验收（问题 2「未填日期」）：补录的记录**必须有日期**落库。
+  //    以前这里是 `preview.facts.examDate || ""`，AI 抽不到就存 NULL ⇒ 详情页「未填日期」。
+  record("★★④ 补录的记录**带上了日期**（不再是「未填日期」）—— 问题 2 的正面断言",
+    String(rec0?.date ?? "").trim() !== "" && /^\d{1,2}月\d{1,2}日$/.test(String(rec0?.date)),
+    `date=${JSON.stringify(rec0?.date)}（材料里写的是「2024年4月」，AI 抽不到时应回落到老师选的日期）`);
 
   // 学情分析把它算进去了吗（刷新页面看服务端渲染）
   await goto(`/dashboard?name=${encodeURIComponent(STU)}`, 4500);

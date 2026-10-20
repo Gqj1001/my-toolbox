@@ -178,9 +178,12 @@ async function main() {
   record("③-5 课时之和 = 老师填的 100（引擎保证精确相等）",
     gen.state && gen.state.allocated === 100 && gen.state.totalHours === 100,
     JSON.stringify(gen.state && { a: gen.state.allocated, t: gen.state.totalHours }));
-  record("③-6 课时保留小数（有 4.5 / 7.5 这类值）",
-    gen.state && gen.state.rows.some((r) => String(r.hours).indexOf(".") > 0),
+  record("③-6b 课时全是**整数**（用户要求：不要 1.5 / 3.1 / 4.6 这种小数）",
+    gen.state && gen.state.rows.every((r) => Number.isInteger(Number(r.hours))),
     gen.state ? gen.state.rows.slice(0, 6).map((r) => r.hours).join(",") : "");
+  record("③-6c ⭐ 总课时 100（偶数）⇒ **没有一行是奇数**（用户要的「多为偶数」）",
+    gen.state && gen.state.rows.every((r) => Number(r.hours) % 2 === 0),
+    gen.state ? gen.state.rows.map((r) => r.hours).filter((h) => h % 2 !== 0).join(",") || "全偶数" : "");
   record("③-7 内容那一列**不是空的**（照教材目录填好了，不靠 AI 编）",
     gen.state && gen.state.rows.every((r) => String(r.content || "").trim().length > 0)
     && gen.state.rows[0].content.indexOf("1.1") >= 0,
@@ -255,11 +258,11 @@ def rt(tr):
 hi2 = next(i for i,tr in enumerate(rows) if "知识模块" in rt(tr)[1])
 def is_total(tr):
     cs, txt = rt(tr)
-    return len(cs) >= 3 and ct(cs[2]).endswith("小时") and not ct(cs[1]).strip()
+    return len(cs) >= 3 and ct(cs[2]).endswith("课时") and not ct(cs[1]).strip()
 ti2 = next(i for i in range(hi2+1, len(rows)) if is_total(rows[i]))
 data2 = rows[hi2+1:ti2]
 chk("附件3：进度表数据行 = 26", len(data2) == 26, str(len(data2)))
-chk("附件3：合计行 = 100小时", ct(rt(rows[ti2])[0][2]) == "100小时", ct(rt(rows[ti2])[0][2]))
+chk("附件3：合计行 = 100课时（单位是「课时」，不是「小时」）", ct(rt(rows[ti2])[0][2]) == "100课时", ct(rt(rows[ti2])[0][2]))
 alltext2 = "\\n".join("".join(n.text or "" for n in p.iter(qn("w:t"))) for p in d2.paragraphs)
 for tr in rows:
     for tc in tr.findall(qn("w:tc")): alltext2 += "\\n" + ct(tc)

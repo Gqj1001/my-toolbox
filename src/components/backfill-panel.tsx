@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BACKFILL_KINDS, MAX_MATERIAL_CHARS, type BackfillKind } from "@/lib/backfill";
+import { parseDisplayDate } from "@/lib/date-input";
 
 const field =
   "h-9 w-full rounded-lg border border-zinc-300 bg-white px-2.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-900 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-100";
@@ -47,6 +48,17 @@ export default function BackfillPanel({ name }: { name: string }) {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [edited, setEdited] = useState("");
+  /**
+   * ★ 2026-10 用户线上验收后加的：**这条记录是哪天的**，由老师自己定。
+   *
+   * 为什么必须补这一格：原来只靠 AI 从材料里抽「考试日期」，抽不到就传空串，
+   * 于是存进库是 NULL ⇒ 档案详情页显示「未填日期」、学情分析也没法按时间排
+   * （用户截图里三条补录记录都是「未填日期」）。
+   * 口径：**补录必须让老师选哪天**；默认今天，AI 抽到就自动带过来（老师可改）。
+   */
+  const [dateValue, setDateValue] = useState<string>(() => todayIso());
+  /** 粘贴后自动整理的定时器（连着粘几段只跑最后一次，别把 AI 调爆） */
+  const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** 文件 → dataURL（走已有的 parse-file 抽文字；服务器只抽**文字层**） */
   async function readFiles(files: FileList | null) {
@@ -81,8 +93,13 @@ export default function BackfillPanel({ name }: { name: string }) {
         parts.push(list.length > 1 ? `===== ${f.name} =====\n${got}` : got);
       }
       if (parts.length) {
-        setText((prev) => (prev ? prev + "\n\n" : "") + parts.join("\n\n"));
-        setMsg({ kind: "ok", text: `已读取 ${parts.length} 个文件，请检查下面的文字是否有缺漏` });
+        // ⭐ 用户要的「少点一次」：文件读完就**自动**整理，不用再点「让 AI 整理」
+        const next = (text ? text + "\n\n" : "") + parts.join("\n\n");
+        setText(next);
+        setMsg({ kind: "ok", text: `已读取 ${parts.length} 个文件，正在自动整理…` });
+        setBusy("");
+        void runAi(next);
+        return;
       }
     } catch (e) {
       setMsg({ kind: "err", text: "读取失败：" + String((e as Error)?.message ?? e) });
@@ -91,9 +108,17 @@ export default function BackfillPanel({ name }: { name: string }) {
     }
   }
 
-  /** 让 AI 整理成统一格式（**不写库**） */
-  async function runAi() {
-    if (!text.trim()) {
+  /**
+   * 让 AI 整理成统一格式（**不写库**）。
+   *
+   * ⭐ 2026-10 用户验收要求「少点一次」：上传文件或粘贴文字之后**自动调用**它，
+   *    老师不用再点「让 AI 整理」。按钮仍然留着（手动重跑/换类型后重跑）。
+   * ⚠️ `textArg` 是给自动调用用的：React 的 `setText` 是异步的，
+   *    紧接着调 runAi() 读到的还是**旧的 text**（会白跑一次、或者整理出上一份材料）。
+   */
+  async function runAi(textArg?: string) {
+    const body = String(textArg ?? text);
+    if (!body.trim()) {
       setMsg({ kind: "err", text: "请先粘贴文字或上传文件。" });
       return;
     }
@@ -103,7 +128,7 @@ export default function BackfillPanel({ name }: { name: string }) {
       const r = await fetch("/api/students/backfill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, text }),
+        body: JSON.stringify({ kind, text: body }),
       });
       const j = (await r.json().catch(() => null)) as (Preview & { ok?: boolean; error?: string }) | null;
       if (!r.ok || !j?.ok) {
@@ -116,13 +141,27 @@ export default function BackfillPanel({ name }: { name: string }) {
         suspiciousLength: !!j.suspiciousLength, rawFallback: !!j.rawFallback,
       });
       setEdited(j.text);
-      setMsg({
-        kind: j.rawFallback ? "err" : "ok",
-        text: j.rawFallback
-          ? "AI 没按格式返回，下面是它的原文 —— 请**重点核对并手工整理**后再存入。"
-          : "整理好了。**请对照原材料核对下面每一项**，确认后点「存入档案」。",
-      });
+      // ★ AI 抽到了日期就带过来（抽不到**保留老师已经选的**，不回退成空）
+      const aiDate = parseDisplayDate(j.facts?.examDate);
+      if (aiDate) setDateValue(aiDate);
+      // ★ AI 整理成功 = 立刻把结果填进预览框（用户要的"少点一次"：不用再点确认才看到内容）
+      if (!j.rawFallback) {
+        setMsg({ kind: "ok", text: "整理好了，已经填进下面的预览框 —— 逐项核对后点「存入档案」即可。" });
+      } else {
+        setMsg({
+          kind: "err",
+          text: "AI 没按格式返回，下面是它的原文 —— 请**重点核对并手工整理**后再存入。",
+        });
+      }
       setBusy("");
+      // 顺手把预览区滚进视野（省一次"结果在哪"的找）
+      if (typeof document !== "undefined") {
+        setTimeout(() => {
+          const el = document.getElementById("backfill-preview");
+          if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+        }, 60);
+      }
+      return;
     } catch (e) {
       setMsg({ kind: "err", text: "整理失败：" + String((e as Error)?.message ?? e) });
       setBusy("");
@@ -134,6 +173,11 @@ export default function BackfillPanel({ name }: { name: string }) {
     if (!preview) return;
     if (!edited.trim()) {
       setMsg({ kind: "err", text: "正文是空的，不能保存。" });
+      return;
+    }
+    // ★ 补录**必须有日期**：没有日期的记录进档案就是「未填日期」，学情分析排不了序
+    if (!dateValue) {
+      setMsg({ kind: "err", text: "请先选这条记录的日期（补录的历史材料必须写明是哪天）。" });
       return;
     }
     setBusy("save");
@@ -149,7 +193,8 @@ export default function BackfillPanel({ name }: { name: string }) {
             student_name: name,
             tool: preview.tool,
             title,
-            date: preview.facts.examDate || "",
+            // ★ 用老师选/确认的日期（原来是 `preview.facts.examDate || ""` ⇒ 抽不到就空）
+            date: dateValue,
             text: edited,
             score: numOrNull(preview.facts.score),
             full_score: numOrNull(preview.facts.fullScore),
@@ -158,9 +203,10 @@ export default function BackfillPanel({ name }: { name: string }) {
       });
       const j = (await r.json().catch(() => null)) as { ok?: boolean; inserted?: number; error?: string } | null;
       if (r.ok && j?.ok && (j.inserted ?? 0) > 0) {
-        setMsg({ kind: "ok", text: `已存入档案（${BACKFILL_KINDS[preview.kind].label}）。学情分析下次生成时会把它算进去。` });
+        setMsg({ kind: "ok", text: `已存入档案（${BACKFILL_KINDS[preview.kind].label}，日期 ${dateValue}）。学情分析下次生成时会把它算进去。` });
         setPreview(null);
         setText("");
+        setDateValue(todayIso());   // 下一条回到"今天"，不把上一条的日期带过去
         router.refresh();
       } else if (j?.ok && (j.inserted ?? 0) === 0) {
         setMsg({ kind: "err", text: "档案里已有一条同名的同日期记录，本次没有重复保存（可改标题后重试）。" });
@@ -226,18 +272,31 @@ export default function BackfillPanel({ name }: { name: string }) {
               maxLength={MAX_MATERIAL_CHARS}
               placeholder="把老材料的文字复制到这里（Word 里 Ctrl+A 复制即可）"
               className={area}
+              onPaste={(e) => {
+                // ⭐ 用户要的「少点一次」：**粘贴完就自动整理**（不用再点「让 AI 整理」）。
+                //    等 900ms 是为了让粘贴的内容先落到 textarea 里（连续粘几段只跑最后一次）。
+                const el = e.currentTarget;
+                if (pasteTimer.current) clearTimeout(pasteTimer.current);
+                pasteTimer.current = setTimeout(() => {
+                  const now = String(el.value ?? "");
+                  if (now.trim()) { setText(now); void runAi(now); }
+                }, 900);
+              }}
             />
           </label>
 
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={runAi}
+              onClick={() => { void runAi(); }}
               disabled={busy !== "" || !text.trim()}
               className={`${btn} bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300`}
             >
-              {busy === "ai" ? "⏳ 正在整理…" : busy === "read" ? "⏳ 正在读取文件…" : "🤖 让 AI 整理成统一格式"}
+              {busy === "ai" ? "⏳ 正在整理…" : busy === "read" ? "⏳ 正在读取文件…" : "🤖 重新整理"}
             </button>
+            <span className="text-xs text-zinc-400 dark:text-zinc-500">
+              上传文件或粘贴后**会自动整理**，不用点这里；换过材料类型想重跑时才需要点。
+            </span>
             {text ? (
               <button
                 type="button"
@@ -259,7 +318,7 @@ export default function BackfillPanel({ name }: { name: string }) {
           </div>
 
           {preview ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-3 dark:border-amber-900 dark:bg-amber-950/30">
+            <div id="backfill-preview" className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-3 dark:border-amber-900 dark:bg-amber-950/30">
               <p className="text-xs font-medium text-amber-900 dark:text-amber-200">
                 🔎 核对清单（**请对照原材料逐项看**）
               </p>
@@ -290,15 +349,37 @@ export default function BackfillPanel({ name }: { name: string }) {
 
           {preview ? (
             <>
+              {/* ★ 2026-10 用户验收后加：「这条记录是哪天的」必须让老师定。
+                  原来只靠 AI 抽，抽不到就存 NULL ⇒ 详情页「未填日期」、学情分析排不了序。 */}
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/70 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+                <label className={`${label} flex flex-wrap items-center gap-2`}>
+                  <span className="font-medium text-zinc-700 dark:text-zinc-200">④ 这条记录是哪天的？</span>
+                  <input
+                    type="date"
+                    value={dateValue}
+                    onChange={(e) => setDateValue(e.target.value)}
+                    className={`${field} w-44`}
+                    aria-label="记录日期"
+                  />
+                  <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                    补录必须选；默认今天。AI 从材料里抽到会自动带过来，可改。
+                  </span>
+                </label>
+                {!dateValue ? (
+                  <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                    ⚠️ 没选日期存进去会变成「未填日期」，学情分析就没法按时间排 —— 请选一个。
+                  </p>
+                ) : null}
+              </div>
               <label className={`${label} flex flex-col gap-1`}>
-                <span>④ 整理结果（可直接改；**以你改完的为准**）</span>
+                <span>⑤ 整理结果（可直接改；**以你改完的为准**）</span>
                 <textarea value={edited} onChange={(e) => setEdited(e.target.value)} rows={12} className={`${area} font-mono text-xs`} />
               </label>
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   onClick={save}
-                  disabled={busy !== "" || !edited.trim()}
+                  disabled={busy !== "" || !edited.trim() || !dateValue}
                   className={`${btn} bg-emerald-600 text-white hover:bg-emerald-700`}
                 >
                   {busy === "save" ? "⏳ 保存中…" : "💾 存入档案"}
@@ -343,6 +424,14 @@ function numOrNull(v: string): number | null {
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
+}
+
+/** 今天的 ISO 日期（**本地时区**，不能用 toISOString —— 那是 UTC，晚上会差一天） */
+function todayIso(): string {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 /** 记录标题：优先用材料里的考试名，否则按类型 + 今天（与工具生成的名字风格一致） */

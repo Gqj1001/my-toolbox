@@ -9,6 +9,7 @@ import {
   invalidateHistory,
   pickHistoryPatch,
   pickStudentPatch,
+  setHistoryDate,
   StudentRowReadError,
   studentsByName,
   upsertStudent,
@@ -260,6 +261,38 @@ export async function POST(request: NextRequest) {
     //    不清的话会出现"刚保存成功、刷新却看不到"（本项目反复踩过的症状）。
     invalidateHistory();
     return NextResponse.json({ ok: true, id: data?.id ?? null, row: checked.row });
+  }
+
+  // ---------------- 修改**一条**历史记录的日期（2026-10 用户反馈） ----------------
+  // 背景：补录历史材料时，日期原本只靠 AI 从原文里抽；抽不到就存成 NULL，
+  //   于是档案详情页显示「未填日期」、学情分析也没法按时间排。
+  //   修法两条腿：① 补录面板加"日期"输入框（前端）；② 这里给一个"事后改日期"的口子。
+  // ⚠️ 只改 `date` 这一列（不是整行覆盖），以免动到正文/分数。
+  // ⚠️ **必须放在"缺学生姓名 → 400"之前**：本操作不带 `name`（它按记录 id 定位）。
+  //    第一版放在后面，结果每次都被 "缺少学生姓名。" 顶回去（测试抓到了）。
+  if (body.op === "setDate") {
+    const id = Number(body.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return NextResponse.json({ ok: false, error: "缺少记录 id。" }, { status: 400 });
+    }
+    // 允许 `""`/null = 清空（改成"未填日期"），但**必须显式**：所以用 `body.date === undefined` 判断
+    const rawDate = body.date === undefined ? null : body.date;
+    const iso = rawDate === null || String(rawDate).trim() === "" ? null : parseDisplayDate(rawDate);
+    if (rawDate !== null && String(rawDate).trim() !== "" && !iso) {
+      return NextResponse.json(
+        { ok: false, error: `日期「${String(rawDate)}」认不出来，请用 2026-10-07 这种格式。` },
+        { status: 400 },
+      );
+    }
+    try {
+      const ok = await setHistoryDate(id, iso);
+      if (!ok) {
+        return NextResponse.json({ ok: false, error: "这条记录不存在（或不属于你）。" }, { status: 404 });
+      }
+      return NextResponse.json({ ok: true, id, date: iso });
+    } catch (e) {
+      return dbError("修改记录日期", e);
+    }
   }
 
   // ---------------- upsert 一位学生档案（合并语义） ----------------

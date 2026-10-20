@@ -298,6 +298,25 @@ record("附件3 抬头：学生姓名 / 学校年级 / 教师姓名 / 辅导课�
     totalRow?.[2] === "10小时" && !(totalRow ?? []).includes("40小时"),
     `合计格=${JSON.stringify(totalRow?.[2])}（抬头那格「辅导课时」填的是计划总课时 40 小时，两者本来就不同：一个是计划、一个是逐次课表之和）`);
 
+  /* ---- ★ 2026-10 用户拍板：数学版附件3 的课时单位也写「课时」 ----
+     这两条是**静态契约**（不是行为测试），因为：
+       · 上面那些附件3 断言用的是本文件自己的 `DATA` 夹具（**没有** hoursUnit ⇒ 走默认「小时」），
+         所以它们**不会**因为数学版改了口径而变红 —— 那是对的：附件1/2 与 worksheet 的输出确实没变。
+       · 真正要钉的是"**两侧的约定**"：
+           ① 引擎的默认值仍然是「小时」（否则附件1/2、试卷分析全会跟着变）；
+           ② 数学版页面**显式**传了「课时」（否则用户报的"1.1小时"就还在）。
+         这两条恰好是静态可查的，且比"跑一遍 docx 再解析"更直接。 */
+  {
+    const engineSrc = readFileSync(`${PROJECT}\\public\\tools\\company-template\\company-docx.js`, "utf8");
+    const mpSrc = readFileSync(`${PROJECT}\\public\\tools\\math-plan.html`, "utf8");
+    record("★公司引擎的课时单位**默认仍是「小时」**（附件1/2 与试卷分析的输出一个字没变）",
+      /const UNIT = data\.hoursUnit \? String\(data\.hoursUnit\) : '小时'/.test(engineSrc),
+      "（找不到默认值那一行 ⇒ 有人把默认改成「课时」了，附件1/2 会跟着变）");
+    record("★★数学版附件3 **显式传了 hoursUnit:课时**（用户拍板：导出件里别再出现「1.1小时」）",
+      /hoursUnit:\s*"课时"/.test(mpSrc),
+      "（math-plan.html 的 collectCompany3Data 里应有 hoursUnit: \"课时\"）");
+  }
+
   record("★附件3「效果评估」列一期留空（工具没有过程数据，不许编；也给老师手写留位置）",
     dataRows.every(r => (r?.[3] ?? "") === "") && (totalRow?.[3] ?? "") === "",
     JSON.stringify(dataRows.map(r => r?.[3])));
@@ -682,9 +701,17 @@ try {
       record("★★附件3：浏览器导出件**一个语文样例都不许有**（模板样例的语文内容，尤其进度表那 17 行）",
         hits.length === 0,
         hits.length ? "命中的样例字样：" + hits.join(" / ") : "没有任何模板样例字样");
-      record("★附件3：浏览器导出件的合计行 = 各模块课时之和",
-        data3.length > 0 && /^\d+小时$/.test(String(r3[hi3 + 1 + built3.mergedCount]?.[2] ?? "")),
+      // ⚠️ 2026-10 用户拍板后同步：数学版附件3 的单位从「小时」改成了「**课时**」。
+      //    这条原来写 `/^\d+小时$/`，改口径后必然假红 —— 现按「课时」断言，
+      //    并**顺手钉住"不许再退回小时"**（数学版页面显式传了 hoursUnit）。
+      record("★附件3：浏览器导出件的合计行 = 各模块课时之和，单位是「课时」",
+        data3.length > 0 && /^\d+课时$/.test(String(r3[hi3 + 1 + built3.mergedCount]?.[2] ?? "")),
         `合计格=${JSON.stringify(r3[hi3 + 1 + built3.mergedCount]?.[2])}`);
+      // 数据行也必须是「N课时」（防止只改了合计行、行内还是小时）
+      const cellUnits = data3.map(r => String(r?.[2] ?? ""));
+      record("★附件3：浏览器导出件的**每一行**课时数也是「课时」（不是只有合计行改了）",
+        cellUnits.length > 0 && cellUnits.every(v => /^\d+课时$/.test(v)),
+        JSON.stringify(cellUnits.slice(0, 5)));
     } else {
       record("★附件3：浏览器导出件能交给 python-docx 复核", false, "字节没拿到，跳过逐格复核");
     }

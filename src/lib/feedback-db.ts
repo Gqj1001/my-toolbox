@@ -1025,6 +1025,33 @@ export async function importHistory(
 }
 
 
+/**
+ * 改**一条**历史记录的日期（2026-10 用户反馈修的新口子）。
+ *
+ * 为什么需要它：补录历史材料时，日期原来只靠 AI 从原文抽 —— 抽不到就存 NULL，
+ * 档案详情页显示「未填日期」、学情分析也没法按时间排。老师事后得能自己改。
+ *
+ * ⚠️ 只 update `date` 一列（**不是**整行覆盖），正文/分数/工具归属都不动；
+ *    RLS 保证只能改到自己账号的行。
+ * @returns true = 真的改到了（1 行）；false = 没有这条记录（或不属于这个账号）
+ */
+export async function setHistoryDate(id: number, dateIso: string | null): Promise<boolean> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("feedback_history")
+    .update({ date: dateIso })
+    .eq("id", id)
+    .select("id");
+  if (error) {
+    console.error("[students] 改日期失败:", error.code, error.message);
+    throw new Error(`改日期失败: ${error.code} ${error.message}`);
+  }
+  const hit = Array.isArray(data) && data.length > 0;
+  // ⚠️ 不失效缓存的话，最长 25 秒内列表还显示老日期（"改了没生效"的经典症状）
+  if (hit) invalidateHistory();
+  return hit;
+}
+
 /** 把扁平的关键词行装配成前端需要的嵌套结构（按科目） */
 export function buildKeywordTree(rows: KeywordRow[]): KeywordTree {
   const tree: KeywordTree = {};

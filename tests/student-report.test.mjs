@@ -99,6 +99,31 @@ const ROW = (over = {}) => ({
 
 const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subject: "math", class_name: "3班", attitude: "计算弱", extra: { phase: "秋", n: 1 } };
 
+/* ★ 2026-10 用户线上验收后新增（问题 2「未填日期」的防线之一）：
+   补录历史材料时 AI 没抽到日期 ⇒ `feedback_history.date` 是 **null**。
+   这种记录**必须照样进统计**（用 created_at 兜底排序），不能因为日期空就被丢掉；
+   而且它不能把别的记录挤乱序。 */
+{
+  const rows = [
+    ROW({ id: 11, tool: "paper", date: "2026-10-10", title: "有日期·先", score: 70, full_score: 100,
+      created_at: "2026-10-10T10:00:00Z", text: "……核心薄弱板块集中在以下 1 处：导数。" }),
+    // ⚠️ 这条就是"补录进来、AI 没抽到日期"的样子：date = null
+    ROW({ id: 12, tool: "paper", date: null, title: "补录·没日期", score: 80, full_score: 100,
+      created_at: "2026-10-15T09:00:00Z", text: "……核心薄弱板块集中在以下 1 处：概率。" }),
+    ROW({ id: 13, tool: "paper", date: "2026-10-20", title: "有日期·后", score: 90, full_score: 100,
+      created_at: "2026-10-20T10:00:00Z", text: "……核心薄弱板块集中在以下 1 处：立体几何。" }),
+  ];
+  const r = buildStudentReport({ name: "李四", student: STUDENT, rows });
+  record("★没有日期的记录（补录时没抽到）**照样进成绩趋势**，不被丢掉",
+    r.scores.length === 3, `scores=${r.scores.length}：${r.scores.map((x) => x.title).join("/")}`);
+  record("★没有日期的记录用「创建时间」兜底排序：中间那条落在中间（顺序不塌）",
+    r.scores[0].title === "有日期·先" && r.scores[1].title === "补录·没日期" && r.scores[2].title === "有日期·后",
+    r.scores.map((x) => `${x.title}@${x.date}`).join(" → "));
+  record("★兜底出来的日期是**真日期串**（不是空、不是 undefined ⇒ 界面不会显示「未填日期」以外的怪东西）",
+    r.scores.every((x) => /^\d{4}-\d{2}-\d{2}/.test(String(x.date))),
+    JSON.stringify(r.scores.map((x) => x.date)));
+}
+
 {
   const r = buildStudentReport({ name: "空学生", student: null, rows: [] });
   record("空记录：overview.total=0，并在 notes 里明说「还没有任何记录」",

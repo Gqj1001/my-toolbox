@@ -24,38 +24,43 @@
   "use strict";
 
   /* ======================================================================
-     0. 小数工具
+     0. 课时口径：**一律整数**（用户 2026-10 线上验收后改的口径）
      ----------------------------------------------------------------------
-     ⚠️ 全部课时走**整数「分」**做加减（1 小时 = 10 分），只在出口除以 10。
-     浮点数在这里是真会咬人的：0.1+0.2 = 0.30000000000000004，
-     而附件3 的合计行会把 `0.30000000000000004` 原样印出来。
+     ⚠️ 这条是**用户明确要求改的**，别再改回小数：
+        「生成的课表里出现了 1.5、3.1、4.6 这种小数」⇒ 课时必须是**整数**，
+        而且**优先偶数**（多为 2 的倍数，成对排课更像排课表），
+        总课时是奇数时，多出来的那 1 课时给其中一行（那一行就是奇数）。
+
+     历史：第一版是"一位小数"（1 小时 = 10 分的整数分做加减）。那套已经不需要了，
+     但 `toTenths / fromTenths / round1` 仍**保留导出**（外部/旧测试可能引用），
+     只是**课时分配不再用它**。
      ====================================================================== */
 
-  /** 小时 → 整数分（一位小数精度，四舍五入） */
+  /** 任意输入 → 整数课时（四舍五入；非数字 → 0） */
+  function toInt(hours) {
+    const n = Number(hours);
+    if (!isFinite(n)) return 0;
+    return Math.round(n);
+  }
+
+  /** 求和（整数，不会有浮点尾巴） */
+  function sumHours(list) {
+    return list.reduce((a, h) => a + toInt(h), 0);
+  }
+
+  /* --- 下面三个只在"兼容旧调用"时用得到，课时分配已经不用小数了 --- */
   function toTenths(hours) {
     const n = Number(hours);
     if (!isFinite(n)) return 0;
     return Math.round(n * 10);
   }
+  function fromTenths(t) { return Math.round(t) / 10; }
+  function round1(hours) { return fromTenths(toTenths(hours)); }
 
-  /** 整数分 → 小时（一位小数） */
-  function fromTenths(t) {
-    return Math.round(t) / 10;
-  }
-
-  /** 取一位小数（对外统一出口） */
-  function round1(hours) {
-    return fromTenths(toTenths(hours));
-  }
-
-  /** 求和（一位小数，无浮点尾巴） */
-  function sumHours(list) {
-    return fromTenths(list.reduce((a, h) => a + toTenths(h), 0));
-  }
-
-  const MIN_HINT = 0.5;      // 建议课时缺失时的兜底值（半天）
+  const MIN_HINT = 1;        // 建议课时缺失时的兜底值（整数口径下最小 1 课时）
   const MIN_ROW_HOURS = 1;   // 每一行至少 1 课时（"0 课时"由模块包显式给 hoursHint:0 表达）
   const MAX_ROW_FACTOR = 2;  // 单模块上限 = 建议课时 × 2（防止一个模块把预算吃光）
+  const EVEN_FIRST = true;   // 优先偶数（用户要求"多为偶数"）
 
   /* ======================================================================
      1. 学段 / 年级 / 模块顺序
@@ -224,7 +229,7 @@
 
   function selectModules(pack, opts) {
     const o = opts || {};
-    const totalT = toTenths(o.totalHours);
+    const totalT = Math.max(0, toInt(o.totalHours));
     const done = {};
     (o.done || []).forEach((id) => { done[id] = true; });
 
@@ -246,15 +251,16 @@
       }) }))
       .sort((a, b) => (b.s - a.s) || (a.m._seq - b.m._seq));
 
-    const minT = toTenths(MIN_ROW_HOURS);
-    /* 预算是有限的，而"每行 1 课时"是下限 —— 只看下限会**选进一堆模块却排不满**：
-       实测（本轮真踩到）总课时 28 时，按"1 课时/模块"能选满 25 个模块，
-       但配平时每行有上限（建议课时 × 2），最后只落地 25 课时，剩下 3 课时没地方放。
-       所以选模块时按"这一行大概要占多少"估：建议课时的 0.5 倍（夹在 [1, 上限] 之间）。 */
-    const weightOf = (m) => {
-      const cap = Math.max(minT, hintTenths(m) * MAX_ROW_FACTOR);
-      return Math.min(cap, Math.max(minT, Math.round(hintTenths(m) / 2)));
-    };
+    const minU = MIN_ROW_HOURS;
+    /* 预算是有限的，选模块时必须按"这一行大概要占多少"来估，否则会**选进一堆模块却排不满**。
+       ⚠️ 估值口径改过一次（2026-10 课时改整数后踩到，记下来）：
+          · 旧口径 `hint / 2` 对**建议课时小的模块**（英语每单元 2 课时）会估成 1 课时，
+            75 课时选了 **48 行**，结果 21 行只能拿到 1 课时 ⇒ **奇数行一大堆**，
+            既违背用户"多为偶数"，也让"一个单元 1 课时"显得假；
+          · 现口径 = `max(2, round(hint / 2))`，即**至少按"一对（2 课时）"估**：
+            小模块不会被估成 1，行数也就落在"每行 2 课时以上"的合理区间。
+       别为了"多排几个模块"把估值往 1 调 —— 那会让课时表变成一堆 1。 */
+    const weightOf = (m) => Math.min(capOf(m), Math.max(2, Math.round(hintOf(m) / 2)));
     const reqMinT = required.reduce((a, m) => a + weightOf(m), 0);
     const overBudget = reqMinT > totalT && totalT >= 0;
 
@@ -297,32 +303,110 @@
   }
 
   /* ======================================================================
-     4. 分摊课时（保留小数、总和必须等于总课时）
+     4. 分摊课时（**整数** + 优先偶数；总和必须等于总课时）
+     ----------------------------------------------------------------------
+     用户 2026-10 线上验收后改的口径（原话）：
+       「生成的课表里出现了 1.5、3.1、4.6 这种小数」⇒ 课时**一律整数**，
+       而且「多为偶数」⇒ **优先按 2 的倍数分摊，余数处理成 1**。
+       总课时是奇数时，必然有且只有一小部分行是奇数（那 1 课时给最该多拿的那行）。
+
+     ⚠️ 这套算法与前一代（一位小数）的**三条铁律不变**，只是货币从"0.1 课时"换成"1 课时"：
+       · 权重 = 建议课时（`hoursHint`）
+       · 下限 = 1 课时；上限 = 建议课时 × 2（防止一个模块把预算吃光）
+       · **总和精确等于总课时**（附件3 的合计行照抄这个数）
+
+     ⚠️ 前一代踩过、这一代同样要防的两个坑：
+       ① **先按比例再逐行收上限** ⇒ 收完上限把总量削掉一大截（老师填 60 只排了 37.6）；
+       ② **把"建议课时"直接当初始分配再补差** ⇒ **平均主义**，把"哪个模块更重"抹掉。
+
+     ✅ 做法（整数版，更容易看明白）：
+       1. 每行先给 1 课时（下限）；给不起（总课时 < 行数）就按权重给前几行、其余 0，并置 shortfall
+       2. 再把**行数**那么多课时按权重"提成 2"（这一步产生的东西全是偶数）
+       3. 剩下的按 **+2** 一档一档往上加（始终是偶数），谁"欠得多"谁先加
+       4. 最后若还剩 1 课时（总课时是奇数）⇒ 给"欠得最多"的那一行 +1（那一行成奇数）
+       5. 所有行都顶到上限还有余 ⇒ 如实报 `unallocated`（不静默）
      ====================================================================== */
 
+  /** 建议课时（整数，最小 1；0 表示"本次不排"，由调用方先摘出去） */
+  function hintOf(mod) {
+    const h = Number(mod && mod.hoursHint);
+    if (!isFinite(h) || h <= 0) return MIN_HINT;
+    return Math.max(MIN_HINT, Math.round(h));
+  }
+
+  /** 单模块上限（整数）：建议课时 × 2，最少 1 */
+  function capOf(mod, opt) {
+    const o = opt || {};
+    let c = Math.max(MIN_ROW_HOURS, hintOf(mod) * MAX_ROW_FACTOR);
+    if (o.maxHoursPerRow != null) c = Math.min(c, Math.max(MIN_ROW_HOURS, toInt(o.maxHoursPerRow)));
+    return c;
+  }
+
   /**
-   * 按「建议课时」当权重分摊老师填的总课时。
-   *
-   * ⚠️ 这里最容易做错的一点（第一版连着做错两次，都记下来防止重踩）：
-   *   ① **先按比例再逐行收上限** ⇒ 收完上限把总量削掉一大截：老师填 60 课时，
-   *      只排进去 37.6，剩下 22.4 课时**没地方放**（上限只有在"比例给多了"时才该生效）。
-   *   ② **把"建议课时"直接当初始分配、再拿预算补差** ⇒ **平均主义**：
-   *      3 个模块（建议 9/6/3）配 30 课时，会变成 10.3/10/9.7，
-   *      把"哪个模块更重"这件事彻底抹掉。
-   *
-   * ✅ 正确做法 = **先把权重整体缩放到预算上（定标），再收上下限，最后只补那点零头**：
-   *      · 权重 = 建议课时（`hoursHint`；老师上一次手改过的额度优先）
-   *      · 定标系数 k = max{ k : Σ clamp(round(k×权重), 下限, 上限) ≤ 总课时 }（逐 0.1 试）
-   *      · 下限 = 1 课时；上限 = 建议课时 × 2（防止一个模块把预算吃光）
-   *      · 剩下的零头按"离自己额度差得远"的顺序补 ⇒ **比例关系全程不被打乱**
-   *      · 所有行都顶到上限还有余 ⇒ 如实报 `unallocated`（并给老师一条"加个专题模块"的提示）
-   *      · 连"每行 1 课时"都给不起 ⇒ 按比例给并置 `shortfall:true`（明说，不静默）
-   *      · **总和精确等于总课时**（差 0.1 都不行：附件3 的合计行照抄这个数）
+   * 整数分摊主过程。
+   * @param w   每行权重（建议课时，整数）
+   * @param cap 每行上限（整数）
+   * @param total 总课时（整数）
+   * @returns { t: 每行课时(整数), left: 放不下的余量, shortfall }
    */
+  function spreadInts(w, cap, total) {
+    const n = w.length;
+    const t = new Array(n).fill(0);
+    if (!n) return { t, left: total, shortfall: false };
+
+    /* ---- 1. 下限：每行 1 课时（给不起就明说 shortfall） ---- */
+    if (total < n) {
+      // 按权重从大到小，能给的先给；其余留 0（老师在表里能看到"0 课时"，可手动删行）
+      const order = w.map((x, i) => i).sort((a, b) => (w[b] - w[a]) || (a - b));
+      let left = total;
+      for (const i of order) {
+        if (left <= 0) break;
+        if (t[i] + 1 > cap[i]) continue;
+        t[i] += 1; left -= 1;
+      }
+      return { t, left, shortfall: true };
+    }
+    t.fill(1);
+    let left = total - n;
+
+    /* ---- 2. 按权重把行"提成 2"（偶数优先：这一步产出的都是 2） ---- */
+    const byW = w.map((x, i) => i).sort((a, b) => (w[b] - w[a]) || (a - b));
+    for (const i of byW) {
+      if (left <= 0) break;
+      if (t[i] + 1 <= cap[i]) { t[i] += 1; left -= 1; }
+    }
+
+    /* ---- 3. 余下的按 +2 一档一档加（"欠得多的"先加） ---- */
+    let guard = 0;
+    while (left >= 2 && guard++ < 500000) {
+      let idx = -1, best = -Infinity;
+      for (let i = 0; i < n; i++) {
+        if (t[i] + 2 > cap[i]) continue;
+        const gap = w[i] - t[i] / 2;      // 还欠多少"对"
+        if (gap > best) { best = gap; idx = i; }
+      }
+      if (idx < 0) break;                  // 全顶到上限 ⇒ 剩下的放不下
+      t[idx] += 2; left -= 2;
+    }
+
+    /* ---- 4. 总课时是奇数时的那 1 课时：给最该多拿的一行（它变成奇数） ---- */
+    if (left === 1) {
+      let idx = -1, best = -Infinity;
+      for (let i = 0; i < n; i++) {
+        if (t[i] + 1 > cap[i]) continue;
+        const gap = w[i] - t[i] / 2;
+        if (gap > best) { best = gap; idx = i; }
+      }
+      if (idx >= 0) { t[idx] += 1; left -= 1; }
+    }
+
+    return { t, left, shortfall: false };
+  }
+
   function allocateHours(modules, totalHours, options) {
     const opt = options || {};
     const list = (modules || []).filter(Boolean);
-    const totalT = Math.max(0, toTenths(totalHours));
+    const total = Math.max(0, toInt(totalHours));
 
     // 显式 0 课时的模块（科目包用 hoursHint:0 表达"本次不排"）单独摘出来，不参与分摊
     const active = [];
@@ -331,115 +415,32 @@
       if (Number(m.hoursHint) === 0) zeros.push(m);
       else active.push(m);
     });
+    const zeroRows = zeros.map((m) => mkRow(m, 0));
     if (!active.length) {
-      const rows = zeros.map((m) => mkRow(m, 0));
-      return { rows, allocated: 0, unallocated: fromTenths(totalT), overBy: 0, shortfall: false };
-    }
-
-    const minT = toTenths(MIN_ROW_HOURS);
-    // 每行的上限 = 建议课时 × 2（防止一个模块把预算吃光）。
-    // ⚠️ 这里踩过一个真 bug（记下来）：`hintTenths()` 返回的**已经是"分"**，
-    //    第一版写成 `toTenths(hintTenths(m) * MAX_ROW_FACTOR)` ⇒ 又乘了 10，
-    //    上限变成"建议课时的 20 倍"，等于没有上限（实测 47.3 课时配出 23.6/15.8/7.9）。
-    //    凡是"分"参与的算术，**不要再套 toTenths**。
-    // ⚠️ 刻意**不做** `lastPlanHours`（老师上一版手改过的课时）：老师手改是常事，
-    //    把它当权重会让"改一行 → 重新生成"把别的行也跟着挪；宁可每次都从建议课时重算。
-    const capT = active.map((m) => {
-      const cap = Math.max(minT, hintTenths(m) * MAX_ROW_FACTOR);
-      if (opt.maxHoursPerRow != null) return Math.min(cap, Math.max(minT, toTenths(opt.maxHoursPerRow)));
-      return cap;
-    });
-    const wT = active.map((m) => hintTenths(m));
-
-    // 能装下的最大量（每行都顶到上限）；以及"每行只给下限"的最低量
-    let maxT = 0;
-    for (let i = 0; i < active.length; i++) maxT += capT[i];
-    const needMinT = active.length * minT;
-
-    /* ---- 情形 A：总课时比"模块数 × 1 课时"还少 → 按权重比例给（可能低于 1 课时） ---- */
-    if (totalT < needMinT) {
-      const wsum = wT.reduce((a, b) => a + b, 0) || active.length;
-      const tA = active.map((m, i) => Math.max(0, Math.round((totalT * wT[i]) / wsum)));
-      const rowsA = active.map((m, i) => mkRow(m, fromTenths(tA[i])));
-      const allA = zeros.map((m) => mkRow(m, 0)).concat(rowsA);
-      const allocA = sumHours(rowsA.map((r) => r.hours));
       return {
-        rows: allA,
-        allocated: allocA,
-        unallocated: fromTenths(Math.max(0, totalT - toTenths(allocA))),
-        overBy: fromTenths(Math.max(0, toTenths(allocA) - totalT)),
-        shortfall: true,
-        lambda: 1,
+        rows: zeroRows, allocated: 0, unallocated: total, overBy: 0,
+        shortfall: total > 0, evenCount: 0, oddRows: 0,
       };
     }
 
-    /* ---- 情形 B：定标 + 收上下限 + 补零头 ---- */
+    const w = active.map((m) => hintOf(m));
+    const cap = active.map((m) => capOf(m, opt));
+    const res = spreadInts(w, cap, total);
 
-    /** 给定定标系数 k（0.1 一档），算出每行课时（分）与总和。
-     *  ⚠️ 每行的上限**只有** `capT[i]`（= 建议课时 × 2），不要再夹一个 `totalT`：
-     *     本轮真踩到 —— 那样会把"最小模块"的额度锁死在它自己的建议值上，
-     *     总课时 240 时只能排进去 25（一列模块全被锁住，剩下的课时无处可放）。 */
-    const scale = (k) => {
-      const arr = active.map((m, i) => {
-        const ideal = Math.round((wT[i] * k) / 10);
-        return Math.min(capT[i], Math.max(minT, ideal));
-      });
-      return { arr, sum: arr.reduce((a, b) => a + b, 0) };
-    };
+    const rows = active.map((m, i) => mkRow(m, res.t[i]));
+    const allRows = zeroRows.concat(rows);
+    const allocated = sumHours(res.t);
+    const oddRows = res.t.filter((x) => x > 0 && x % 2 !== 0).length;
 
-    let lo = 0, hi = 1;
-    let hiRes = scale(hi);
-    // 找上界：一直翻倍到"总和已经超过预算"（最多翻 20 次，防呆）
-    for (let i = 0; i < 20 && hiRes.sum < totalT; i++) {
-      lo = hi;
-      hi *= 2;
-      hiRes = scale(hi);
-    }
-    // 二分：求最大的 k 使总和 ≤ 预算（逐 0.1 精度，300 次足够从 0 到 2^20）
-    for (let i = 0; i < 300 && hi - lo > 1e-9; i++) {
-      const mid = (lo + hi) / 2;
-      if (scale(mid).sum <= totalT) lo = mid; else hi = mid;
-    }
-
-    const cur = scale(lo);
-    const t = cur.arr;
-    let sum = cur.sum;
-
-    // 零头配平：按"离自己额度差得远"的顺序补（额度大的模块始终拿得多，比例不被打乱）
-    let guard = 0;
-    while (sum < totalT && guard++ < 200000) {
-      let idx = -1, best = -Infinity;
-      for (let i = 0; i < t.length; i++) {
-        if (t[i] + 1 > capT[i]) continue;
-        const gap = (wT[i] * lo) / 10 - t[i];
-        if (gap > best) { best = gap; idx = i; }
-      }
-      if (idx < 0) {
-        // 全都顶到上限了 ⇒ 还有余量放不下：改成"上限大的先给"，最后如实报 unallocated
-        let idx2 = -1, capBest = -1;
-        for (let i = 0; i < t.length; i++) {
-          if (t[i] + 1 > capT[i]) continue;
-          if (capT[i] > capBest) { capBest = capT[i]; idx2 = i; }
-        }
-        if (idx2 < 0) break;
-        t[idx2] += 1; sum += 1;
-        continue;
-      }
-      t[idx] += 1; sum += 1;
-    }
-
-    const rows = active.map((m, i) => mkRow(m, fromTenths(t[i])));
-    const allRows = zeros.map((m) => mkRow(m, 0)).concat(rows);
-    const allocated = sumHours(rows.map((r) => r.hours));
-    const overByT = toTenths(allocated) > totalT ? toTenths(allocated) - totalT : 0;
     return {
       rows: allRows,
       allocated,
-      unallocated: fromTenths(Math.max(0, totalT - toTenths(allocated))),
-      overBy: fromTenths(overByT),
-      shortfall: false,
-      lambda: lo,
-      capacity: fromTenths(maxT),
+      unallocated: Math.max(0, res.left),
+      overBy: 0,
+      shortfall: !!res.shortfall,
+      /** 偶数行数（测试与提示文案用：理想情况下 = 非零行数，奇数总课时时会少 1） */
+      evenCount: res.t.filter((x) => x > 0 && x % 2 === 0).length,
+      oddRows,
     };
   }
 
@@ -455,15 +456,10 @@
       content: mod.content || "",
       goal: mod.goal || "",
       tags: Array.isArray(mod.tags) ? mod.tags.slice() : [],
-      hours: round1(hours),
+      hours: toInt(hours),
     };
   }
 
-  function hintTenths(mod) {
-    const h = Number(mod && mod.hoursHint);
-    if (!isFinite(h) || h <= 0) return toTenths(MIN_HINT);
-    return toTenths(h);
-  }
 
   /* ======================================================================
      5. 组装整份方案（界面/导出用的最终形状）
@@ -520,16 +516,29 @@
     if (alloc.overBy > 0) {
       notes.push("课时超出总预算 " + alloc.overBy + " 课时（模块太多），建议删模块或调大总课时。");
     }
+    // 课时已统一成整数：老师若填了小数（如 80.5），这里明说"按 81 算"，不静默改数
+    const rawTotal = Number(o.totalHours);
+    const total = toInt(o.totalHours);
+    if (isFinite(rawTotal) && rawTotal !== total) {
+      notes.push("总课时已按整数取整：" + rawTotal + " → " + total + " 课时（本工具的课时一律整数）。");
+    }
+    // 奇数总课时 ⇒ 必然有行是奇数，明说一句，免得老师以为是 bug
+    if (alloc.oddRows > 0) {
+      notes.push("总课时是奇数（" + total + "），所以有 " + alloc.oddRows
+        + " 个模块分到奇数课时（其余都是 2 的倍数）；想要全偶数就把总课时调成偶数。");
+    }
 
     return {
       pack: { key: pack.key, name: pack.name, stage: pack.stage, stageName: pack.stageName || "", fullScore: pack.fullScore },
       band: band || null,
       grade: o.grade || "",
       rows,
-      totalHours: round1(o.totalHours),
+      totalHours: total,
       allocated: alloc.allocated,
       unallocated: alloc.unallocated,
       shortfall: !!alloc.shortfall,
+      evenCount: alloc.evenCount,
+      oddRows: alloc.oddRows,
       notes,
       dropped: picked.dropped,
       removedDone: picked.removedDone,
@@ -578,12 +587,12 @@
   function selfCheck(plan) {
     const rows = (plan && plan.rows) || [];
     const sum = sumHours(rows.map((r) => r.hours));
-    const total = round1(plan && plan.totalHours);
+    const total = toInt(plan && plan.totalHours);
     const bad = [];
     rows.forEach((r, i) => {
-      if (r.hours > 0 && toTenths(r.hours) % 1 !== 0) {
-        // 只可能是 0.1 的整数倍（整数分），否则就是有人手改坏了
-        bad.push("第 " + (i + 1) + " 行课时不是一位小数：" + r.hours);
+      // ⚠️ 口径已改成**整数**（用户 2026-10 要求）：小数就是有人手改坏了，必须拦下
+      if (Number(r.hours) !== Math.round(Number(r.hours))) {
+        bad.push("第 " + (i + 1) + " 行课时不是整数：" + r.hours + "（本工具的课时一律整数）");
       }
       if (!r.name) bad.push("第 " + (i + 1) + " 行没有模块名");
     });
@@ -593,13 +602,17 @@
       if (seen[r.name]) bad.push("第 " + (i + 1) + " 行与第 " + seen[r.name] + " 行同名（" + r.name + "），导出时会被合并成一行");
       else seen[r.name] = i + 1;
     });
+    const oddRows = rows.filter((r) => Number(r.hours) > 0 && Number(r.hours) % 2 !== 0).length;
     return {
       rows: rows.length,
       sum,
       total,
-      sumMatches: toTenths(sum) === toTenths(total),
+      sumMatches: sum === total,
+      /** 分到奇数课时的行数（总课时是奇数时必然 ≥1；界面据此给一句说明） */
+      oddRows,
+      allInt: rows.every((r) => Number(r.hours) === Math.round(Number(r.hours))),
       problems: bad,
-      ok: bad.length === 0 && toTenths(sum) === toTenths(total),
+      ok: bad.length === 0 && sum === total,
     };
   }
 
@@ -607,17 +620,17 @@
      导出（Node 单测与浏览器都要用）
      ====================================================================== */
   return {
-    // 小数工具
-    toTenths, fromTenths, round1, sumHours,
+    // 课时口径（整数）：`toInt` 是主口径；`toTenths/fromTenths/round1` 只为兼容旧调用保留
+    toInt, sumHours, toTenths, fromTenths, round1,
     // 年级 / 顺序
     GRADE_RANK, gradeRank, termRank, seqOf, indexedModules, sortBySyllabus, modulesForGrade,
     // 评分 / 取舍
     bandOf, bandKeyOf, scoreModule, selectModules,
     // 课时
-    allocateHours, mkRow, hintTenths,
+    allocateHours, spreadInts, mkRow, hintOf, capOf,
     // 组装
     buildPlan, stageNameOf, groupByStage, selfCheck,
     // 常量（测试要断言口径时用）
-    CONST: { MIN_HINT, MIN_ROW_HOURS, MAX_ROW_FACTOR },
+    CONST: { MIN_HINT, MIN_ROW_HOURS, MAX_ROW_FACTOR, EVEN_FIRST },
   };
 }));

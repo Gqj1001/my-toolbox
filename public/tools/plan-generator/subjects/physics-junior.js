@@ -64,7 +64,7 @@
       goal: ""
     },
     {
-      id: "j05", name: "透镜及其应用", stage: "g8a", term: "八年级上", lv: 2, hoursHint: 4.5,
+      id: "j05", name: "透镜及其应用", stage: "g8a", term: "八年级上", lv: 2, hoursHint: 4,
       topic: "光学", tags: ["高频", "难点"], must: false,
       chapters: ["5.1透镜", "5.2生活中的透镜", "5.3凸透镜成像的规律", "5.4眼睛和眼镜", "5.5显微镜和望远镜"],
       content: "5.1透镜 5.2生活中的透镜 5.3凸透镜成像的规律 5.4眼睛和眼镜 5.5显微镜和望远镜",
@@ -97,7 +97,7 @@
       goal: ""
     },
     {
-      id: "j09", name: "浮力", stage: "g8b", term: "八年级下", lv: 3, hoursHint: 7.5,
+      id: "j09", name: "浮力", stage: "g8b", term: "八年级下", lv: 3, hoursHint: 8,
       topic: "力学", tags: ["高频", "难点", "计算"], must: false,
       chapters: ["10.1浮力", "10.2阿基米德原理", "10.3物体的浮沉条件及应用"],
       content: "10.1浮力 10.2阿基米德原理 10.3物体的浮沉条件及应用",
@@ -111,7 +111,7 @@
       goal: ""
     },
     {
-      id: "j11", name: "简单机械", stage: "g8b", term: "八年级下", lv: 3, hoursHint: 7.5,
+      id: "j11", name: "简单机械", stage: "g8b", term: "八年级下", lv: 3, hoursHint: 8,
       topic: "力学", tags: ["高频", "难点", "计算"], must: false,
       chapters: ["12.1杠杆", "12.2滑轮", "12.3机械效率"],
       content: "12.1杠杆 12.2滑轮 12.3机械效率",
@@ -120,42 +120,42 @@
 
     /* ---------------- 九年级全一册 ---------------- */
     {
-      id: "j12", name: "内能", stage: "g9", term: "九年级", lv: 1, hoursHint: 4.5,
+      id: "j12", name: "内能", stage: "g9", term: "九年级", lv: 1, hoursHint: 4,
       topic: "热学", tags: ["基础", "高频"], must: false,
       chapters: ["13.1分子热运动", "13.2内能", "13.3比热容"],
       content: "13.1分子热运动 13.2内能 13.3比热容",
       goal: ""
     },
     {
-      id: "j13", name: "内能的利用", stage: "g9", term: "九年级", lv: 1, hoursHint: 4.5,
+      id: "j13", name: "内能的利用", stage: "g9", term: "九年级", lv: 1, hoursHint: 4,
       topic: "热学", tags: ["基础"], must: false,
       chapters: ["14.1热机", "14.2热机的效率", "14.3能量的转化和守恒"],
       content: "14.1热机 14.2热机的效率 14.3能量的转化和守恒",
       goal: ""
     },
     {
-      id: "j14", name: "电流和电路", stage: "g9", term: "九年级", lv: 1, hoursHint: 7.5,
+      id: "j14", name: "电流和电路", stage: "g9", term: "九年级", lv: 1, hoursHint: 8,
       topic: "电学", tags: ["基础", "高频"], must: false,
       chapters: ["15.1两种电荷", "15.2电流和电路", "15.3串联和并联", "15.4电流的测量", "15.5串、并联电路中电流的规律"],
       content: "15.1两种电荷 15.2电流和电路 15.3串联和并联 15.4电流的测量 15.5串、并联电路中电流的规律",
       goal: ""
     },
     {
-      id: "j15", name: "电压 电阻", stage: "g9", term: "九年级", lv: 2, hoursHint: 7.5,
+      id: "j15", name: "电压 电阻", stage: "g9", term: "九年级", lv: 2, hoursHint: 8,
       topic: "电学", tags: ["基础", "高频"], must: false,
       chapters: ["16.1电压", "16.2串、并联电路中电压的规律", "16.3电阻", "16.4变阻器"],
       content: "16.1电压 16.2串、并联电路中电压的规律 16.3电阻 16.4变阻器",
       goal: ""
     },
     {
-      id: "j16", name: "欧姆定律", stage: "g9", term: "九年级", lv: 3, hoursHint: 10.5,
+      id: "j16", name: "欧姆定律", stage: "g9", term: "九年级", lv: 3, hoursHint: 10,
       topic: "电学", tags: ["高频", "难点", "计算"], must: false,
       chapters: ["17.1电流与电压和电阻的关系", "17.2欧姆定律", "17.3电阻的测量", "17.4欧姆定律在串、并联电路中的应用"],
       content: "17.1电流与电压和电阻的关系 17.2欧姆定律 17.3电阻的测量 17.4欧姆定律在串、并联电路中的应用",
       goal: ""
     },
     {
-      id: "j17", name: "电功率", stage: "g9", term: "九年级", lv: 3, hoursHint: 10.5,
+      id: "j17", name: "电功率", stage: "g9", term: "九年级", lv: 3, hoursHint: 10,
       topic: "电学", tags: ["高频", "难点", "计算"], must: false,
       chapters: ["18.1电能 电功", "18.2电功率", "18.3测量小灯泡的电功率", "18.4焦耳定律"],
       content: "18.1电能 电功 18.2电功率 18.3测量小灯泡的电功率 18.4焦耳定律",
@@ -176,14 +176,14 @@
       goal: ""
     },
     {
-      id: "j20", name: "信息的传递", stage: "g9", term: "九年级", lv: 1, hoursHint: 1.5,
+      id: "j20", name: "信息的传递", stage: "g9", term: "九年级", lv: 1, hoursHint: 2,
       topic: "电磁", tags: ["送分题"], must: false,
       chapters: ["21.1现代顺风耳——电话", "21.2电磁波的海洋", "21.3广播、电视和移动通信", "21.4越来越宽的信息之路"],
       content: "21.1现代顺风耳——电话 21.2电磁波的海洋 21.3广播、电视和移动通信 21.4越来越宽的信息之路",
       goal: ""
     },
     {
-      id: "j21", name: "能源与可持续发展", stage: "g9", term: "九年级", lv: 1, hoursHint: 1.5,
+      id: "j21", name: "能源与可持续发展", stage: "g9", term: "九年级", lv: 1, hoursHint: 2,
       topic: "能源", tags: ["送分题"], must: false,
       chapters: ["22.1能源", "22.2核能", "22.3太阳能", "22.4能源与可持续发展"],
       content: "22.1能源 22.2核能 22.3太阳能 22.4能源与可持续发展",
@@ -192,7 +192,7 @@
 
     /* ---------------- 中考一轮专题复习（初三全托样例的"一轮复习 54h"那一段） ---------------- */
     {
-      id: "j22", name: "声现象专题", stage: "review", term: "九年级", lv: 1, hoursHint: 1.5,
+      id: "j22", name: "声现象专题", stage: "review", term: "九年级", lv: 1, hoursHint: 2,
       topic: "声学", tags: ["一轮", "送分题"], must: false,
       chapters: ["声音的产生与传播", "声音的特性", "声的利用", "噪声的危害和控制"],
       content: "声音的产生与传播 声音的特性 声的利用 噪声的危害和控制",
@@ -206,7 +206,7 @@
       goal: ""
     },
     {
-      id: "j24", name: "透镜及其应用专题", stage: "review", term: "九年级", lv: 2, hoursHint: 4.5,
+      id: "j24", name: "透镜及其应用专题", stage: "review", term: "九年级", lv: 2, hoursHint: 4,
       topic: "光学", tags: ["一轮", "难点"], must: false,
       chapters: ["透镜", "生活中的透镜", "凸透镜成像规律", "近视镜和远视镜的应用"],
       content: "透镜 生活中的透镜 凸透镜成像规律 近视镜和远视镜的应用",
@@ -248,7 +248,7 @@
       goal: ""
     },
     {
-      id: "j30", name: "浮力专题", stage: "review", term: "九年级", lv: 3, hoursHint: 7.5,
+      id: "j30", name: "浮力专题", stage: "review", term: "九年级", lv: 3, hoursHint: 8,
       topic: "力学", tags: ["一轮", "难点", "计算"], must: false,
       chapters: ["浮力的产生", "阿基米德原理", "沉浮条件及其应用", "质量密度与浮力实验"],
       content: "浮力的产生 阿基米德原理 沉浮条件及其应用 质量密度与浮力实验",
@@ -262,14 +262,14 @@
       goal: ""
     },
     {
-      id: "j32", name: "简单机械专题", stage: "review", term: "九年级", lv: 3, hoursHint: 7.5,
+      id: "j32", name: "简单机械专题", stage: "review", term: "九年级", lv: 3, hoursHint: 8,
       topic: "力学", tags: ["一轮", "难点", "计算"], must: false,
       chapters: ["杠杆", "滑轮", "机械效率"],
       content: "杠杆 滑轮 机械效率",
       goal: ""
     },
     {
-      id: "j33", name: "电学综合专题", stage: "review", term: "九年级", lv: 3, hoursHint: 10.5,
+      id: "j33", name: "电学综合专题", stage: "review", term: "九年级", lv: 3, hoursHint: 10,
       topic: "电学", tags: ["一轮", "难点", "计算"], must: false,
       chapters: ["电路分析", "欧姆定律综合计算", "电功率综合计算", "电学实验"],
       content: "电路分析 欧姆定律综合计算 电功率综合计算 电学实验",
@@ -285,14 +285,14 @@
       goal: ""
     },
     {
-      id: "j35", name: "力学综合计算", stage: "sprint", term: "收口", lv: 3, hoursHint: 7.5,
+      id: "j35", name: "力学综合计算", stage: "sprint", term: "收口", lv: 3, hoursHint: 8,
       topic: "力学", tags: ["必开", "计算"], must: true,
       chapters: ["压强、浮力、简单机械的综合计算", "相关力学实验"],
       content: "压强、浮力、简单机械的综合计算及相关力学实验",
       goal: ""
     },
     {
-      id: "j36", name: "电学综合计算", stage: "sprint", term: "收口", lv: 3, hoursHint: 7.5,
+      id: "j36", name: "电学综合计算", stage: "sprint", term: "收口", lv: 3, hoursHint: 8,
       topic: "电学", tags: ["必开", "计算"], must: true,
       chapters: ["电学计算", "电路分析", "电学实验"],
       content: "电学计算、电路分析及电学实验",

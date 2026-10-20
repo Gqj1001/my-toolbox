@@ -4,6 +4,7 @@ import BackfillPanel from "@/components/backfill-panel";
 import StudentEditor from "@/components/archive-student-editor";
 import ManualScoreForm from "@/components/manual-score-form";
 import RecordDeleteButton from "@/components/record-delete-button";
+import RecordDateButton from "@/components/record-date-button";
 import SiteHeader from "@/components/site-header";
 import AnalysisPanel from "./analysis-panel";
 import AnalysisSummary from "./analysis-summary";
@@ -43,6 +44,11 @@ type HistoryItem = {
   title?: string;
   score?: number | null;
   fullScore?: number | null;
+  /** ★ 2026-10：这条记录的**真日期**（ISO，如 `2026-10-04`）；没有就是空串。
+   *  为什么单独带一份：`historyByStudent()` 给的 `date` 是给人看的「10月4日」（没有年份），
+   *  既排不了序、也没法回填到 `<input type="date">`（那个只认 ISO）。
+   *  ⚠️ 不去改 `historyByStudent()` 的形状 —— 那是三个工具共用的老契约。 */
+  dateIso?: string;
 };
 
 const card =
@@ -110,7 +116,16 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
     //    同时支持临时兜底 `?nobackfill=1`（优先级与工具页一致：URL 参数 > 代码常量）。
     const backfillOff = await pageDisables("backfill_materials", params.nobackfill);
     const info = (all[selected] ?? {}) as Record<string, unknown>;
-    const items = ((allHistory[selected] ?? []) as HistoryItem[]).slice().reverse();   // 新的在前
+    // ⭐ 2026-10：把每条记录的**真日期（ISO）**贴上来，然后按它排序。
+    //    原来只按 `created_at` 反序 —— 于是"补录的 10月4日"会排在"10月17日"的上面，
+    //    看起来就是"日期乱"。没有日期的记录用 saved（创建日）兜底，绝不丢。
+    const isoById = new Map<unknown, string>();
+    for (const r of historyRows) isoById.set(r.id, r.date ?? "");
+    const sortKeyOf = (i: HistoryItem) =>
+      String(i.dateIso || (i as { saved?: string }).saved || "").slice(0, 10);
+    const items = ((allHistory[selected] ?? []) as HistoryItem[])
+      .map((i) => ({ ...i, dateIso: isoById.get(i.id) ?? "" }))
+      .sort((a, b) => sortKeyOf(b).localeCompare(sortKeyOf(a)));   // 新的在前
     // ★ 第三批：学情分析。用**原始行**（`historyRows`）算，因为那份有真正的 ISO 日期，
     //   而 `historyByStudent()` 给的是给人看的「10月7日」（没有年份，排不了序）。
     //   ⚠️ 报告必须由 `buildStudentReport()` 这一个来源算出来 —— 页面与 AI 接口共用它。
@@ -198,11 +213,17 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
                           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                             {it.title || it.typeName || "（未填名称）"}
                           </span>
-                          <span className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                            <span>
+                          <span className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                            <span className={it.date ? "" : "font-medium text-red-600 dark:text-red-400"}>
                               {it.date || "未填日期"}
                               {it.score != null ? ` · ${it.score}${it.fullScore != null ? ` / ${it.fullScore}` : ""} 分` : ""}
                             </span>
+                            {/* ⭐ 2026-10 用户验收后加：**每条记录的日期都能事后改**。
+                                没日期的记录（补录时 AI 没抽到）会显示成红色的「未填日期」，
+                                按钮也变成「补日期」—— 一点就能选，不用去 Supabase。 */}
+                            {it.id != null ? (
+                              <RecordDateButton id={it.id} date={it.dateIso ?? ""} title={it.title} />
+                            ) : null}
                             {/* ⭐ 第十四批：手动补录的记录由老师自己填，**填错要能撤**。
                                 ⭐ 第十七批：**学情报告（analysis）也开给它** —— 用户反馈
                                 「我生成了好几份学情分析，现在不知道在哪里删除」。

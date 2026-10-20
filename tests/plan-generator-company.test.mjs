@@ -128,7 +128,7 @@ try {
 } catch (e) {
   buildErr = e;
 }
-ok("⑤-1 公司引擎能直接吃下物理模块表（23–26 行、含 4.5/7.5/1.5 小数课时）",
+ok("⑤-1 公司引擎能直接吃下物理模块表（23–26 行、整数课时）",
   !buildErr && bin && bin.length > 50000,
   buildErr ? String(buildErr.message || buildErr) : `${bin && bin.length} 字节`);
 
@@ -153,22 +153,24 @@ def rinfo(tr):
     cs = tr.findall(qn("w:tc")); return cs, "".join(ct(c) for c in cs)
 # 表头行（知识模块 / 具体知识点 / 课时数）
 hi = next(i for i,tr in enumerate(rows) if "知识模块" in rinfo(tr)[1])
-# 合计行：课时数那格像「NNN小时」且第 2 格为空
+# 合计行：课时数那格像「NNN课时」且第 2 格为空
+# ⚠️ 2026-10 用户线上验收要求单位写「课时」（原来公司引擎写死「小时」，导出件里是「1.1小时」）
+UNIT = "课时"
 def is_total(tr):
     cs, txt = rinfo(tr)
-    return len(cs) >= 3 and ct(cs[2]).endswith("小时") and not ct(cs[1]).strip()
+    return len(cs) >= 3 and ct(cs[2]).endswith(UNIT) and not ct(cs[1]).strip()
 ti = next(i for i in range(hi+1, len(rows)) if is_total(rows[i]))
 data = rows[hi+1:ti]
 # 逐行核对：模块名 / 知识点 / 课时数（用 Node 侧传进来的真值）
 EXPECT_MODULES = ${JSON.stringify(data.rows.map((r) => r.module))}
-EXPECT_HOURS = ${JSON.stringify(data.rows.map((r) => String(r.hours) + "小时"))}
+EXPECT_HOURS = ${JSON.stringify(data.rows.map((r) => String(r.hours) + "课时"))}
 chk("进度表数据行 = 模块数（%d 行）" % len(data), len(data) == len(EXPECT_MODULES), "实际 %d" % len(data))
 got = [(ct(rinfo(r)[0][0]), ct(rinfo(r)[0][1]), ct(rinfo(r)[0][2])) for r in data]
 chk("每行都有模块名", all(g[0].strip() for g in got),
     str([g[0] for g in got if not g[0].strip()][:3]))
 chk("模块名逐行等于传入值", [g[0] for g in got] == EXPECT_MODULES,
     "首行 %r / 期望 %r" % (got[0][0] if got else "", EXPECT_MODULES[0] if EXPECT_MODULES else ""))
-chk("课时数逐行等于传入值（含 4.5 这类小数）", [g[2] for g in got] == EXPECT_HOURS,
+chk("课时数逐行等于传入值（**整数 + 单位「课时」**）", [g[2] for g in got] == EXPECT_HOURS,
     ",".join(g[2] for g in got[:8]))
 chk("每行都带「知识点：…」（与模板样例同款写法）",
     all(g[1].startswith("知识点：") for g in got),
@@ -176,7 +178,7 @@ chk("每行都带「知识点：…」（与模板样例同款写法）",
 chk("有目标的模块会连出「目标：…」（本轮 plan 还没经 AI 填目标，所以只查格式不查有无）",
     all(("目标：" in g[1]) or True for g in got))
 tot = ct(rinfo(rows[ti])[0][2])
-chk("合计行 = 各行课时之和（%s小时）" % tot, tot == "${Math.round(data.rows.reduce((a, r) => a + r.hours, 0) * 10) / 10}小时", tot)
+chk("合计行 = 各行课时之和（%s）" % tot, tot == "${data.rows.reduce((a, r) => a + r.hours, 0)}课时", tot)
 alltext = "\\n".join("".join(n.text or "" for n in p.iter(qn("w:t"))) for p in d.paragraphs)
 for tr in rows:
     for tc in tr.findall(qn("w:tc")):

@@ -105,6 +105,11 @@
       hoursPerWeekText: hpw,
       entryScore: String(o.entryScore == null ? "" : o.entryScore),
       rows: rows,
+      // ★ 2026-10 用户线上验收：「导出的 Word 里显示 1.1小时」⇒ 单位要用「课时」。
+      //   公司引擎 `company-docx.js` 原本把单位写死成「小时」；为了**不改数学版的输出**
+      //   （数学版一直在用、验收过），给它加了一个可选项 `hoursUnit`（默认仍是「小时」），
+      //   本工具显式传「课时」。
+      hoursUnit: "课时",
       // ⚠️ 一期留空（工具没有"过程数据"）：效果评估列由老师在 Word 里写
       lessonEval: {}
     };
