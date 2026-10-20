@@ -357,7 +357,7 @@ try {
   // ================= 8. 浏览器端到端 =================
   console.log("\n=== 8. 浏览器端到端 ===");
   {
-    const edge = spawn(EDGE, ["--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${USER_DATA}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
+    const edge = spawn(EDGE, ["--headless=new", "--disable-extensions", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${USER_DATA}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
     let cdp;
     for (let i = 0; i < 40; i++) { await sleep(500); try { cdp = await connect(); break; } catch {} }
     const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
@@ -372,12 +372,17 @@ try {
     // 那不是页面缺陷，属于测试手段的产物，必须排除，否则断言会长期误报。
     let testPhase = "(启动)";
     const pageErrors = [];
+    // ⚠️ 无头 Edge 会加载本机扩展（实测 chrome-extension://.../content_main.js），
+    //    扩展自己偶尔抛错，栈里带 chrome-extension:// —— 那不是被测页面的缺陷。
+    const isExtensionNoise = (text) => /(?:chrome|moz|safari)-extension:\/\//i.test(String(text ?? ""));
     cdp.ws.addEventListener("message", (e) => {
       const m = JSON.parse(e.data);
       if (m.method === "Runtime.exceptionThrown") {
         const d = m.params.exceptionDetails;
         const ex = d?.exception ?? {};
         const desc = typeof ex.description === "string" ? ex.description : "";
+        const frames = d?.stackTrace?.callFrames ?? [];
+        if (isExtensionNoise(d?.url) || isExtensionNoise(desc) || frames.some((f) => isExtensionNoise(f.url))) return;
         // description 恰为 "Object" 且带 XHR 特征 → 被中断的请求，跳过
         const isAbortedXhr =
           desc === "Object" &&
@@ -388,12 +393,14 @@ try {
       }
       if (m.method === "Runtime.consoleAPICalled" && m.params.type === "error") {
         const args = (m.params.args ?? []).map((a) => (a.description ?? a.value ?? a.type ?? "").toString()).join(" ").slice(0, 240);
+        if (isExtensionNoise(args)) return;
         // 过滤掉被中断请求在控制台留下的噪声
         if (/readyState|overrideMimeType/.test(args) && args.length < 120) return;
         pageErrors.push(`[${testPhase}] console.error: ${args}`);
       }
       if (m.method === "Log.entryAdded" && m.params.entry.level === "error") {
         const t = typeof m.params.entry.text === "string" ? m.params.entry.text : JSON.stringify(m.params.entry.text);
+        if (isExtensionNoise(t) || isExtensionNoise(m.params.entry.url)) return;
         pageErrors.push(`[${testPhase}] log: ${t.slice(0, 240)}`);
       }
     });

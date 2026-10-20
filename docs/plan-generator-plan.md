@@ -7,6 +7,10 @@
 > **四个学科全部接入**（共 7 个科目包）。本文件 §16 是那一批的实做记录；
 > 四学科**差异分析**单独一份：`docs/subject-expansion-4subjects.md`。
 >
+> **2026-10-20 复跑数**：`plan-generator` 共 **10 套 / 384 项**（engine 45 · subjects 68 ·
+> subjects-new 56 · docx 20 · template 22 · company 29 · archive 40 · ai-client 36 · ui 27 · ai 41）。
+> 下面 §16.3 的「375 项」与 §17.3 的「44/44」是当时的记录，**以这行为准**。
+>
 > 上位文档：`docs/tutor-plan-handoff.md`（开工交接）、
 > `docs/subject-expansion-analysis.md`（物理样例提炼）、
 > `docs/subject-expansion-4subjects.md`（**四学科差异分析**）、

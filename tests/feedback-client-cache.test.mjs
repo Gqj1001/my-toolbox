@@ -79,7 +79,7 @@ try {
   // ---------------------------------------------------------------- 起浏览器（干净档）
   rmSync(PROFILE, { recursive: true, force: true });
   edge = spawn(EDGE, [
-    "--headless=new",
+    "--headless=new", "--disable-extensions",
     `--remote-debugging-port=${DEBUG_PORT}`,
     `--user-data-dir=${PROFILE}`,
     "--no-first-run", "--no-default-browser-check",

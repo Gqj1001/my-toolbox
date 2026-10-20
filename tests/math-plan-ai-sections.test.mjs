@@ -48,18 +48,24 @@ try {
   const { ev, goto, inTool, login } = makePageApi(cdp, sessionId);
 
   const pageErrors = [];
+  // ⚠️ 无头 Edge 会加载本机扩展（实测 chrome-extension://.../content_main.js），
+  //    扩展自己偶尔抛错，栈里带 chrome-extension:// —— 那不是被测页面的缺陷。
+  const isExtensionNoise = (text) => /(?:chrome|moz|safari)-extension:\/\//i.test(String(text ?? ""));
   cdp.ws.addEventListener("message", (e) => {
     const m = JSON.parse(e.data);
     if (m.method === "Runtime.exceptionThrown") {
       const d = m.params.exceptionDetails;
       const ex = d?.exception ?? {};
       const desc = typeof ex.description === "string" ? ex.description : "";
+      const frames = d?.stackTrace?.callFrames ?? [];
+      if (isExtensionNoise(d?.url) || isExtensionNoise(desc) || frames.some((f) => isExtensionNoise(f.url))) return;
       const abortedXhr = desc === "Object" && Array.isArray(ex.preview?.properties)
         && ex.preview.properties.some((p) => p.name === "setRequestHeader" || p.name === "readyState");
       if (!abortedXhr) pageErrors.push(`${String(d?.text)} ${desc.slice(0, 200)}`);
     }
     if (m.method === "Runtime.consoleAPICalled" && m.params.type === "error") {
       const args = (m.params.args ?? []).map((a) => (a.description ?? a.value ?? a.type ?? "").toString()).join(" ").slice(0, 200);
+      if (isExtensionNoise(args)) return;
       if (!(/readyState|overrideMimeType/.test(args) && args.length < 120)) pageErrors.push("console.error: " + args);
     }
   });

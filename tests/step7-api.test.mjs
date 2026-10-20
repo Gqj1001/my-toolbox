@@ -75,7 +75,7 @@ for (let i = 0; i < 60; i++) {
   try { if ((await fetch(`${BASE}/login`)).status === 200) break; } catch { /* 等待 */ }
 }
 
-const edge = spawn(EDGE, ["--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${USER_DATA}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
+const edge = spawn(EDGE, ["--headless=new", "--disable-extensions", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${USER_DATA}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
 let cdp;
 for (let i = 0; i < 40; i++) { await sleep(500); try { cdp = await connect(); break; } catch { /* 等待 */ } }
 const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });

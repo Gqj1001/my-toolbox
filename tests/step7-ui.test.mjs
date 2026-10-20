@@ -70,7 +70,7 @@ const srv = spawn("C:\\Users\\郭庆杰\\.dsh\\dsh-runtimes\\dsh-primary-runtime
   { cwd: "D:\\my-website\\my-toolbox", stdio: "ignore" });
 for (let i = 0; i < 60; i++) { await sleep(500); try { if ((await fetch(`${BASE}/login`)).status === 200) break; } catch { /* 等待 */ } }
 
-const edge = spawn(EDGE, ["--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${USER_DATA}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
+const edge = spawn(EDGE, ["--headless=new", "--disable-extensions", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${USER_DATA}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
 let cdp;
 for (let i = 0; i < 40; i++) { await sleep(500); try { cdp = await connect(); break; } catch { /* 等待 */ } }
 const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
@@ -141,6 +141,10 @@ console.log(`测试教材 id=${bookRow.id} 章节 id=${chRow.id} (${chRow.name})
 
 const TEST_KW = "__第7步章节关键词__";
 
+// ⚠️ 前置清理：以前失败/中断会在库里留下这个测试关键词（可能只剩一个分类）。
+//    残留会让「新增」只补一行、让「删除」找不到目标行 —— 看起来像产品 bug，其实是隔离问题。
+await db.from("feedback_keywords").delete().eq("keyword", TEST_KW);
+
 try {
   // ================= A. 管理页 =================
   console.log("\n--- A. 管理页级联选择 ---");
@@ -200,8 +204,14 @@ try {
         return 'ok';
       })()
     `);
-    await sleep(2600);
-    const rows = await db.from("feedback_keywords").select("id, category, chapter_id").eq("keyword", TEST_KW);
+    // ⚠️ 不要只等固定 2.6 秒：整套回归负载下，Server Action 可能还没写完两行。
+    //    改为轮询到「两行都出现」再往下走；否则后面的刷新会拿到旧页面。
+    let rows = { data: [] };
+    for (let i = 0; i < 30; i++) {
+      await sleep(500);
+      rows = await db.from("feedback_keywords").select("id, category, chapter_id").eq("keyword", TEST_KW);
+      if ((rows.data ?? []).length >= 2) break;
+    }
     record("章节新增表单可提交", addRes === "ok", String(addRes));
     record("章节关键词写入两个内容分类", (rows.data ?? []).length === 2, `${(rows.data ?? []).length} 行`);
     record("两行都归属该章节", (rows.data ?? []).every((r) => r.chapter_id === chRow.id), JSON.stringify((rows.data ?? []).map((r) => r.chapter_id)));
@@ -238,8 +248,13 @@ try {
         } catch(e) { return 'ERR: ' + (e && e.message || e); }
       })()
     `);
-    await sleep(3000);
-    const left = await db.from("feedback_keywords").select("id, category").eq("keyword", TEST_KW);
+    // 删除也是一样：轮询到库里真的 0 行（负载下 3 秒可能不够）
+    let left = { data: [] };
+    for (let i = 0; i < 20; i++) {
+      await sleep(500);
+      left = await db.from("feedback_keywords").select("id, category").eq("keyword", TEST_KW);
+      if ((left.data ?? []).length === 0) break;
+    }
     const msg = await ev(`
       (() => {
         const inputs=[...document.querySelectorAll('input[name="keyword"]')];

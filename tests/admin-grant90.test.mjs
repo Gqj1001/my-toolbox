@@ -87,7 +87,7 @@ try {
 
   // ---------------------------------------------------------------- 启动浏览器
   spawnSync("powershell", ["-NoProfile", "-Command", `Remove-Item -Recurse -Force '${PROFILE}' -ErrorAction SilentlyContinue`], { encoding: "utf8" });
-  edge = (await import("node:child_process")).spawn(EDGE, ["--headless=new", `--remote-debugging-port=${PORT}`,
+  edge = (await import("node:child_process")).spawn(EDGE, ["--headless=new", "--disable-extensions", `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${PROFILE}`, "--no-first-run", "about:blank"], { stdio: "ignore" });
   let ws = null;
   for (let i = 0; i < 40; i++) {
@@ -190,8 +190,23 @@ try {
   record("★明确不是 30 天（防止两个按钮写反 / 共用同一个 days）",
     !(daysOut > 29.5 && daysOut < 30.5), `距今天数=${daysOut.toFixed(3)}`);
 
-  // 页面上也应出现成功提示
-  const toast = await api.ev(`document.body.innerText.match(/已开通\\s*\\d+\\s*天会员/)?.[0] || ''`);
+  // 页面上也应出现成功提示。
+  // ⚠️ 时序（2026-10 实测）：数据库里那一行**先**变，Server Action 的响应与提示**后**到
+  //    （约 0.8 秒）；提示只显示 5 秒（组件里 setTimeout 5000 后隐藏）。
+  //    所以：① 不能在库刚变时只读一次（会读到空）；
+  //          ② 也不能干等 5 秒（正好等到它消失）。
+  //    正确做法是短轮询，出现即停。
+  let toast = "";
+  for (let i = 0; i < 20; i++) {
+    toast = await api.ev(`(() => {
+      const el = [...document.querySelectorAll('[role=status]')]
+        .map((e) => (e.textContent || '').trim())
+        .find((t) => /已开通\\s*\\d+\\s*天会员/.test(t));
+      return el || '';
+    })()`);
+    if (toast) break;
+    await sleep(200);
+  }
   record("页面上给出「已开通 90 天会员」提示",
     /已开通\s*90\s*天会员/.test(toast || ""), `提示=${JSON.stringify(toast)}`);
 

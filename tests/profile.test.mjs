@@ -19,28 +19,28 @@
  *    （这正是"先推代码后跑迁移"的安全保证 —— 也是本套件要钉住的行为）。
  *
  * ==========================================================================
- * 🔴 **已知假红：★★④ 两条会因为你机器上"测试账号已经存过资料"而红**（2026-10 确认）
+ * 🔴 **2026-10 修掉的测试死结（务必记住；别再改回去）**
  * --------------------------------------------------------------------------
- * 症状（一模一样，别以为是代码坏了）：
- *   FAIL | ★★④ 资料没填时「教师」框为空 | stuTeacher="数学测试老师老师"
- *   FAIL | ★④ 页头那行小字没填资料时是空的 | brandWho="数学"
+ * 旧写法：`tableReady = !!(j2?.profile)` —— 拿「/api/profile 有没有返回资料」
+ *         来判断「user_profiles 这张表建没建」。
+ * 但这两件事在产品口径里**故意同形**：
+ *   · 表没建          → profile = null（读不到就兜底，不拦页面）
+ *   · 表建了但没填    → profile = null（同上）
+ * 于是：清理账号资料后，套件误判「表没建」→ 走提交表单的分支；
+ *       而表其实是好的 ⇒ 保存成功 ⇒ 把「测试老师 / 数学 / 燕郊校区」**写回账号**；
+ *       然后再等「请去跑 0021」的提示，当然等不到 → 一条红；
+ *       下一次跑又读到这行假资料 → 原来那两条假红也一起回来。
+ * **这是一个会自我复现的死结：每次跑都把假资料写回去，清一次只能好一轮。**
  *
- * 根因（已用数据 + 代码逐行对照确认）：
- *   1. `user_profiles` 里 `roleb` 那行存着 `teacher_name=测试老师 / subject=math`
- *      —— 是**上一批（第二十批）跑本套件时**在"表还没建"分支里提交表单写进去的
- *      （`updated_at` 停在那一批的日期，之后每次跑都只是**读到它**）；
- *   2. 试卷分析页把资料填进「教师」框：`stuTeacher = MY_PROFILE.signature`
- *      = `resolveSignature()` = `学科显示名 + 姓名 + 老师`
- *      = 「数学」+「测试老师」+「老师」→ **"数学测试老师老师"**（一字不差）；
- *   3. 页头小字 `brandWho` 取的是 `subjectName` → "数学"。
- *   ⇒ 这两条断言的前提是"登录账号**没填过**资料"，而本机**填过**。
- *   ⚠️ **删不掉**：`user_profiles` 的 delete 策略只给 admin，anon 删自己那行返回 200 但不生效；
- *      admin 策略也看不到别人的行。**要用 service_role 在 Supabase 控制台里删**，
- *      或干脆**换一对新的测试账号**（`.test-users.json`）。
- *
- * 为什么本文件只加注释、没改断言：把"断言改松"等于**把这条真实保证丢掉**
- *   （用户当初点名要的就是"没填资料时不许被塞别人的名字"）。
- *   真正该修的是**测试环境**，不是断言。
+ * 现在的做法（2026-10）：
+ *   1. `detectProfileTable()` 直接问 PostgREST「user_profiles 这张表在不在」
+ *      （200 哪怕空数组 = 表在；404 / PGRST205 / 42P01 = 表不在）；
+ *   2. 只有**确认表不在**时，才提交表单验证「请跑 0021」的提示；
+ *   3. 表在但没资料 → 走「不写真实账号」分支，**绝不再提交假资料**；
+ *   4. 探测失败（网络/鉴权）→ 按「表在」处理，宁可不写。
+ * ⚠️ `/api/profile` 返回 null **不能**作为「表不存在」的证据。
+ * ⚠️ 这个账号的 delete 策略只给 admin（而 admin 又看不到别人的行），
+ *    所以测试**不能**自己清理写进去的资料；唯一安全的做法是**根本不写**。
  * ==========================================================================
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -56,7 +56,43 @@ const CDP_PORT = 9498;
 
 const { record, summary } = makeRecorder();
 const { adminEmail, userEmail, password } = readUsers();
-readEnv();
+const ENV = readEnv();
+
+/**
+ * 判断 `user_profiles` 表到底建没建（见文件头「测试死结」）。
+ *
+ * 返回 `{ known, exists, detail }`：
+ *   · `known=false` 表示探测本身没结论（网络 / 鉴权 / 其它错误）；
+ *     此时 `exists` **故意为 true** —— 宁可不写数据，也不要误走「提交表单」分支；
+ *   · `known=true + exists=false` 才是「确认表不在」，只有这种状态才允许提交表单。
+ *
+ * 为什么要单独探测：`/api/profile` 在「表没建」与「表建了但没填」两种情况下
+ * 都返回 `profile: null`（产品口径故意同形）。拿它推断表结构必然误判。
+ */
+async function detectProfileTable() {
+  try {
+    const tok = await (await fetch(`${ENV.SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: { apikey: ENV.ANON_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: userEmail, password }),
+    })).json();
+    if (!tok?.access_token) {
+      return { known: false, exists: true, detail: "拿不到测试会话（按「表在」处理，不写数据）" };
+    }
+    const res = await fetch(`${ENV.SUPABASE_URL}/rest/v1/user_profiles?select=user_id&limit=1`, {
+      headers: { apikey: ENV.ANON_KEY, Authorization: `Bearer ${tok.access_token}` },
+    });
+    const body = await res.text();
+    if (res.ok) return { known: true, exists: true, detail: `HTTP ${res.status}（表在）` };
+    // PostgREST 对「表不存在」返回 404 + PGRST205；SQL 层是 42P01。
+    if (res.status === 404 || /PGRST205|42P01|does not exist|Could not find the table/i.test(body)) {
+      return { known: true, exists: false, detail: `HTTP ${res.status}（表不在）` };
+    }
+    return { known: false, exists: true, detail: `HTTP ${res.status} ${body.slice(0, 80)}（按「表在」处理）` };
+  } catch (e) {
+    return { known: false, exists: true, detail: `探测异常：${String(e).slice(0, 80)}（按「表在」处理）` };
+  }
+}
 
 /* ---------------------------------------------------------------------------
    一、纯函数（不需要服务）
@@ -139,16 +175,22 @@ record("（准备）拿到会员会话", !!vipCookie);
    二、接口
    --------------------------------------------------------------------------- */
 let tableReady = false;
+let hasProfileRow = false;
 {
   const r = await fetch(`${BASE}/api/profile`);
   record("② 未登录访问 /api/profile → 401（资料是账号私有信息）", r.status === 401, `HTTP ${r.status}`);
 
   const r2 = await fetch(`${BASE}/api/profile`, { headers: { cookie: vipCookie } });
   const j2 = await r2.json().catch(() => null);
-  tableReady = !!(j2?.profile);
+  // ⚠️ 不要用 `!!j2.profile` 判断表建没建（见文件头）：表在但没填时也是 null。
+  //    这里直接问 PostgREST「表在不在」；表在但没资料 → 走「不写」分支。
+  const tableInfo = await detectProfileTable();
+  tableReady = tableInfo.exists;
+  hasProfileRow = !!(j2?.profile);
+  console.log(`[profile] 资料表探测：${tableInfo.detail}；本次账号有资料行=${hasProfileRow}`);
   record("★② /api/profile 会员可达；**表没建/没填时 profile=null 且 HTTP 200**（不是 500、不拦页面）",
     r2.status === 200 && j2?.ok === true && (j2.profile === null || typeof j2.profile === "object"),
-    `HTTP ${r2.status} profile=${JSON.stringify(j2?.profile)}`);
+    `HTTP ${r2.status} profile=${JSON.stringify(j2?.profile)}；表探测=${tableInfo.detail}`);
   record("② 资料接口**不缓存**（刚改完刷新就该看到）",
     String(r2.headers.get("cache-control") ?? "").includes("no-store"),
     String(r2.headers.get("cache-control")));
@@ -209,8 +251,8 @@ try {
   record("③ 「修改密码」入口没被挤掉（两个按钮并排）",
     card?.hasPwdLink === true, `href=/account/password 在=${card?.hasPwdLink}`);
   record("★③ 没填资料时账号卡**明确提示「还没填资料」并给补齐入口**（不是静悄悄什么都没有）",
-    !tableReady ? /还没填资料/.test(String(card?.body)) : true,
-    `表已建=${tableReady}；卡片文本：${String(card?.body ?? "").slice(0, 90)}`);
+    !hasProfileRow ? /还没填资料/.test(String(card?.body)) : true,
+    `有资料行=${hasProfileRow}；卡片文本：${String(card?.body ?? "").slice(0, 90)}`);
 
   // ---- 资料页：可填、可保存（表没建时提示点名迁移文件）----
   await goto("/account/profile", 4500);
@@ -231,7 +273,8 @@ try {
     JSON.stringify(pf?.options));
 
   if (!tableReady) {
-    // 表没建：填了提交 → 必须**点名迁移文件**（不能报"保存失败"让人反复重试）
+    // 只有**确认表不在**才走这里：提交一定会失败，不会写进任何数据。
+    // 必须点名迁移文件（不能报"保存失败"让人反复重试）。
     const saved = await ev(`(() => {
       const setV = (el, v) => { const d = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value');
         d.set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); };
@@ -249,7 +292,10 @@ try {
       /0021_user_profiles\.sql/.test(String(after)),
       (String(after).match(/资料表还没建[^。]*。?/) ?? ["<没找到提示>"])[0].slice(0, 120));
   } else {
-    record("③ 表已建：资料页可正常保存（本机已有资料时跳过写入，避免污染真实账号）", true, "表已建");
+    // ⚠️ 表已建就**不写**：这个套件无法删掉自己写进 user_profiles 的行（delete 只给 admin），
+    //    写一次就会让下一次跑出现假红（详见文件头「测试死结」）。
+    //    保存失败提示由「表不在」分支覆盖；真实保存由老师在实际页面使用。
+    record("③ 表已建：**不写真实账号**（避免污染；写进去就删不掉）", true, "表已建，跳过写入");
   }
 
   /* ---- ★★ 四、兜底：资料没填/表没建时，工具**不许导出空白** ---- */

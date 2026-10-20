@@ -205,12 +205,19 @@ try {
       return { label };
     })()`);
     record("③ 后台能点到「关掉这个功能」按钮", !clicked?.err, clicked?.err || clicked?.label);
-    await sleep(3000);
-    const afterToggle = await ev(`(() => {
-      const row = document.querySelector('[data-flag="company_export"]');
-      return { enabled: row ? row.getAttribute('data-flag-enabled') : null,
-               text: row ? row.innerText.replace(/\\s+/g, ' ').slice(0, 120) : null };
-    })()`);
+    // ⚠️ 时序：Server Action 先落库，后台页面要等 revalidate/重新渲染。
+    //    整套回归负载下 3 秒可能不够（2026-10 实测：单跑必过、全套偶发 enabled=1）。
+    //    改成短轮询，出现即停。
+    let afterToggle = null;
+    for (let i = 0; i < 20; i++) {
+      afterToggle = await ev(`(() => {
+        const row = document.querySelector('[data-flag="company_export"]');
+        return { enabled: row ? row.getAttribute('data-flag-enabled') : null,
+                 text: row ? row.innerText.replace(/\\s+/g, ' ').slice(0, 120) : null };
+      })()`);
+      if (afterToggle?.enabled === "0") break;
+      await sleep(500);
+    }
     record("③ 关掉后后台显示「已关闭」（库里真的改了）",
       afterToggle?.enabled === "0", JSON.stringify(afterToggle));
 
@@ -238,8 +245,12 @@ try {
       if (btn) btn.click();
       return btn ? btn.textContent.trim() : 'no-btn';
     })()`);
-    await sleep(3000);
-    const restored = await getHtml("/admin", adminCookie);
+    let restored = { html: "" };
+    for (let i = 0; i < 20; i++) {
+      await sleep(500);
+      restored = await getHtml("/admin", adminCookie);
+      if (/data-flag="company_export" data-flag-enabled="1"/.test(restored.html)) break;
+    }
     record("③ 再点一次能**打开**（状态回到已开启）",
       /data-flag="company_export" data-flag-enabled="1"/.test(restored.html), "enabled=1");
     await goto("/tools/paper-analysis", 4500);

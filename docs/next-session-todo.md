@@ -1,16 +1,22 @@
 # 下个会话待办
 
-> **当前状态一句话**（2026-10 第二十批结束时）：
-> 全站 **39 个套件 / 1267 项断言全绿**（明细见第八节）；
+> **当前状态一句话**（2026-10-20，测试死结修复 + 新注册送 15 天会员）：
+> 全站 **48 个套件 / 1703 项断言全绿**（2026-10-20 实测）。
+> 任务一：47 套；修复前 1690/1692，两条红都是**测试自身的死结**，已修；
+> `profile` 正常态 **31/31**、`admin-grant90` **18/18** ⇒ 任务一修完 **1691/1691**。
+> 任务二新增 `signup-trial-vip` **12 项** ⇒ **48 套 / 1703 项**。明细见第七节）。
 > 最近三批上线了 **🗂 学员档案三格（年级/学校/学管师）**、**👤 教师个人资料**（姓名/学科/校区 +
 > 注册后引导 + 「修改信息」+ **导入导出都从它取、清掉 13 处写死的作者名**）、
 > **🧑💼 管理后台看姓名与校区**（UUID 隐藏）。
-> ⚠️ **待你跑一次迁移 `0021_user_profiles.sql`**（只建一张新表；不跑也安全，走兜底）。
+> ✅ 迁移 `0021_user_profiles.sql` 与 `0022_seed_plan_generator_tool.sql` **都已执行**
+> （资料能保存、目录里已有「辅导方案生成器（全学科）」卡片）。
+> 🟢 新功能「**新注册用户自动送 15 天会员**」的迁移 `0023_auto_grant_vip.sql` **已执行并验证通过**
+> （用户 2026-10-20 跑了运行期自检，看到「自动获得 15 天会员」；详见 `docs/auto-trial-vip-plan.md`）。
 > 此前还有：**📥 档案页补录历史材料**、**🏢 公司模板导出 · 附件3**、
 > **🔁 识别失败只重试那一页 + 💸 重复润色先确认 + 🗑 学情报告可删**。
 > 公司模板导出的**附件3 已按用户 2026-10 的决定暂停**（见下面 1b 表 b 行）。
 >
-> 更新时间：**2026-10（第十八批：档案页补录历史材料）**。本文件只放**还没做的**；
+> 更新时间：**2026-10-20（测试死结修复 + 新注册送 15 天会员）**。本文件只放**还没做的**；
 > 已完成的全部在 `docs/project-overview.md` §十「✅ 最近已完成」（有细节、测试数与变异自证结论）。
 >
 > 配套阅读：`docs/project-overview.md`（现状总入口）、`docs/dsh-work-guide.md`（怎么配合 + 踩过的坑）、
@@ -25,9 +31,9 @@
 
 ## 一、🔴 现在最该做的三件
 
-### 0a. 🟢 **2026-10 线上验收的 4 个问题已修完**（停在 push 前等验收）
+### 0a. 🟢 **2026-10 线上验收的 4 个问题已修完**（已 push：`ac8b9c9`）
 
-> 用户线上试用后报了 4 件事，都改完了，**325+ 项测试全绿**（含 2 条新的变异自证）。
+> 用户线上试用后报了 4 件事，都改完了，**384 项测试全绿**（含 2 条新的变异自证）。
 > 明细见 `docs/plan-generator-plan.md` §17 与本文档 §0b。
 
 | # | 用户报的 | 改成什么 | 怎么验 |
@@ -41,15 +47,16 @@
 > 原因是用户交代过"math-plan 一个字不动"，而单位是写在同一份公司引擎里的。
 > 引擎已加可选参数 `hoursUnit`（默认仍「小时」），**要让数学版也改成「课时」，改一行即可**，等用户点头。
 
-### 0b. 🟢 **通用「辅导方案生成器」收尾三件**（代码已完成，**停在 push 前等你验收**）
+### 0b. 🟢 **通用「辅导方案生成器」收尾两件**（代码已完成；`0022` 已执行）
 
-> 工具代码、测试、文档都做完了（319 项测试全绿）。剩下三件**必须由你来做**：
+> 工具代码、测试、文档都做完了（**384 项**测试全绿）。
+> ✅ 迁移 `0022` 已执行：`/tools` 里已有「辅导方案生成器（全学科）」卡片。
+> 剩下两件**必须由你来做**：
 
 | # | 做什么 | 怎么验 |
 |---|---|---|
-| 1 | **在 Supabase 跑 `supabase/migrations/0022_seed_plan_generator_tool.sql`**（幂等，1 分钟） | 跑完 `/tools` 里应多出「辅导方案生成器（全学科）」卡片；**不跑的话工具页仍可直接访问**（`/tools/plan-generator/index.html`），只是目录里没卡片 |
-| 2 | **用 Word 打开两份导出件目测排版**：`.tmp-planning-samples\plangen-ui-out\ui-word.docx`（本工具模板）与 `ui-company3.docx`（公司附件3） | ⚠️ 本机**没有 LibreOffice**，所以我只能验"结构完好 + 格式零件等价"，**排版效果只有你能看**。看：表格线/行高/长文本换行/字号 |
-| 3 | **拿物理老师的模块名单反馈**（`docs/physics-module-list-draft.md` 可直接转发） | 老师改完只动 `subjects/physics-senior.js` / `physics-junior.js`（**代码不动**），改完我这边跑科目包测试即可 |
+| 1 | **用 Word 打开两份导出件目测排版**：`.tmp-planning-samples\plangen-ui-out\ui-word.docx`（本工具模板）与 `ui-company3.docx`（公司附件3） | ⚠️ 本机**没有 LibreOffice**，所以我只能验"结构完好 + 格式零件等价"，**排版效果只有你能看**。看：表格线/行高/长文本换行/字号 |
+| 2 | **拿物理老师的模块名单反馈**（`docs/physics-module-list-draft.md` 可直接转发） | 老师改完只动 `subjects/physics-senior.js` / `physics-junior.js`（**代码不动**），改完我这边跑科目包测试即可 |
 
 > ⚠️ **`plan-generator` 与 `math-plan` 是两个独立工具**：`math-plan` 本轮**一个字节都没动**（已核 `git diff` 为空）。
 > ⚠️ **将来要办的一件事**（已记在 `docs/plan-generator-plan.md` §6）：新工具存档案时 `tool` 仍写 `'math-plan'`（零迁移口径）；
@@ -63,7 +70,7 @@
 
 | 要试的 | 看什么 | 发现不对时我调的旋钮 |
 |---|---|---|
-| 🧩 **通用辅导方案生成器**（新，`/tools/plan-generator`，**先跑迁移 `0022`**） | 生成出来的模块表是否合用；**AI 写的教学目标像不像物理老师说的话**（这是用户最关心的一条）；导出附件3 与 Word 模板的排版 | 提示词在 `src/app/api/plan-generator/ai/prompts.ts`（措辞规则 / 真实样例 few-shot / 量化指标表）；模块名单在 `subjects/physics-*.js`（**改数据不改代码**） |
+| 🧩 **通用辅导方案生成器**（新，`/tools/plan-generator`，`0022` 已执行） | 生成出来的模块表是否合用；**AI 写的教学目标像不像物理老师说的话**（这是用户最关心的一条）；导出附件3 与 Word 模板的排版 | 提示词在 `src/app/api/plan-generator/ai/prompts.ts`（措辞规则 / 真实样例 few-shot / 量化指标表）；模块名单在 `subjects/physics-*.js`（**改数据不改代码**） |
 | 🏢 **公司模板导出**（附件1/2，试卷分析「③ 生成报告」页下面） | 用 **Word 打开导出的 docx**：格式与公司模板是否一致（表格线/合并格/字号）、抬头数据对不对、**该留空的（三段措施、签字栏）是不是真留空**、语文样例有没有漏出来 | 引擎按标签定位，格式走形或样例漏出都是 bug |
 | 🏫 **学校卷子**：空白卷照片、批改卷照片、扫描版 PDF 各一份 | 题型判得准不准（多选 vs 单选最容易错）、知识点写得对不对、**批改卷的红笔得分读不读得出** | 提示词；渲染分辨率 `VISION_MAX_SIDE` 1600 → 2200（更清楚，更慢更贵） |
 | 📷 **学科网报告**：截图 / 扫描版 PDF | 抄录是否**逐字忠实**（有没有自己改写、漏行）、表格有没有串行 | 同上 |
@@ -74,7 +81,7 @@
 
 ### 1b. ✅ 已拍板 / ⏳ 等触发的事
 
-> 🔴 **需要你在 Supabase 做一次（3 件，都是点几下）**：
+> 🔴 **需要你在 Supabase 做一次（下面逐条；已完成的不再算）**：
 > 1. ~~**执行 `supabase/migrations/0018_feature_flags.sql`**~~ —— ✅ **用户 2026-10 已执行**
 >    （实测：`admin-feature-flags` 已走**分支 B**，18/18 全绿，真测"关掉/打开"生效）。
 > 2. ~~**执行 `supabase/migrations/0019_history_tool_allow_manual.sql`**~~ —— ✅ **用户 2026-10 已执行**
@@ -86,11 +93,14 @@
 >    另外**上线后请自己点一遍**"修改密码"和"忘记密码"各一次 —— 自动测试**故意没有真改密码**
 >    （怕把共享测试账号留在未知密码上，导致后续所有套件一起红）。详见 `docs/password-reset-plan.md`。
 >
-> 🟢 **请执行 `supabase/migrations/0021_user_profiles.sql`**（**第二十批**）
-> —— 建教师**个人资料**表（姓名/学科/校区/落款）。
-> **不跑也安全**：资料读不到时一切走兜底（落款留空给老师填、导出给下划线），功能照常；
-> 只有"保存资料"那一下会提示去跑这个迁移。**跑完之后**：注册后的引导页、首页「修改信息」、
-> 落款自动带出、后台用户列表显示姓名/校区 就全部生效（**不用改代码、不用重新部署**）。
+> 🟢 **`supabase/migrations/0021_user_profiles.sql` 已执行**（**第二十批**）
+> —— 教师**个人资料**表（姓名/学科/校区/落款）已建好（2026-10-20 实测：保存资料能成功、能读回）。
+> 注册后的引导页、首页「修改信息」、落款自动带出、后台用户列表显示姓名/校区 都已生效。
+>
+> ✅ **`supabase/migrations/0023_auto_grant_vip.sql` 已执行并验证通过**（**2026-10-20 新功能**）
+> —— 新注册用户**自动送 15 天会员**（数据库触发器，注册即生效，不依赖前端）。
+> 用户已跑运行期自检，看到「自动获得 15 天会员」。
+> ⚠️ 它**不回溯**给已注册的老用户，只对“执行这条 SQL 之后新注册的人”生效。
 >
 > 🟢 **可选：执行 `supabase/migrations/0020_feature_flag_backfill.sql`**（**第十八批**）
 > —— 给「补录历史材料」补一条**功能开关**种子（新 key `backfill_materials`）。
@@ -222,6 +232,7 @@
 | `/tools` 改个人中心 + 百宝箱改「学员档案管理」 | 已上线（含"勾了才提交""删除连带记录"） |
 | 阶段 3 / 阶段 4：两个工具接入统一学生 API | 已上线（`/api/students`，合并语义 + `extra` jsonb）· 迁移 `0016` 已执行 |
 | `feedback.html`「下载 10 秒」 | **根因是用户电脑上的代理软件（狮子云 `127.0.0.1:7890`）把流量绕出去了**，不是服务端问题（服务器只用 411ms）。✅ 用户**已把 `010034.xyz` 加进直连名单** ⇒ **已彻底结案，不必再提**。判断口径以后照用：凡是"某文件下载慢但服务端首字节很快"，先看 HAR 里 `serverIPAddress` 是不是 `127.0.0.1`。分析脚本：`tests/_analyze-har.mjs` |
+| 测试死结（2026-10-20） | `profile` 用「`profile=null`」推断「表没建」→ 误走提交分支、把假资料写回，清一次只能好一轮；`admin-grant90` 在提示出现前就读（提示 0.8 秒后才出现、5 秒后消失）。**已修**：直接探测表 + 表在时不写；提示改短轮询。详见 `docs/dsh-work-guide.md` 坑 23。 |
 
 ---
 
@@ -235,12 +246,15 @@
 | 跑测试 | `C:\Users\郭庆杰\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe tests\<套件>`；**先 `next build`** |
 | 推送 | 先 `git push origin main`；若 `github.com:443` 不通（会超时 300 秒），用 `node scripts\push-via-api.mjs`（它会打印 `git update-ref` 对齐命令） |
 | 四份文档 | `project-overview.md`（总入口）· `dsh-work-guide.md`（怎么配合 + 踩坑）· `perf-notes.md`（性能）· 本文件（待办） |
-| ⚠️ 测试环境坑（2026-10 新增） | **`profile` 套件会因为你机器上"测试账号已存过资料"而假红 2 条**（`stuTeacher="数学测试老师老师"` / `brandWho="数学"`）。根因是 `user_profiles` 里 `roleb` 那行残留（第二十批测试在"表没建"分支提交时写的），而试卷分析页会把资料填进教师框。`resolveSignature()` = 学科+姓名+"老师" ⇒ 正好是这个串。**anon 删不掉**（delete 策略只给 admin）⇒ 要在 Supabase 控制台用 service_role 删，或**换一对新测试账号**。详见 `tests/profile.test.mjs` 顶部注释。 |
+| ⚠️ 测试环境坑（2026-10 已修） | **`profile` 的两条假红不是环境问题，是套件的「测试死结」**：旧版用 `/api/profile` 有没有资料来判断「`user_profiles` 表建没建」，而「表没建」与「表建了但没填」都返回 `null`。清理账号后套件误判没建 → 提交表单 → 把「测试老师」写回去 → 下次跑又红。**2026-10 已修**：直接探测表（200/PGRST205），表在但没资料时**不写**。详见 `tests/profile.test.mjs` 顶部与 `docs/test-data-cleanup.md`。 |
 | ⚠️ 回归怎么跑（2026-10 新增） | **一次只跑一个 runner**。`paper-analysis` 等套件**需要外面先起好服务**，单独跑会干等 ⇒ 别用"一把梭"的批量 runner 跑全套，按 `tests/_run-ui-suites.mjs` 的名单分两批（需要外部服务的 / 自己起服务的）。`plan-generator-ui` 与 `plan-generator-ai` 已登记进那个 runner。 |
 
-**全套回归现状（2026-10 第二十批实测：38 个 `*.test.mjs` + `verify-checklist.mjs` = 39 套，全绿 ✅）**：
+**全套回归现状（2026-10-20 实测：47 个 `*.test.mjs` + `verify-checklist.mjs` = 48 套，全绿）**：
 
-- **全部 39 套本轮都亲跑过**，下面是**实测值**（不是照抄旧表）；合计 **1267 项断言**：
+- **48 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1703 项断言**。
+- 任务一修复前 **1690/1692**；两条红都是**测试自身的死结**（`profile` 31/32、`admin-grant90` 17/18），
+  已修。修完后 **1691/1691**（`profile` 正常态 **31/31**、`admin-grant90` 18/18）。
+- 任务二新增 `signup-trial-vip`（**12 项**，纯静态契约）⇒ **48 套 / 1703 项**。
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -254,12 +268,22 @@ paper-attribution-polish 42/42
 vision-paper 41/41
 school-paper 43/43
 feedback-data-cache 26/26  feedback-client-cache 51/51
-students-unified 81/81     date-input 15/15           admin-grant90 18/18
-archive-students 36/36     vision-scores 15/15
-manual-score 45/45         student-report 45/45       password-flows 42/42
-student-analysis 21/21     company-export 74/74       backfill 39/39
-admin-feature-flags 25/25  profile 32/32
+students-unified 91/91     date-input 15/15           admin-grant90 18/18
+archive-students 37/37     vision-scores 15/15
+manual-score 45/45         student-report 48/48       password-flows 42/42
+student-analysis 21/21     company-export 77/77       backfill 43/43
+admin-feature-flags 25/25  profile 31/31
+plan-generator-engine 45/45   plan-generator-subjects 68/68   plan-generator-subjects-new 56/56
+plan-generator-docx 20/20     plan-generator-template 22/22   plan-generator-company 29/29
+plan-generator-archive 40/40  plan-generator-ai-client 36/36  plan-generator-ui 27/27
+plan-generator-ai 41/41
+signup-trial-vip 12/12（2026-10-20 任务二新增：0023 触发器静态契约）
 ```
+
+> ⚠️ **两条红都修在测试侧，产品代码一行没改**：
+> · `profile`：不再用「profile=null」推断「表没建」，改为直接探测表；表在但没资料时**不写**。
+> · `admin-grant90`：数据库先变、提示后出现（约 0.8 秒）、5 秒后自动消失 ⇒ 改成**短轮询**。
+> 详见 `docs/dsh-work-guide.md` **坑 23**。
 
 > ⚠️ **一个反复踩到的坑（本轮踩了两次）**：`password-flows` 与 `admin-grant90` 在**与别的 runner 并行**
 > 时会假红（都是"计时/提示文案"类断言）。**它们的数字以单独跑为准**（上面已是单独跑的实测值 42/42、18/18）。
@@ -267,11 +291,14 @@ admin-feature-flags 25/25  profile 32/32
 > 用 `Select-String "0/0"` 之类粗筛会**误判成某套件"0 项通过"**。判断结果请认 `=== SUMMARY ===` 后面那行或 exit code。
 
 > ⚠️ **本轮的两个新认识（都写进实际文档了）**：
-> 1. **`student-report` 实际是 45 项**（旧文档写 37，是"加断言时忘了改"的漂移）——
->    这正是坑 1 说的那类问题：**以实跑为准，别照抄旧表**；
-> 2. **`_run-ui-suites.mjs` 的清单已经落后**：它只列了 6 套需要外部服务的 + `ai-thinking-mode`，
->    而"自己起服务"的套件早就有 28 套（见上一节）。**要跑全套就得按那串名单一套一套来**，
->    别以为跑完那个脚本就等于全套回归。
+> 1. **`student-report` 实际是 48 项**（旧文档写 45，是"加断言时忘了改"的漂移）——
+>    这正是坑 1 说的那类问题：**以实跑为准，别照抄旧表**；同理
+>    `archive-students` 37、`company-export` 77、`plan-generator-engine` 45、
+>    `plan-generator-ui` 27、`plan-generator-ai` 41 也都更新了；
+> 2. **`_run-ui-suites.mjs` 的清单仍然落后**：它只列了需要外部服务的几套，
+>    而"自己起服务"的套件早就有 30 套。**要跑全套就得按那串名单一套一套来**，
+>    别以为跑完那个脚本就等于全套回归；`plan-generator` 那 **10 套**（engine / subjects /
+>    subjects-new / docx / template / company / archive / ai-client / ui / ai）也必须算进去。
 
 > ⚠️ **以「刚跑完的那一次」为准，别照抄旧值**。第一批实测时就发现旧表有几处**过期或漏项**：> `math-plan-students` 实际是 **37**（旧表写 29）、`students-unified` 曾经写 62 而实际 64，
 > 而且**整个 `archive-students`（17 项）被漏掉了**。这正是 `dsh-work-guide.md` 坑 1 说的那类问题。

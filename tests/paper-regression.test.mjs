@@ -44,7 +44,7 @@ const srv = spawn("C:\\Users\\郭庆杰\\.dsh\\dsh-runtimes\\dsh-primary-runtime
   [`${PROJECT}/node_modules/next/dist/bin/next`, "start", "-p", "3000"], { cwd: PROJECT, stdio: "ignore" });
 for (let i = 0; i < 60; i++) { await sleep(500); try { if ((await fetch(`${BASE}/login`)).status === 200) break; } catch {} }
 
-const edge = spawn(EDGE, ["--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${USER_DATA}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
+const edge = spawn(EDGE, ["--headless=new", "--disable-extensions", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${USER_DATA}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
 let cdp;
 for (let i = 0; i < 40; i++) { await sleep(500); try { cdp = await connect(); break; } catch {} }
 const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });

@@ -376,17 +376,24 @@ try {
     }
     record("④ 提交后页面显示成功提示", okMsg !== "", okMsg || "30 次轮询都没等到提示");
 
-    await sleep(1500);   // 等 router.refresh() 把服务端渲染的新记录拉回来
-    // ⚠️ 同上：查**表格行**，不要拼 `90/150`（页面渲染是 `90` + ` / 150`，中间有空格 ⇒ 会假红）
-    const listed = await ev(`(() => {
-      const t = document.body.innerText;
-      const table = document.body.innerHTML.slice(document.body.innerHTML.indexOf('成绩趋势'));
-      const rows = table.match(/<tr[\\s\\S]*?<\\/tr>/g) || [];
-      const cells = rows.map((r) => (r.match(/<t[dh][\\s\\S]*?<\\/t[dh]>/g) || [])
-        .map((c) => c.replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim()));
-      const row = cells.find((c) => c.some((x) => x.includes('浏览器补录')));
-      return { title: t.includes('浏览器补录·月考'), row: row || null };
-    })()`);
+    // ⚠️ 时序：Server Action 写库 + router.refresh() 把服务端渲染拉回来需要时间；
+    //    整套回归负载下固定等 1.5 秒可能不够（2026-10 实测：单跑必过、全套偶发 row=null）。
+    //    改成短轮询，出现即停。
+    let listed = null;
+    for (let i = 0; i < 30; i++) {
+      listed = await ev(`(() => {
+        const t = document.body.innerText;
+        const table = document.body.innerHTML.slice(document.body.innerHTML.indexOf('成绩趋势'));
+        const rows = table.match(/<tr[\\s\\S]*?<\\/tr>/g) || [];
+        const cells = rows.map((r) => (r.match(/<t[dh][\\s\\S]*?<\\/t[dh]>/g) || [])
+          .map((c) => c.replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim()));
+        const row = cells.find((c) => c.some((x) => x.includes('浏览器补录')));
+        return { title: t.includes('浏览器补录·月考'), row: row || null };
+      })()`);
+      if (listed?.title === true && Array.isArray(listed?.row) &&
+          listed.row.includes("90 / 150") && listed.row.includes("60%")) break;
+      await sleep(500);
+    }
     record("④ 刷新后记录出现在成绩趋势里，且该行是 90 / 150 与 60%",
       listed?.title === true && Array.isArray(listed?.row) &&
         listed.row.includes("90 / 150") && listed.row.includes("60%"),

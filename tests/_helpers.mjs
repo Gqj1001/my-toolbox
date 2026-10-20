@@ -79,7 +79,7 @@ export async function startServer() {
 /** 启动无头 Edge + 打开一个 target，返回 { cdp, sessionId, edge } */
 export async function startBrowser(port, profile) {
   const edge = spawn(EDGE, [
-    "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
+    "--headless=new", "--disable-extensions", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
     "--no-first-run", "--no-default-browser-check", "about:blank",
   ], { stdio: "ignore" });
   let cdp = null;
