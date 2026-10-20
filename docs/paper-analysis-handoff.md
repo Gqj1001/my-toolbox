@@ -110,8 +110,17 @@ src/lib/tools-db.ts                                   resolveIframeSrc 支持目
 src/components/tool-page-shell.tsx                    工具页公共外壳（未改，复用）
 public/tools/paper-analysis/index.html                工具本体页面
 public/tools/paper-analysis/js/app.js                 工具主逻辑（含 NEXT_HOST/API_BASE）
-public/tools/paper-analysis/js/paper-parser.js         试卷解析
-public/tools/paper-analysis/js/error-engine.js         归因引擎
+public/tools/paper-analysis/js/core/paper-parser.js    试卷解析（核心；老/新工具共用）
+public/tools/paper-analysis/js/core/error-engine.js    归因引擎（核心）
+public/tools/paper-analysis/js/core/knowledge-classifier.js  数学考点归类（核心，老工具默认）
+public/tools/paper-analysis/js/core/kp-dict.js         数学知识点词典（核心）
+public/tools/paper-analysis/js/core/narrator.js        报告叙事（核心）
+public/tools/paper-analysis/js/core/subject-engine.js  全学科通用解析/算分/归类（v2 用）
+public/tools/paper-analysis-v2/index.html              全学科版界面壳（v2）
+public/tools/paper-analysis-v2/js/app.js               v2 主逻辑（调用 core + 科目包）
+public/tools/paper-analysis-v2/subjects/*.js           8 份科目包（数/理/英/语 × 初高中）
+src/app/api/paper-analysis-v2/ai/route.ts              v2 AI（题干摘要/附件1归因，VIP）
+src/app/tools/paper-analysis-v2/page.tsx               v2 包装页
 public/tools/paper-analysis/js/report-template.js      模板化 Word 导出
 public/tools/paper-analysis/js/template-data.js        模板 base64 内嵌（binary）
 public/tools/paper-analysis/js/report-docx.js          Word 导出兜底渲染器

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>全学科试卷分析工作台</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="v2Disabled" class="disabled hidden">
+  <div class="disabled-card">
+    <h2>该功能暂时关闭</h2>
+    <p>管理员暂时关闭了「全学科试卷分析」。原有的数学版试卷分析仍可正常使用。</p>
+    <p><a href="/tools/paper-analysis">前往数学版试卷分析 →</a></p>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <strong>全学科试卷分析工作台</strong>
+    <span class="ver">v2 · 数学 / 物理 / 英语 / 语文</span>
+  </div>
+  <div class="pickers">
+    <label>学科
+      <select id="v2Subject"></select>
+    </label>
+    <label>学段
+      <select id="v2Stage"></select>
+    </label>
+    <label>年级
+      <select id="v2Grade"></select>
+    </label>
+    <label>满分
+      <input id="v2FullScore" type="number" min="1" step="1" value="150">
+    </label>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card">
+    <div class="card-head">
+      <h2>① 试卷来源</h2>
+      <span class="hint">学科网报告粘贴/上传优先；拍照识别作兜底</span>
+    </div>
+    <textarea id="v2Text" rows="9" placeholder="把学科网「试卷分析报告」全文粘贴到这里（试卷题型 / 细目表 / 知识点分析）…"></textarea>
+    <div class="row wrap-row">
+      <input id="v2File" type="file" accept=".txt,.docx,.doc,.pdf,image/*" multiple>
+      <button id="v2Parse" class="primary">解析报告</button>
+      <button id="v2Demo" class="ghost">填入示例</button>
+      <span id="v2Status" class="status"></span>
+    </div>
+    <div id="v2Warnings" class="warnings"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>② 试卷与学生信息</h2>
+      <span class="hint">附件1/2 的抬头只填一次</span>
+    </div>
+    <div class="grid">
+      <label>学生姓名<input id="v2Student" placeholder="如 张三"></label>
+      <label>学校<input id="v2School" placeholder="如 三河一中"></label>
+      <label>任课教师<input id="v2Teacher" placeholder="如 王老师"></label>
+      <label>考试类型
+        <select id="v2ExamType">
+          <option value="">请选择</option>
+          <option>校考</option><option>月考</option><option>期中</option><option>期末</option><option>内部考</option>
+        </select>
+      </label>
+      <label>入学成绩<input id="v2EntryScore" placeholder="如 90"></label>
+      <label>入学排名<input id="v2EntryRank" placeholder="如 500"></label>
+      <label>本次排名<input id="v2CurrentRank" placeholder="如 12"></label>
+      <label>已学课时<input id="v2LearnedHours" placeholder="如 10"></label>
+      <label>单科总课时<input id="v2TotalHours" placeholder="如 40"></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>③ 题型与分值</h2>
+      <span class="hint">按科目包的分值惯例自动铺；可逐题改
+        <label style="margin-left:8px">卷面预设 <select id="v2Preset"></select></label>
+      </span>
+    </div>
+    <div class="table-wrap">
+      <table class="table" id="v2Blocks">
+        <thead><tr><th>题型</th><th>题数</th><th>每题</th><th>合计</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div id="v2ScoreLine" class="scoreline"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>④ 逐题录分与考点</h2>
+      <span class="hint">考点来源：导入 / AI / 老师；老师改过即锁定</span>
+    </div>
+    <div class="row wrap-row">
+      <button id="v2ReasonBtn" class="ghost">生成错因</button>
+      <button id="v2StemBtn" class="ghost">AI 题干摘要（错题）</button>
+      <button id="v2AttrBtn" class="ghost">AI 附件1 归因初稿</button>
+      <span id="v2AiStatus" class="status"></span>
+    </div>
+    <div class="row wrap-row">
+      <input id="v2StemName" placeholder="共享材料名（如：现代文阅读·材料一）" style="min-width:260px">
+      <input id="v2StemNos" placeholder="题号，逗号分隔（如 1,2,3）" style="min-width:180px">
+      <button id="v2AddStem" class="ghost">加共享材料</button>
+      <span id="v2StemList" class="hint"></span>
+    </div>
+    <div class="table-wrap tall">
+      <table class="table" id="v2Questions">
+        <thead>
+          <tr>
+            <th>题号</th><th>题型</th><th>满分</th><th>得分</th><th>考点（逗号分隔）</th><th>题干摘要</th><th>错因</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>⑤ 附件1 归因与措施</h2>
+      <span class="hint">AI 初稿必须老师改过再导出</span>
+    </div>
+    <div class="grid two">
+      <label>学生角度<textarea data-attr="学生角度" rows="3"></textarea></label>
+      <label>教师角度<textarea data-attr="教师角度" rows="3"></textarea></label>
+      <label>其它原因<textarea data-attr="其它原因" rows="3"></textarea></label>
+      <label>教师教学<textarea data-measure="教师教学" rows="3"></textarea></label>
+      <label>学生配合<textarea data-measure="学生配合" rows="3"></textarea></label>
+      <label>家长配合<textarea data-measure="家长配合" rows="3"></textarea></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>⑥ 导出公司附件</h2>
+      <span class="hint">一次录入，三档导出</span>
+    </div>
+    <div class="row wrap-row">
+      <button id="v2Export1" class="primary">导出附件1</button>
+      <button id="v2Export2" class="primary">导出附件2</button>
+      <button id="v2ExportBoth" class="ghost">两份一起（两次下载）</button>
+      <span id="v2ExportHint" class="status"></span>
+    </div>
+  </section>
+</main>
+
+<script src="../paper-analysis/js/core/kp-dict.js"></script>
+<script src="../paper-analysis/js/core/knowledge-classifier.js"></script>
+<script src="../paper-analysis/js/core/error-engine.js"></script>
+<script src="../paper-analysis/js/core/subject-engine.js"></script>
+<script src="../paper-analysis/js/docx-builder.js"></script>
+<script src="../company-template/template-data.js"></script>
+<script src="../company-template/company-docx.js"></script>
+<script src="subjects/manifest.js"></script>
+<script src="subjects/math.js"></script>
+<script src="subjects/physics.js"></script>
+<script src="subjects/english.js"></script>
+<script src="subjects/chinese.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

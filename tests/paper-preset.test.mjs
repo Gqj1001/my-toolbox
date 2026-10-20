@@ -20,7 +20,7 @@ import { createRequire } from "node:module";
 import { makeRecorder } from "./_helpers.mjs";
 
 const require = createRequire(import.meta.url);
-const SRC = "D:/my-website/my-toolbox/public/tools/paper-analysis/js/paper-parser.js";
+const SRC = "D:/my-website/my-toolbox/public/tools/paper-analysis/js/core/paper-parser.js";
 const { record, summary } = makeRecorder();
 
 /**

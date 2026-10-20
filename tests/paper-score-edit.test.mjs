@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PaperParser = require(join(ROOT, "public/tools/paper-analysis/js/paper-parser.js"));
+const PaperParser = require(join(ROOT, "public/tools/paper-analysis/js/core/paper-parser.js"));
 
 const results = [];
 const eq = (name, got, want) => {

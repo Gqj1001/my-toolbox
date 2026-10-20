@@ -14,11 +14,12 @@ import { inflateRawSync } from "node:zlib";
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const JS = join(ROOT, "public/tools/paper-analysis/js");
+const CORE = join(JS, "core");
 
-const PaperParser = require(join(JS, "paper-parser.js"));
-const Narrator = require(join(JS, "narrator.js"));
-const ErrorEngine = require(join(JS, "error-engine.js"));
-const KnowledgeClassifier = require(join(JS, "knowledge-classifier.js"));
+const PaperParser = require(join(CORE, "paper-parser.js"));
+const Narrator = require(join(CORE, "narrator.js"));
+const ErrorEngine = require(join(CORE, "error-engine.js"));
+const KnowledgeClassifier = require(join(CORE, "knowledge-classifier.js"));
 const ReportTemplate = require(join(JS, "report-template.js"));
 const TemplateData = require(join(JS, "template-data.js"));
 const ReportDocx = require(join(JS, "report-docx.js"));

@@ -56,6 +56,14 @@ export const FEATURE_FLAG_REGISTRY: FeatureFlagSpec[] = [
     // 不是工具 iframe ⇒ 不用服务端拼 iframe 参数；由页面自己读
     tools: [],
   },
+  {
+    // ★ 2026-10 全学科试卷分析（v2）：初版功能，按约定必须能一键关掉。
+    key: "paper_analysis_v2",
+    label: "全学科试卷分析（v2）",
+    note: "新的全学科试卷分析工作台（/tools/paper-analysis-v2）。关掉后工具页显示「该功能暂时关闭」，老的数学版 /tools/paper-analysis 完全不受影响。",
+    param: "nopaperv2",
+    tools: ["paper-analysis-v2"],
+  },
 ];
 
 /**
