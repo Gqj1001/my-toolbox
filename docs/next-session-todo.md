@@ -1,11 +1,12 @@
 # 下个会话待办
 
-> **当前状态一句话**（2026-10-21，测试死结 + 送会员 + 全学科试卷分析 v2）：
-> 全站 **51 个套件 / 1742 项断言全绿**（2026-10-21 实测）。
-> 任务一：47 套；修复前 **1690/1692**，两条红都是**测试自身的死结**，已修；
-> `profile` 正常态 **31/31**、`admin-grant90` **18/18** ⇒ 任务一 **1691/1691**。
-> 任务二 `signup-trial-vip` **12 项**；2026-10-21 v2 新增 3 套 **39 项**
-> （core 17 / AI 契约 10 / 真浏览器 12）⇒ **51 套 / 1742 项**。明细见第七节）。
+> **当前状态一句话**（2026-10-23，学情分析 AI 升级 + 档案体验优化）：
+> 全站 **51 个套件 / 1760 项断言全绿**（2026-10-23 实测）。
+> 2026-10-23 本批：学情分析新增**学习进度 / 分数目标对比 / 针对性提升方案**，提示词升级为
+> “像老教师一样推理”六段式；档案列表**不再显示补录日期**、**课后反馈默认折叠 3 条**；
+> 补录 AI 会**从正文抽日期**；后台用户列表**外层容器加高**。
+> 此前：任务一 47 套（修复前 1690/1692 → 1691/1691）；`signup-trial-vip` 12 项；
+> v2 三套 39 项。测试明细见第七节。
 > 最近三批上线了 **🗂 学员档案三格（年级/学校/学管师）**、**👤 教师个人资料**（姓名/学科/校区 +
 > 注册后引导 + 「修改信息」+ **导入导出都从它取、清掉 13 处写死的作者名**）、
 > **🧑💼 管理后台看姓名与校区**（UUID 隐藏）。
@@ -77,6 +78,22 @@
 
 > **下一期（明确没做）**：v2 暂不写学员档案；要像老工具一样「存入档案/进学情分析」，
 > 需要把 v2 的 paper/records 接到 `/api/students`（先问用户口径）。
+
+### 0d. 🟠 **学情分析 AI 升级（2026-10-23）：待真实报告验收**
+
+> 已上线：六段式报告（整体学情/学习进度/分数目标对比/优势/薄弱与原因/针对性提升方案）；
+> 免费统计也新增「学习进度」「分数目标对比」两节。代码/提示词都改了，**真实效果要老师拿一份
+> 有方案+多次反馈+多次考试的学生档案生成一次**。
+
+| 看什么 | 不对时改哪 |
+|---|---|
+| 「学习进度」是否按时间轴说清“学到哪/复习到哪”，并对照方案第几条 | `src/lib/student-report.ts` 的 `parseFeedbackProgress` / `parsePlanLessons` / 文本相似度匹配 |
+| 「分数目标对比」是否算对差距与提升速度；没目标分时是否明说无法对比 | `parsePlanTarget` / target 计算 |
+| 「针对性提升方案」是否分点、有动作/验收标准，而不是空话 | `src/app/api/students/analysis/route.ts` 的 `SYSTEM_PROMPT` |
+| 报告是否在“推理”而不是罗列数据 | 同上（提示词第 6 条） |
+
+> ⚠️ 学习进度是**按材料对照**的：反馈正文最好保留【课堂内容】/【下节课内容】标记；
+> 匹配不上会明说“方案可能已调整”，不要硬说按计划。
 
 ### 1. 🟠 拿**真实素材**验收 AI 识别类功能（半天）
 
@@ -270,12 +287,12 @@
 | ⚠️ 测试环境坑（2026-10 已修） | **`profile` 的两条假红不是环境问题，是套件的「测试死结」**：旧版用 `/api/profile` 有没有资料来判断「`user_profiles` 表建没建」，而「表没建」与「表建了但没填」都返回 `null`。清理账号后套件误判没建 → 提交表单 → 把「测试老师」写回去 → 下次跑又红。**2026-10 已修**：直接探测表（200/PGRST205），表在但没资料时**不写**。详见 `tests/profile.test.mjs` 顶部与 `docs/test-data-cleanup.md`。 |
 | ⚠️ 回归怎么跑（2026-10 新增） | **一次只跑一个 runner**。`paper-analysis` 等套件**需要外面先起好服务**，单独跑会干等 ⇒ 别用"一把梭"的批量 runner 跑全套，按 `tests/_run-ui-suites.mjs` 的名单分两批（需要外部服务的 / 自己起服务的）。`plan-generator-ui` 与 `plan-generator-ai` 已登记进那个 runner。 |
 
-**全套回归现状（2026-10-21 实测：50 个 `*.test.mjs` + `verify-checklist.mjs` = 51 套，全绿）**：
+**全套回归现状（2026-10-23 实测：50 个 `*.test.mjs` + `verify-checklist.mjs` = 51 套，全绿）**：
 
-- **51 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1742 项断言**。
+- **51 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1760 项断言**。
 - 任务一修复前 **1690/1692**；两条红都是**测试自身的死结**（`profile` 31/32、`admin-grant90` 17/18），
   已修。修完后 **1691/1691**（`profile` 正常态 **31/31**、`admin-grant90` 18/18）。
-- 任务二 `signup-trial-vip`（**12 项**）；2026-10-21 v2 新增 3 套 **39 项** ⇒ **51 套 / 1742 项**。
+- 2026-10-21 v2 三套 **39 项**；2026-10-23 学情/档案本批净增 **18 项** ⇒ **51 套 / 1760 项**。
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -290,10 +307,10 @@ vision-paper 41/41
 school-paper 43/43
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 91/91     date-input 15/15           admin-grant90 18/18
-archive-students 37/37     vision-scores 15/15
-manual-score 45/45         student-report 48/48       password-flows 42/42
-student-analysis 21/21     company-export 77/77       backfill 43/43
-admin-feature-flags 25/25  profile 31/31
+archive-students 43/43     vision-scores 15/15
+manual-score 45/45         student-report 54/54       password-flows 42/42
+student-analysis 24/24     company-export 77/77       backfill 45/45
+admin-feature-flags 26/26  profile 31/31
 plan-generator-engine 45/45   plan-generator-subjects 68/68   plan-generator-subjects-new 56/56
 plan-generator-docx 20/20     plan-generator-template 22/22   plan-generator-company 29/29
 plan-generator-archive 40/40  plan-generator-ai-client 36/36  plan-generator-ui 27/27

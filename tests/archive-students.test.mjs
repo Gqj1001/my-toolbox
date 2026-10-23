@@ -386,6 +386,63 @@ try {
       JSON.stringify({ grade: afterMgr.body?.student?.grade, campus: afterMgr.body?.student?.campus }));
   }
 
+  // ---- 5c. ★2026-10-23：课后反馈折叠 + 补录日期不显示 ----
+  {
+    const items = [1, 2, 3, 4].map((i) => ({
+      student_name: STU,
+      text: `【课堂内容】第 ${i} 次课\n【主要失分点】第 ${i} 个失分点`,
+      date: `2026-10-${10 + i}`,
+      tool: "feedback",
+      title: `课后反馈（补录 · 10月${10 + i}日）`,
+    }));
+    const seed = await api("/api/students", {
+      method: "POST",
+      body: JSON.stringify({ op: "import", items }),
+    });
+    record("（准备）造 4 条带「补录·日期」标题的课后反馈", seed.body?.inserted === 4, JSON.stringify(seed.body));
+    await goto(`/dashboard?name=${encodeURIComponent(STU)}`, 4500);
+    const folded = await inDoc(`
+      const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));
+      if(!sec) return { err: '没有课后反馈分组' };
+      const details = sec.querySelector(':scope > details');
+      return {
+        topLis: sec.querySelectorAll(':scope > ul > li').length,
+        foldedLis: details ? details.querySelectorAll('li').length : 0,
+        summary: details ? details.querySelector('summary')?.innerText || '' : '',
+        open: details ? details.open : null,
+        titles: [...sec.querySelectorAll('li')].map(li => (li.querySelector('span')?.textContent || '')).slice(0, 6),
+        hasBackfillText: /补录/.test(sec.innerText),
+        hasProgressSection: /学习进度/.test(document.body.innerText),
+        hasTargetSection: /分数目标对比/.test(document.body.innerText),
+      };
+    `);
+    record("★课后反馈默认只展示最近 3 条（第 4 条在折叠里）",
+      folded?.topLis === 3 && folded?.foldedLis === 1,
+      JSON.stringify(folded));
+    record("★折叠按钮文案 =「展开全部（共 4 条）」",
+      /展开全部（共 4 条）/.test(String(folded?.summary)), String(folded?.summary));
+    record("★补录日期不再显示在标题里（页面上没有「补录 ·」字样，标题是「课后反馈」）",
+      folded?.hasBackfillText === false && folded?.titles?.every((t) => t === "课后反馈"),
+      JSON.stringify(folded?.titles));
+    record("★免费学情分析页也出现「学习进度」「分数目标对比」两节（与 AI 摘要同源）",
+      folded?.hasProgressSection === true && folded?.hasTargetSection === true,
+      JSON.stringify({ progress: folded?.hasProgressSection, target: folded?.hasTargetSection }));
+
+    await inDoc(`
+      const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));
+      sec?.querySelector(':scope > details > summary')?.click();
+      return true;
+    `);
+    await sleepMs(500);
+    const opened = await inDoc(`
+      const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));
+      const d = sec?.querySelector(':scope > details');
+      return { open: !!d?.open, visibleLis: d ? [...d.querySelectorAll('li')].filter(li => li.getBoundingClientRect().height > 0).length : 0 };
+    `);
+    record("★点「展开全部」后能展开（折叠里的第 4 条可见）",
+      opened?.open === true && opened?.visibleLis === 1, JSON.stringify(opened));
+  }
+
   // ---- 6. 名单页搜索 ----
   await goto("/dashboard?q=" + encodeURIComponent("档案探针"), 4000);
   const searched = await inDoc(`return document.body.innerText.replace(/\\s+/g,' ')`);

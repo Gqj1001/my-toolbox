@@ -16,7 +16,7 @@ const th = "px-2 py-1 text-left font-medium text-zinc-500 dark:text-zinc-400";
 const td = "px-2 py-1 text-zinc-700 dark:text-zinc-200";
 
 export default function AnalysisSummary({ report }: { report: StudentReport }) {
-  const { overview, scores, trend, hours, weaknesses, notes } = report;
+  const { overview, scores, trend, hours, progress, target, weaknesses, notes } = report;
   const hasAnything = overview.total > 0;
 
   return (
@@ -101,6 +101,37 @@ export default function AnalysisSummary({ report }: { report: StudentReport }) {
               </p>
             )}
           </div>
+
+          {/* ---------------- 分数目标对比 ---------------- */}
+          {target ? (
+            <div className="mt-3">
+              <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">分数目标对比</p>
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">{target.summary}</p>
+              {target.gapToTarget != null ? (
+                <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                  目标 {target.planTarget} 分；本次 {target.latestScore}/{target.latestFullScore} 分；
+                  {target.gapToTarget >= 0 ? `还差 ${target.gapToTarget} 分` : `已超目标 ${Math.abs(target.gapToTarget)} 分`}
+                  {target.pointsPerMonth != null ? `；约 ${target.pointsPerMonth} 分/月` : ""}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* ---------------- 学习进度 ---------------- */}
+          {progress ? (
+            <div className="mt-3">
+              <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">学习进度</p>
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">{progress.summary}</p>
+              {progress.plan?.lessons.length ? (
+                <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                  方案课表共 {progress.plan.lessons.length} 条
+                  {progress.matchedLesson
+                    ? `；最近反馈对应第 ${progress.matchedLesson.index} 条（${progress.matchedLesson.stage || "未标阶段"}·${progress.matchedLesson.content}）`
+                    : "；最近反馈未匹配到方案条目（方案可能已调整）"}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* ---------------- 课时 ---------------- */}
           <div className="mt-3">

@@ -34,6 +34,7 @@ const {
   SOURCE_TOOLS,
   TOOL_LABELS,
   buildStudentReport,
+  cleanHistoryTitle,
   extractPaperWeakness,
   extractSections,
   parsePlanHours,
@@ -197,6 +198,75 @@ const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subje
 
   record("notes：如实说明排除了 N 份历史学情报告",
     r.notes.some((n) => n.includes("排除") && n.includes("1 份")), JSON.stringify(r.notes));
+}
+
+/* ==========================================================================
+   1b. 学习进度 + 分数目标对比（2026-10-23 学情分析 AI 升级）
+   --------------------------------------------------------------------------
+   用户要的是「开会能用的学情分析」：不仅要有分数，还要说清
+     · 现在学到哪、复习到哪个模块（以最近课后反馈为准，对照方案课表）；
+     · 初始分 / 本次分 / 目标分差多少、提升速度；
+     · 下一步具体练什么（提示词负责，数据在这里备好）。
+   抽不到时必须如实说，不许猜。
+   ========================================================================== */
+{
+  const rows = [
+    ROW({ id: 21, tool: "paper", date: "2026-09-01", title: "开学考", score: 60, full_score: 100,
+      text: "核心薄弱板块集中在以下 1 处：函数单调性。" }),
+    ROW({ id: 22, tool: "math-plan", date: "2026-10-05", title: "秋季方案",
+      text: "【学情诊断】基础一般。\n【提分目标】60 → 100 分\n【课时安排】共 12 课时\n【逐次课表】\n函数｜函数的单调性｜4 课时｜掌握判断\n解析几何｜直线与圆｜6 课时｜会求弦长" }),
+    ROW({ id: 23, tool: "feedback", date: "2026-10-20", title: "10月20日反馈",
+      text: "【课堂内容】函数的单调性\n【下节课内容】直线与圆\n【主要失分点】端点取舍。" }),
+    ROW({ id: 24, tool: "paper", date: "2026-10-25", title: "月考", score: 80, full_score: 100,
+      text: "核心薄弱板块集中在以下 1 处：解析几何。" }),
+  ];
+  const r = buildStudentReport({ name: "王五", student: STUDENT, rows });
+
+  record("★学习进度：最近反馈的课堂内容抽到了；并能对上方案课表第 1/2 条",
+    r.progress?.latestFeedback?.content.includes("函数的单调性") === true &&
+      r.progress?.matchedLesson?.index === 1 && r.progress?.matchedLesson?.total === 2 &&
+      r.progress?.matchedLesson?.stage === "函数",
+    JSON.stringify(r.progress));
+
+  record("★学习进度：最近反馈的下节课内容也带上（给 AI 说清“接下来学什么”）",
+    r.progress?.latestFeedback?.next.includes("直线与圆") === true,
+    JSON.stringify(r.progress?.latestFeedback));
+
+  record("★分数目标对比：初始 60 / 本次 80 / 目标 100，差距与提升速度都算对",
+    r.target?.planInitial === 60 && r.target?.planTarget === 100 &&
+      r.target?.firstScore === 60 && r.target?.latestScore === 80 &&
+      r.target?.gapToTarget === 20 && r.target?.improvement === 20 &&
+      r.target?.pointsPerMonth != null && r.target.pointsPerMonth > 0,
+    JSON.stringify(r.target));
+
+  record("★digest 里同时有「学习进度」「分数目标对比」，且带反馈原文与目标差距",
+    r.digest.includes("学习进度") && r.digest.includes("分数目标对比") &&
+      r.digest.includes("函数的单调性") && r.digest.includes("距目标"),
+    `digest 长度=${r.digest.length}`);
+
+  record("★标题清洗：补录日期后缀从显示标题里去掉（「辅导方案（补录 · 10月17日）」→「辅导方案」）",
+    cleanHistoryTitle("辅导方案（补录 · 10月17日）") === "辅导方案" &&
+      cleanHistoryTitle("课后反馈（补录 · 10月17日）") === "课后反馈" &&
+      cleanHistoryTitle("期中（补录）") === "期中",
+    [
+      cleanHistoryTitle("辅导方案（补录 · 10月17日）"),
+      cleanHistoryTitle("课后反馈（补录 · 10月17日）"),
+      cleanHistoryTitle("期中（补录）"),
+    ].join(" / "));
+}
+
+{
+  // 反例：方案没写目标分、只有一次考试 ⇒ 必须明说「无法做目标对比」，不能自己编一个目标
+  const rows = [
+    ROW({ id: 31, tool: "paper", date: "2026-09-01", title: "开学考", score: 60, full_score: 100,
+      text: "核心薄弱板块集中在以下 1 处：函数。" }),
+    ROW({ id: 32, tool: "math-plan", date: "2026-10-05", title: "秋季方案",
+      text: "【学情诊断】基础一般。\n【课时安排】共 12 课时" }),
+  ];
+  const r = buildStudentReport({ name: "赵六", student: STUDENT, rows });
+  record("★缺口：方案没写目标分 → notes 明说无法做目标对比（不自己编目标）",
+    r.target?.planTarget === null && r.notes.some((n) => n.includes("提分目标")),
+    JSON.stringify({ target: r.target, notes: r.notes }));
 }
 
 /* ==========================================================================

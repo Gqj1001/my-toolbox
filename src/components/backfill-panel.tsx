@@ -434,12 +434,10 @@ function todayIso(): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-/** 记录标题：优先用材料里的考试名，否则按类型 + 今天（与工具生成的名字风格一致） */
+/** 记录标题：优先用材料里的考试名，否则按类型给一个干净标题（不再把补录日期写进标题） */
 function defaultTitle(p: Preview): string {
-  const d = new Date();
-  const day = `${d.getMonth() + 1}月${d.getDate()}日`;
-  if (p.kind === "plan") return `辅导方案（补录 · ${day}）`;
-  if (p.kind === "feedback") return `课后反馈（补录 · ${day}）`;
+  if (p.kind === "plan") return "辅导方案";
+  if (p.kind === "feedback") return "课后反馈";
   const exam = String(p.facts.examName || "").trim();
-  return exam ? `${exam}（补录）` : `试卷分析（补录 · ${day}）`;
+  return exam || "试卷分析";
 }

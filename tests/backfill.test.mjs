@@ -28,6 +28,7 @@ const CDP_PORT = 9493;
 const { record, summary } = makeRecorder();
 const { adminEmail, userEmail, password } = readUsers();
 readEnv();
+const { parseDisplayDate } = await import("../src/lib/date-input.ts");
 
 /* ---------------------------------------------------------------------------
    一、纯函数 + 二、提示词契约（不需要服务）
@@ -75,7 +76,7 @@ const { extractPaperWeakness, parsePlanHours, extractSections } = await import("
 {
   const ok = normalizeBackfill({
     text: "【课时安排】共 40 课时",
-    facts: { hours: "40", score: 88, fullScore: 150, examName: " 期中 " },
+    facts: { hours: "40", score: 88, fullScore: 150, examName: " 期中 ", examDate: " 8月25日 " },
     uncertain: ["第 3 页有涂改"],
     missing: ["考试日期", ""],
   }, "老方案原文");
@@ -83,6 +84,7 @@ const { extractPaperWeakness, parsePlanHours, extractSections } = await import("
     ok?.text === "【课时安排】共 40 课时" &&
       ok.facts.hours === "40" && ok.facts.score === "88" && ok.facts.fullScore === "150" &&
       ok.facts.examName === "期中" &&
+      ok.facts.examDate === "8月25日" &&
       ok.uncertain.length === 1 && ok.missing.length === 1,
     JSON.stringify(ok));
 
@@ -116,6 +118,15 @@ const { extractPaperWeakness, parsePlanHours, extractSections } = await import("
   record("★② 课后反馈提示词必须要求 **【主要失分点】** 小标题（否则失分抽取不到）",
     /【主要失分点】/.test(FEEDBACK_PROMPT),
     "小标题在提示词里");
+
+  record("★★② 日期抽取：反馈提示词要求从正文里抽 facts.examDate（「8月25日数学课反馈」这种），且不许补年份",
+    /examDate/.test(FEEDBACK_PROMPT) && /8月25日/.test(FEEDBACK_PROMPT) &&
+      /不要自己补年份|不补年份/.test(FEEDBACK_PROMPT),
+    "日期抽取规则在提示词里");
+
+  record("★★② 日期抽取的落点：`8月25日` 经 parseDisplayDate 变成今年的 ISO（预览日期框可直接用）",
+    parseDisplayDate("8月25日") === `${new Date().getFullYear()}-08-25`,
+    String(parseDisplayDate("8月25日")));
 
   record("★★② 三条提示词都要写明「不许编造 / 只写材料里有的事实」（这是本功能的红线）",
     [PAPER_PROMPT, PLAN_PROMPT, FEEDBACK_PROMPT].every((p) => /不许推测|不许编造/.test(p) && /留空|看清/.test(p)),

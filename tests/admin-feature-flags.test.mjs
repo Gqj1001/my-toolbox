@@ -194,6 +194,27 @@ try {
     record("（准备）管理员在浏览器里登录", await login(adminEmail, password));
     await goto("/admin", 4000);
 
+    // ★ 2026-10-23 用户反馈：后台用户列表外层容器太矮，一进来看不见用户。
+    //   这里用真浏览器量：容器至少 55vh、表头/首行在视口内（不靠"看截图"）。
+    const layout = await ev(`(() => {
+      const table = document.querySelector('table');
+      const wrap = table ? table.parentElement : null;
+      const head = table ? table.querySelector('thead') : null;
+      const first = table ? table.querySelector('tbody tr') : null;
+      const r = (el) => el ? el.getBoundingClientRect() : null;
+      return {
+        wrapH: wrap ? Math.round(r(wrap).height) : 0,
+        headTop: head ? Math.round(r(head).top) : -1,
+        firstTop: first ? Math.round(r(first).top) : -1,
+        vh: window.innerHeight,
+      };
+    })()`);
+    record("★后台用户列表外层容器高度足够，且表头/首行一打开就在视口内",
+      layout?.wrapH >= Math.round(layout.vh * 0.5) &&
+        layout?.headTop >= 0 && layout?.headTop < layout.vh - 80 &&
+        layout?.firstTop >= 0 && layout?.firstTop < layout.vh - 40,
+      JSON.stringify(layout));
+
     // 点「关掉这个功能」（Server Action）
     const clicked = await ev(`(() => {
       const row = document.querySelector('[data-flag="company_export"]');

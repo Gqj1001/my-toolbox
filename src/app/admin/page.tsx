@@ -52,7 +52,7 @@ export default async function AdminPage() {
     <>
       <SiteHeader role="admin" current="/admin" />
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">
+      <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             用户与权限管理
@@ -87,7 +87,7 @@ export default async function AdminPage() {
             <p className="mt-1">{result.message}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+          <div className="min-h-[55vh] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
             <table className="w-full min-w-5xl border-collapse text-left text-sm">
               <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>

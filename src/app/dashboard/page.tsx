@@ -14,7 +14,7 @@ import {
   historyByStudent,
   studentsByName,
 } from "@/lib/feedback-db";
-import { buildStudentReport, TOOL_LABELS } from "@/lib/student-report";
+import { buildStudentReport, cleanHistoryTitle, TOOL_LABELS } from "@/lib/student-report";
 import { pageDisables } from "@/lib/feature-flags";
 import { getViewer } from "@/lib/viewer";
 
@@ -200,49 +200,61 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           {groups.length ? (
             groups.map((g) => {
               const meta = toolMeta(g.tool);
+              const renderItem = (it: HistoryItem) => (
+                <li key={String(it.id ?? `${g.tool}-${it.date}-${it.title}`)} className={card}>
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                      {cleanHistoryTitle(it.title || "") || it.typeName || "（未填名称）"}
+                    </span>
+                    <span className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      <span className={it.date ? "" : "font-medium text-red-600 dark:text-red-400"}>
+                        {it.date || "未填日期"}
+                        {it.score != null ? ` · ${it.score}${it.fullScore != null ? ` / ${it.fullScore}` : ""} 分` : ""}
+                      </span>
+                      {/* ⭐ 2026-10 用户验收后加：**每条记录的日期都能事后改**。
+                          没日期的记录（补录时 AI 没抽到）会显示成红色的「未填日期」，
+                          按钮也变成「补日期」—— 一点就能选，不用去 Supabase。 */}
+                      {it.id != null ? (
+                        <RecordDateButton id={it.id} date={it.dateIso ?? ""} title={cleanHistoryTitle(it.title || "")} />
+                      ) : null}
+                      {/* ⭐ 第十四批：手动补录的记录由老师自己填，**填错要能撤**。
+                          ⭐ 第十七批：**学情报告（analysis）也开给它** —— 用户反馈
+                          「我生成了好几份学情分析，现在不知道在哪里删除」。
+                          这两类都是"老师自己产生的记录"，删错了代价可控；
+                          其它记录（方案/卷子/反馈）仍由各自的工具管理。 */}
+                      {it.id != null && (g.tool === "manual" || g.tool === "analysis") ? (
+                        <RecordDeleteButton id={it.id} title={cleanHistoryTitle(it.title || "")} />
+                      ) : null}
+                    </span>
+                  </div>
+                  <details className="mt-1.5">
+                    <summary className="cursor-pointer text-xs text-zinc-500 dark:text-zinc-400">展开全文</summary>
+                    <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-300">
+{it.text || "（这条记录没有正文）"}
+                    </pre>
+                  </details>
+                </li>
+              );
+              // ★ 2026-10 用户要求：课后反馈很多时默认只展示最近 3 条，其余折叠。
+              //   用原生 <details> 实现（服务端渲染即可，不需要额外客户端状态）；
+              //   其它工具的记录仍全部展开。
+              const shown = g.tool === "feedback" ? g.items.slice(0, 3) : g.items;
+              const folded = g.tool === "feedback" ? g.items.slice(3) : [];
               return (
                 <section key={g.tool} className="flex flex-col gap-2">
                   <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-200">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${meta.badge}`}>{meta.label}</span>
                     <span className="text-xs text-zinc-400 dark:text-zinc-500">{g.items.length} 条</span>
                   </h2>
-                  <ul className="flex flex-col gap-2">
-                    {g.items.map((it) => (
-                      <li key={String(it.id ?? `${g.tool}-${it.date}-${it.title}`)} className={card}>
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                            {it.title || it.typeName || "（未填名称）"}
-                          </span>
-                          <span className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                            <span className={it.date ? "" : "font-medium text-red-600 dark:text-red-400"}>
-                              {it.date || "未填日期"}
-                              {it.score != null ? ` · ${it.score}${it.fullScore != null ? ` / ${it.fullScore}` : ""} 分` : ""}
-                            </span>
-                            {/* ⭐ 2026-10 用户验收后加：**每条记录的日期都能事后改**。
-                                没日期的记录（补录时 AI 没抽到）会显示成红色的「未填日期」，
-                                按钮也变成「补日期」—— 一点就能选，不用去 Supabase。 */}
-                            {it.id != null ? (
-                              <RecordDateButton id={it.id} date={it.dateIso ?? ""} title={it.title} />
-                            ) : null}
-                            {/* ⭐ 第十四批：手动补录的记录由老师自己填，**填错要能撤**。
-                                ⭐ 第十七批：**学情报告（analysis）也开给它** —— 用户反馈
-                                「我生成了好几份学情分析，现在不知道在哪里删除」。
-                                这两类都是"老师自己产生的记录"，删错了代价可控；
-                                其它记录（方案/卷子/反馈）仍由各自的工具管理。 */}
-                            {it.id != null && (g.tool === "manual" || g.tool === "analysis") ? (
-                              <RecordDeleteButton id={it.id} title={it.title} />
-                            ) : null}
-                          </span>
-                        </div>
-                        <details className="mt-1.5">
-                          <summary className="cursor-pointer text-xs text-zinc-500 dark:text-zinc-400">展开全文</summary>
-                          <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-300">
-{it.text || "（这条记录没有正文）"}
-                          </pre>
-                        </details>
-                      </li>
-                    ))}
-                  </ul>
+                  <ul className="flex flex-col gap-2">{shown.map(renderItem)}</ul>
+                  {folded.length ? (
+                    <details className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <summary className="cursor-pointer text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                        展开全部（共 {g.items.length} 条）
+                      </summary>
+                      <ul className="mt-2 flex flex-col gap-2">{folded.map(renderItem)}</ul>
+                    </details>
+                  ) : null}
                 </section>
               );
             })

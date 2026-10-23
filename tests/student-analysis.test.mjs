@@ -126,9 +126,9 @@ try {
       items: [
         { student_name: STU, text: "9月月考分析。核心薄弱板块集中在以下 2 处：导数单调性；解析几何第二问。",
           date: "2026-09-10", tool: "paper", title: "9月月考", score: 62, full_score: 100, subject: "math" },
-        { student_name: STU, text: "【学情诊断】基础一般，计算常出错。\n【提分目标】62 → 100 分\n【课时安排】共 10 课时\n【逐次课表】…",
+        { student_name: STU, text: "【学情诊断】基础一般，计算常出错。\n【提分目标】62 → 100 分\n【课时安排】共 10 课时\n【逐次课表】\n三角｜三角恒等变换｜4 课时｜会化简求值\n函数｜函数单调性｜6 课时｜会判断",
           date: "2026-09-20", tool: "math-plan", title: "秋季辅导方案" },
-        { student_name: STU, text: "【课堂表现】认真。\n【主要失分点】三角恒等变换用错公式。\n【改进建议】多练。",
+        { student_name: STU, text: "【课堂内容】三角恒等变换\n【下节课内容】函数单调性\n【课堂表现】认真。\n【主要失分点】三角恒等变换用错公式。\n【改进建议】多练。",
           date: "2026-10-01", tool: "feedback", title: "10月1日反馈" },
       ],
     }),
@@ -193,9 +193,16 @@ try {
     calls.length >= 1 && calls.at(-1)?.path === "/chat/completions" && calls.at(-1)?.auth === "Bearer stub-key",
     `path=${JSON.stringify(calls.at(-1)?.path)} auth=${JSON.stringify(calls.at(-1)?.auth)}`);
 
-  record("★提示词：system 里带四个小标题（整体学情/优势/薄弱与原因/下一步建议）",
-    ["【整体学情】", "【优势】", "【薄弱与原因】", "【下一步建议】"].every((k) => sys.includes(k)),
-    JSON.stringify(sys.slice(0, 80)));
+  record("★提示词：system 里带六个小标题（整体学情/学习进度/分数目标对比/优势/薄弱与原因/针对性提升方案）",
+    ["【整体学情】", "【学习进度】", "【分数目标对比】", "【优势】", "【薄弱与原因】", "【针对性提升方案】"]
+      .every((k) => sys.includes(k)),
+    JSON.stringify(sys.slice(0, 120)));
+  record("★提示词：要求像老教师一样推理、不要罗列数据（每个判断带依据）",
+    /推理|思考/.test(sys) && /不要罗列数据|不是罗列数据/.test(sys) && /依据/.test(sys),
+    JSON.stringify(sys.slice(0, 160)));
+  record("★提示词：学习进度要对照方案课表第几条；分数目标对比要写差距/提升速度",
+    /方案.{0,20}第几条|第几条/.test(sys) && /目标分/.test(sys) && /提升速度|每月|分\/月/.test(sys),
+    JSON.stringify(sys.slice(0, 160)));
   record("★提示词：明确要求「只依据材料、不许编造」并且材料不足要说出来",
     /不许编造|不得编造/.test(sys) && /材料不足|如实/.test(sys),
     JSON.stringify(sys.slice(0, 120)));
@@ -203,10 +210,14 @@ try {
     b1?.thinking?.type === "disabled" && b1?.max_tokens === 6000 && b1?.model === "deepseek-flash",
     `model=${JSON.stringify(b1?.model)} thinking=${JSON.stringify(b1?.thinking)} max_tokens=${b1?.max_tokens}`);
 
-  record("★喂给 AI 的是**服务端算好的摘要**：含成绩明细、得分率、课时累计、薄弱原文",
+  record("★喂给 AI 的是**服务端算好的摘要**：含成绩、课时、学习进度、分数目标对比、薄弱原文",
     usr.includes("62/100") && usr.includes("得分率 62%") && usr.includes("累计 10 课时") &&
-      usr.includes("导数单调性") && usr.includes("三角恒等变换"),
+      usr.includes("导数单调性") && usr.includes("三角恒等变换") &&
+      usr.includes("学习进度") && usr.includes("分数目标对比") && usr.includes("方案目标 62 → 100 分"),
     `user 摘要 ${usr.length} 字`);
+  record("★摘要里的学习进度把「最近反馈的课堂内容」和「方案课表第几条」放在一起",
+    usr.includes("课堂内容") && usr.includes("三角恒等变换") && /第\s*1\s*\/\s*2\s*条/.test(usr),
+    JSON.stringify(usr.slice(usr.indexOf("学习进度"), usr.indexOf("学习进度") + 220)));
   record("★摘要里带上了「数据说明」（材料缺口），AI 才有机会如实说",
     usr.includes("数据说明"), "");
 

@@ -63,6 +63,22 @@ export type ScorePoint = {
   percent: number;
 };
 
+/** 辅导方案「逐次课表」/「阶段安排」的一行 */
+export type PlanLesson = {
+  stage: string;
+  content: string;
+  hours: number | null;
+  goal: string;
+};
+
+/** 课后反馈里能说明"学到哪"的两段 */
+export type ProgressFeedback = {
+  date: string;
+  title: string;
+  content: string;
+  next: string;
+};
+
 export type StudentReport = {
   name: string;
   identity: {
@@ -98,6 +114,37 @@ export type StudentReport = {
     /** 有辅导方案、但正文里读不到课时的份数（如实报，不猜） */
     plansWithoutHours: number;
   };
+  /** 学习进度：最近一次反馈「学到哪」+ 对照最近一份辅导方案的计划 */
+  progress: {
+    plan: {
+      date: string;
+      title: string;
+      totalHours: number | null;
+      targetScore: number | null;
+      lessons: PlanLesson[];
+    } | null;
+    recentFeedback: ProgressFeedback[];
+    latestFeedback: ProgressFeedback | null;
+    /** 最近一次反馈能对上方案课表的第几条；对不上就是 null */
+    matchedLesson: { index: number; total: number; stage: string; content: string } | null;
+    /** 给页面/AI 的一句话总结（材料不足时会明说） */
+    summary: string;
+  } | null;
+  /** 分数目标对比：初始分 / 本次分 / 目标分 / 差距 / 提升速度 */
+  target: {
+    planInitial: number | null;
+    planTarget: number | null;
+    firstScore: number | null;
+    latestScore: number | null;
+    latestFullScore: number | null;
+    gapToTarget: number | null;
+    improvement: number | null;
+    months: number | null;
+    pointsPerMonth: number | null;
+    planDate: string;
+    planTitle: string;
+    summary: string;
+  } | null;
   weaknesses: { tool: string; label: string; date: string; title: string; text: string }[];
   /** 「抽不到 / 没算进去」的如实说明（要显示给老师看，不能只存在注释里） */
   notes: string[];
@@ -132,6 +179,73 @@ export function parsePlanHours(text: string): number | null {
   if (!m) return null;
   const n = Number(m[1]);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * 去掉补录时自动加在标题后面的「（补录 · 10月17日）」。
+ * 用户 2026-10 明确：档案列表里只显示标题本身（如「辅导方案」），补录日期不显示。
+ * ⚠️ 只改**显示**，不改数据库里的原标题（老数据照样能追溯）。
+ */
+export function cleanHistoryTitle(title: string): string {
+  return String(title ?? "")
+    .replace(/[（(]\s*补录\s*[·・]\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*[）)]/g, "")
+    .replace(/[（(]\s*补录\s*[）)]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** 从辅导方案【提分目标】读「A → B 分」；读不到返回 null（不猜） */
+export function parsePlanTarget(text: string): { initial: number; target: number } | null {
+  const m = String(text ?? "").match(
+    /【提分目标】\s*(\d+(?:\.\d+)?)\s*(?:分)?\s*(?:→|->|—>|至)\s*(\d+(?:\.\d+)?)\s*分?/,
+  );
+  if (!m) return null;
+  const initial = Number(m[1]), target = Number(m[2]);
+  return Number.isFinite(initial) && Number.isFinite(target) ? { initial, target } : null;
+}
+
+/** 从辅导方案读「逐次课表」或补录方案的「阶段安排」；读不到返回 [] */
+export function parsePlanLessons(text: string): PlanLesson[] {
+  const sec = extractSections(text).find((s) => s.label.includes("逐次课表") || s.label.includes("阶段安排"));
+  if (!sec) return [];
+  const out: PlanLesson[] = [];
+  for (const line of sec.body.split(/\r?\n/)) {
+    const raw = line.trim();
+    if (!raw) continue;
+    const parts = raw.split(/[｜|]/).map((s) => s.trim());
+    if (parts.length < 3) continue;
+    const h = parts[2].match(/(\d+(?:\.\d+)?)/);
+    out.push({
+      stage: parts[0] || "",
+      content: parts[1] || "",
+      hours: h ? Number(h[1]) : null,
+      goal: parts.slice(3).join("｜").trim(),
+    });
+  }
+  return out;
+}
+
+/** 从课后反馈读「课堂内容 / 复习重点」与「下节课内容 / 后续安排」 */
+export function parseFeedbackProgress(text: string): { content: string; next: string } {
+  const secs = extractSections(text);
+  const content = secs.find((s) => /课堂内容|复习重点|本次内容/.test(s.label))?.body ?? "";
+  const next = secs.find((s) => /下节课内容|后续课程建议|后续安排/.test(s.label))?.body ?? "";
+  return { content, next };
+}
+
+/** 两个短文本的相似度：用 2 字片段重合数（中文文本足够稳，不引入依赖） */
+function textOverlap(a: string, b: string): number {
+  const grams = (s: string) => {
+    const clean = String(s ?? "").replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, "");
+    const set = new Set<string>();
+    for (let i = 0; i + 2 <= clean.length; i++) set.add(clean.slice(i, i + 2));
+    return set;
+  };
+  const ga = grams(a), gb = grams(b);
+  if (!ga.size || !gb.size) return 0;
+  let n = 0;
+  for (const g of ga) if (gb.has(g)) n++;
+  return n;
 }
 
 /** paper 报告里那句固定句式：「核心薄弱板块集中在以下 N 处：A；B；C。」取不到就空数组 */
@@ -175,7 +289,7 @@ function daysBetween(a: string, b: string): number | null {
 
 /** 记录标题：优先 title，其次「试卷分析」这类标签 + 日期（**绝不编造考试名**） */
 function titleOf(r: HistoryRow): string {
-  const t = String(r.title ?? "").trim();
+  const t = cleanHistoryTitle(String(r.title ?? "").trim());
   if (t) return t;
   const tool = String(r.tool ?? "feedback");
   const d = isoOf(r.date);
@@ -261,6 +375,125 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     plansWithoutHours,
   };
 
+  // ---------------- 学习进度（反馈时间轴 × 方案课表） ----------------
+  const latestPlan = planRows.length ? planRows[planRows.length - 1] : null;
+  const planTarget = latestPlan ? parsePlanTarget(latestPlan.text) : null;
+  const planLessons = latestPlan ? parsePlanLessons(latestPlan.text) : [];
+  const planHours = latestPlan ? parsePlanHours(latestPlan.text) : null;
+  const feedbackRows = source.filter((r) => String(r.tool ?? "feedback") === "feedback");
+  const recentFeedback: ProgressFeedback[] = feedbackRows.slice(-8).map((r) => {
+    const p = parseFeedbackProgress(r.text);
+    return { date: sortKey(r), title: titleOf(r), content: p.content, next: p.next };
+  });
+  const latestFeedback = recentFeedback.length ? recentFeedback[recentFeedback.length - 1] : null;
+
+  let matchedLesson: { index: number; total: number; stage: string; content: string } | null = null;
+  if (latestFeedback?.content && planLessons.length) {
+    let best = { score: 0, index: -1 };
+    planLessons.forEach((l, i) => {
+      const s = textOverlap(latestFeedback.content, l.content);
+      if (s > best.score) best = { score: s, index: i };
+    });
+    if (best.index >= 0 && best.score >= 2) {
+      const l = planLessons[best.index];
+      matchedLesson = { index: best.index + 1, total: planLessons.length, stage: l.stage, content: l.content };
+    }
+  }
+
+  const progressParts: string[] = [];
+  if (latestPlan) {
+    progressParts.push(
+      `最近方案《${titleOf(latestPlan)}》${planHours != null ? `计划 ${planHours} 课时` : "课时数未写明"}` +
+      (planLessons.length ? `、共 ${planLessons.length} 条课表` : "、没有逐次课表"),
+    );
+  } else {
+    progressParts.push("还没有辅导方案，无法对比计划进度");
+  }
+  if (latestFeedback) {
+    progressParts.push(
+      `最近一次反馈（${latestFeedback.date || "日期未知"}）` +
+      (latestFeedback.content ? `课堂内容：${latestFeedback.content.slice(0, 120)}` : "没有写【课堂内容】") +
+      (latestFeedback.next ? `；下节课：${latestFeedback.next.slice(0, 80)}` : ""),
+    );
+    progressParts.push(
+      matchedLesson
+        ? `按方案课表对应第 ${matchedLesson.index}/${matchedLesson.total} 条（${matchedLesson.stage || "未标阶段"}·${matchedLesson.content}）`
+        : "未能在方案课表中匹配到这次反馈的对应条目（方案可能已调整）",
+    );
+  } else {
+    progressParts.push("还没有课后反馈，无法判断实际学到哪里");
+  }
+
+  const progress = (latestPlan || recentFeedback.length)
+    ? {
+        plan: latestPlan
+          ? {
+              date: sortKey(latestPlan),
+              title: titleOf(latestPlan),
+              totalHours: planHours,
+              targetScore: planTarget ? planTarget.target : null,
+              lessons: planLessons,
+            }
+          : null,
+        recentFeedback,
+        latestFeedback,
+        matchedLesson,
+        summary: progressParts.join("；"),
+      }
+    : null;
+
+  // ---------------- 分数目标对比 ----------------
+  const firstScorePoint = scores.length ? scores[0] : null;
+  const latestScorePoint = scores.length ? scores[scores.length - 1] : null;
+  const planInitial = planTarget ? planTarget.initial : null;
+  const planTargetScore = planTarget ? planTarget.target : null;
+  const gapToTarget = planTargetScore != null && latestScorePoint
+    ? round1(planTargetScore - latestScorePoint.score) : null;
+  const improvement = firstScorePoint && latestScorePoint
+    ? round1(latestScorePoint.score - firstScorePoint.score) : null;
+  const span = firstScorePoint && latestScorePoint
+    ? daysBetween(isoOf(firstScorePoint.date), isoOf(latestScorePoint.date)) : null;
+  const months = span != null ? round1(span / 30.44) : null;
+  const pointsPerMonth = improvement != null && months != null && months > 0
+    ? round1(improvement / months) : null;
+
+  const targetParts: string[] = [];
+  if (planTargetScore != null) {
+    targetParts.push(`方案目标 ${planInitial} → ${planTargetScore} 分`);
+  } else if (latestPlan) {
+    targetParts.push("最近方案没有写「提分目标」");
+  } else {
+    targetParts.push("还没有辅导方案，无法做目标分对比");
+  }
+  if (firstScorePoint && latestScorePoint) {
+    targetParts.push(
+      `首次 ${firstScorePoint.score}/${firstScorePoint.fullScore} 分（${firstScorePoint.title}）` +
+      ` → 最近 ${latestScorePoint.score}/${latestScorePoint.fullScore} 分（${latestScorePoint.title}）`,
+    );
+  } else {
+    targetParts.push("还没有带满分的考试记录");
+  }
+  if (gapToTarget != null) targetParts.push(`距目标 ${gapToTarget >= 0 ? "还差" : "已超"} ${Math.abs(gapToTarget)} 分`);
+  if (improvement != null) targetParts.push(`较首次提升 ${improvement} 分`);
+  if (pointsPerMonth != null) targetParts.push(`约 ${pointsPerMonth} 分/月`);
+
+  const target = (planTargetScore != null || scores.length)
+    ? {
+        planInitial,
+        planTarget: planTargetScore,
+        firstScore: firstScorePoint ? firstScorePoint.score : null,
+        latestScore: latestScorePoint ? latestScorePoint.score : null,
+        latestFullScore: latestScorePoint ? latestScorePoint.fullScore : null,
+        gapToTarget,
+        improvement,
+        months,
+        pointsPerMonth,
+        planDate: latestPlan ? sortKey(latestPlan) : "",
+        planTitle: latestPlan ? titleOf(latestPlan) : "",
+        summary: targetParts.join("；"),
+      }
+    : null;
+
   // ---------------- 薄弱与失分（抽取，抽不到就在 notes 里说清） ----------------
   const weaknesses: StudentReport["weaknesses"] = [];
   let paperWithoutWeak = 0, feedbackWithoutWeak = 0;
@@ -306,6 +539,24 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
   if (trend && trend.count < 2) {
     notes.push("只有 1 次带分数的考试，看不出趋势（至少两次才能比较）。");
   }
+  if (latestPlan && !planTarget) {
+    notes.push("最近一份辅导方案没有写「提分目标」，无法做分数目标对比。");
+  } else if (!latestPlan && scores.length) {
+    notes.push("还没有辅导方案，无法做分数目标对比。");
+  }
+  if (planTarget && !scores.length) {
+    notes.push("方案里有目标分，但还没有带满分的考试记录，无法对比目标差距。");
+  }
+  if (!feedbackRows.length) {
+    notes.push("还没有课后反馈，学习进度只能看方案计划，无法判断实际学到哪里。");
+  } else if (latestFeedback && !latestFeedback.content) {
+    notes.push("最近一条课后反馈里没有【课堂内容】，无法判断实际学到哪里。");
+  }
+  if (latestPlan && !planLessons.length) {
+    notes.push("最近一份辅导方案里没有【逐次课表】/【阶段安排】，无法对比计划进度。");
+  } else if (latestFeedback?.content && planLessons.length && !matchedLesson) {
+    notes.push("最近一次反馈的课堂内容没有在方案课表里匹配到条目（方案可能调整过，请人工核对进度）。");
+  }
   if (reports.length > 0) {
     notes.push(`统计时**排除**了 ${reports.length} 份历史学情报告（不能拿报告生成报告）。`);
   }
@@ -347,11 +598,26 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     lines.push("");
     lines.push("考试成绩：没有带分数与满分的记录，**无法给出分数趋势**。");
   }
+  if (target) {
+    lines.push("");
+    lines.push("分数目标对比：");
+    lines.push(`- ${target.summary}`);
+  }
   if (hourEntries.length || plansWithoutHours) {
     lines.push("");
     lines.push(`课时安排：累计 ${hours.total} 课时（来自 ${hourEntries.length} 份辅导方案）` +
       (plansWithoutHours ? `；另有 ${plansWithoutHours} 份方案读不到课时数` : ""));
     for (const e of hourEntries) lines.push(`- ${e.date || "日期未知"} ${e.title}：${e.hours} 课时`);
+  }
+  if (progress) {
+    lines.push("");
+    lines.push("学习进度（按时间轴）：");
+    lines.push(`- ${progress.summary}`);
+    for (const f of progress.recentFeedback.slice(-3)) {
+      lines.push(`- ${f.date || "日期未知"} ${f.title}：` +
+        (f.content ? `课堂内容 ${f.content.slice(0, 120)}` : "没有【课堂内容】") +
+        (f.next ? `；下节课 ${f.next.slice(0, 80)}` : ""));
+    }
   }
   if (weaknesses.length) {
     lines.push("");
@@ -387,6 +653,8 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     scores,
     trend,
     hours,
+    progress,
+    target,
     weaknesses,
     notes,
     digest,
