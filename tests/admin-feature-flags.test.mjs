@@ -194,6 +194,19 @@ try {
     record("（准备）管理员在浏览器里登录", await login(adminEmail, password));
     await goto("/admin", 4000);
 
+    // ★ 2026-10-24 线上 Bug：管理员刷新/重新登录后偶尔被 /admin 拒绝。
+    //   根因是 user_roles 查询失败被当成“无角色”缓存 30 秒；这里连续刷新 3 次，
+    //   断言每次都能看到后台标题、不出现“没有访问权限”。
+    for (let i = 0; i < 2; i++) {
+      await goto("/admin", 3500);
+    }
+    const stable = await ev(`(() => {
+      const text = document.body.innerText;
+      return { ok: /用户与权限管理/.test(text) && !/没有访问权限/.test(text), head: text.slice(0, 80) };
+    })()`);
+    record("★管理员连续刷新 3 次仍能进后台（不再被 30 秒角色缓存锁住）",
+      stable?.ok === true, JSON.stringify(stable));
+
     // ★ 2026-10-23 用户反馈：后台用户列表外层容器太矮，一进来看不见用户。
     //   这里用真浏览器量：容器至少 55vh、表头/首行在视口内（不靠"看截图"）。
     const layout = await ev(`(() => {

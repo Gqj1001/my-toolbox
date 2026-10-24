@@ -82,6 +82,32 @@ function patchFromForm(formData: FormData): StudentPatch {
 }
 
 /**
+ * 「目标分数 / 总课时数」→ `extra` 的按键 patch。
+ *
+ * ⚠️ 不新增数据库列：存在 `feedback_students.extra`（jsonb）里。
+ *   `upsertStudent()` 对 `extra` 是**按键合并**，所以这里只传这两个键，
+ *   不会碰别家工具写在 `extra` 里的字段（如数学方案的 phase）。
+ * ⚠️ 勾了但留空 = 显式删掉这个键（`null`），不是写 0 —— 与「留空＝没填」区分。
+ */
+function extraPatchFromForm(formData: FormData): { extra?: Record<string, number | null>; error?: string } {
+  const extra: Record<string, number | null> = {};
+  for (const key of ["targetScore", "totalHours"] as const) {
+    if (formData.get(`change_${key}`) == null) continue;
+    const raw = String(formData.get(key) ?? "").trim();
+    if (!raw) {
+      extra[key] = null;                                       // 明确清除
+      continue;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      return { error: `${key === "targetScore" ? "目标分数" : "总课时数"}要填一个不小于 0 的数字。` };
+    }
+    extra[key] = n;
+  }
+  return Object.keys(extra).length ? { extra } : {};
+}
+
+/**
  * `revalidatePath()` **清不掉** `feedback-db` 的进程内缓存（两套缓存），
  * 而这张档案页读的正是那份缓存（`getStudents` / `getHistory`，TTL 25 秒）。
  *
@@ -135,8 +161,13 @@ export async function updateStudent(
   if (!name) return { status: "error", message: "缺少学生姓名。" };
 
   const patch = patchFromForm(formData);
+  const extraResult = extraPatchFromForm(formData);
+  if (extraResult.error) {
+    return { status: "error", message: extraResult.error };
+  }
+  if (extraResult.extra) patch.extra = extraResult.extra;
   if (!Object.keys(patch).length) {
-    return { status: "error", message: "没有要修改的内容（三个框都是空的）。" };
+    return { status: "error", message: "没有要修改的内容（没有勾选任何一项）。" };
   }
 
   try {

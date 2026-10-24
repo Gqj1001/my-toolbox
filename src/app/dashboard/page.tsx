@@ -116,6 +116,9 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
     //    同时支持临时兜底 `?nobackfill=1`（优先级与工具页一致：URL 参数 > 代码常量）。
     const backfillOff = await pageDisables("backfill_materials", params.nobackfill);
     const info = (all[selected] ?? {}) as Record<string, unknown>;
+    const extra = (info.extra && typeof info.extra === "object" && !Array.isArray(info.extra))
+      ? info.extra as Record<string, unknown>
+      : {};
     // ⭐ 2026-10：把每条记录的**真日期（ISO）**贴上来，然后按它排序。
     //    原来只按 `created_at` 反序 —— 于是"补录的 10月4日"会排在"10月17日"的上面，
     //    看起来就是"日期乱"。没有日期的记录用 saved（创建日）兜底，绝不丢。
@@ -176,6 +179,8 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
             grade={String(info.grade ?? "")}
             campus={String(info.campus ?? "")}
             manager={String(info.manager ?? "")}
+            targetScore={extra.targetScore == null ? "" : String(extra.targetScore)}
+            totalHours={extra.totalHours == null ? "" : String(extra.totalHours)}
           />
 
           {/* ★ 第十四批：手动补录成绩（在别处考的试也记进档案）。

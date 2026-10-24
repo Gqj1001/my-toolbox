@@ -253,6 +253,36 @@ const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subje
       cleanHistoryTitle("课后反馈（补录 · 10月17日）"),
       cleanHistoryTitle("期中（补录）"),
     ].join(" / "));
+
+  record("★图表数据：薄弱模块按分号拆开并计数（导数/解析几何各 1）",
+    r.weaknessModules.some((m) => m.name.includes("函数单调性") && m.count === 1) &&
+      r.weaknessModules.some((m) => m.name.includes("解析几何") && m.count === 1),
+    JSON.stringify(r.weaknessModules));
+}
+
+{
+  // 档案里手填「目标分数 / 总课时数」（extra）—— 不新增列，作为方案缺省时的基准
+  const stu = { ...STUDENT, extra: { targetScore: 110, totalHours: 40 } };
+  const rows = [
+    ROW({ id: 41, tool: "paper", date: "2026-09-01", title: "开学考", score: 60, full_score: 100,
+      text: "核心薄弱板块集中在以下 1 处：函数。" }),
+    ROW({ id: 42, tool: "math-plan", date: "2026-10-05", title: "秋季方案",
+      text: "【学情诊断】基础一般。\n【课时安排】共 12 课时\n【逐次课表】\n函数｜函数的单调性｜4 课时｜掌握\n解析几何｜直线与圆｜6 课时｜会求弦长" }),
+    ROW({ id: 43, tool: "feedback", date: "2026-10-20", title: "10月20日反馈",
+      text: "【课堂内容】函数的单调性\n【下节课内容】直线与圆" }),
+    ROW({ id: 44, tool: "paper", date: "2026-10-25", title: "月考", score: 80, full_score: 100,
+      text: "核心薄弱板块集中在以下 1 处：解析几何。" }),
+  ];
+  const r = buildStudentReport({ name: "钱七", student: stu, rows });
+  record("★档案目标分（extra.targetScore）在方案没写目标时作为基准",
+    r.target?.planTarget === 110 && r.target?.planInitial === null &&
+      r.target?.gapToTarget === 30 && r.target?.planTitle === "档案填写",
+    JSON.stringify(r.target));
+  record("★档案总课时（extra.totalHours）进入报告与 digest，已消耗按方案课表估算",
+    r.hours.extraTotal === 40 && r.progress?.plan?.totalHours === 40 &&
+      r.progress?.consumedHours === 4 &&
+      r.digest.includes("档案填写总课时") && r.digest.includes("档案目标 110 分"),
+    JSON.stringify({ extraTotal: r.hours.extraTotal, planHours: r.progress?.plan?.totalHours, consumed: r.progress?.consumedHours }));
 }
 
 {

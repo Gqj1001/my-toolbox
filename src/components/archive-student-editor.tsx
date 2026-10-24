@@ -15,6 +15,10 @@ type Props = {
   campus: string;
   /** 学管师（该学生的对接人）。⚠️ 列名是 `manager`，与"任课教师"不是一回事。 */
   manager: string;
+  /** 目标分数（存在 `extra.targetScore`，不新增列） */
+  targetScore: string;
+  /** 总课时数（存在 `extra.totalHours`，不新增列） */
+  totalHours: string;
 };
 
 /**
@@ -36,7 +40,7 @@ type Props = {
  * ⚠️ 删除是**不可逆**的，而且会连带删掉这个学生在**别家工具**里的记录 —— 必须二次确认，
  *    并且把这一点明说（服务端 `deleteStudentByName` 就是连历史一起删的）。
  */
-export default function StudentEditor({ name, grade, campus, manager }: Props) {
+export default function StudentEditor({ name, grade, campus, manager, targetScore, totalHours }: Props) {
   const [updateState, updateAction, updating] = useActionState(updateStudent, initialState);
   const [delState, delAction, deleting] = useActionState(deleteStudent, initialState);
 
@@ -44,6 +48,10 @@ export default function StudentEditor({ name, grade, campus, manager }: Props) {
     { key: "grade", label: "年级", value: grade, placeholder: "如 高三" },
     { key: "campus", label: "学校", value: campus, placeholder: "如 三河一中" },
     { key: "manager", label: "学管师", value: manager, placeholder: "如 李老师" },
+    // ★ 2026-10-23：目标分数 / 总课时数存 `extra`，不新增数据库列。
+    //   学情分析会拿它们做「分数目标对比」与「课时消耗」基准。
+    { key: "targetScore", label: "目标分数", value: targetScore, placeholder: "如 100" },
+    { key: "totalHours", label: "总课时数", value: totalHours, placeholder: "如 40" },
   ];
 
   return (
@@ -51,11 +59,12 @@ export default function StudentEditor({ name, grade, campus, manager }: Props) {
       <p className="mb-1 text-sm font-medium text-zinc-700 dark:text-zinc-200">修改档案</p>
       <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
         点「改」才会提交这一项；可以把它改成空（清空）。没点「改」的项保持原样。
+        目标分数 / 总课时用于学情分析的目标对比和课时进度。
       </p>
 
       <form action={updateAction}>
         <input type="hidden" name="name" value={name} />
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map((r) => (
             <div key={r.key} className="flex flex-col gap-1">
               <label className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">

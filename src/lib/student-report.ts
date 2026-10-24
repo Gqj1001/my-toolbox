@@ -113,6 +113,8 @@ export type StudentReport = {
     entries: { date: string; title: string; hours: number }[];
     /** 有辅导方案、但正文里读不到课时的份数（如实报，不猜） */
     plansWithoutHours: number;
+    /** 档案里手填的「总课时数」（extra.totalHours）；没填就是 null */
+    extraTotal: number | null;
   };
   /** 学习进度：最近一次反馈「学到哪」+ 对照最近一份辅导方案的计划 */
   progress: {
@@ -127,6 +129,8 @@ export type StudentReport = {
     latestFeedback: ProgressFeedback | null;
     /** 最近一次反馈能对上方案课表的第几条；对不上就是 null */
     matchedLesson: { index: number; total: number; stage: string; content: string } | null;
+    /** 按方案课表 + 最近反馈估算的已消耗课时；无法估算就是 null（不猜） */
+    consumedHours: number | null;
     /** 给页面/AI 的一句话总结（材料不足时会明说） */
     summary: string;
   } | null;
@@ -146,6 +150,8 @@ export type StudentReport = {
     summary: string;
   } | null;
   weaknesses: { tool: string; label: string; date: string; title: string; text: string }[];
+  /** 薄弱模块计数（从薄弱/失分原文里按分号/顿号拆出来，给图表用；拆不出就空） */
+  weaknessModules: { name: string; count: number }[];
   /** 「抽不到 / 没算进去」的如实说明（要显示给老师看，不能只存在注释里） */
   notes: string[];
   /** 交给 AI 的结构化摘要（也顺手当"报告依据"给人看） */
@@ -316,6 +322,19 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
   const reports = all.filter((r) => String(r.tool ?? "feedback") === ANALYSIS_TOOL);
   const source = sortedAsc(all.filter((r) => String(r.tool ?? "feedback") !== ANALYSIS_TOOL));
 
+  // 档案里手填的目标分数 / 总课时（存在 extra jsonb，不新增列）。
+  // 抽不到/不是数字就是 null；绝不把空串或 0 当目标。
+  const extra = (student?.extra && typeof student.extra === "object" && !Array.isArray(student.extra))
+    ? student.extra as Record<string, unknown>
+    : {};
+  const numFromExtra = (v: unknown): number | null => {
+    if (v == null || v === "") return null;
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const extraTarget = numFromExtra(extra.targetScore);
+  const extraTotalHours = numFromExtra(extra.totalHours);
+
   // ---------------- 概览 ----------------
   const byTool = SOURCE_TOOLS.map((tool) => {
     const list = source.filter((r) => String(r.tool ?? "feedback") === tool);
@@ -373,6 +392,7 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     total: hourEntries.reduce((a, b) => a + b.hours, 0),
     entries: hourEntries,
     plansWithoutHours,
+    extraTotal: extraTotalHours,
   };
 
   // ---------------- 学习进度（反馈时间轴 × 方案课表） ----------------
@@ -400,12 +420,22 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     }
   }
 
+  let consumedHours: number | null = null;
+  if (matchedLesson) {
+    const upTo = planLessons.slice(0, matchedLesson.index);
+    if (upTo.length && upTo.every((l) => l.hours != null)) {
+      consumedHours = upTo.reduce((a, l) => a + (l.hours as number), 0);
+    }
+  }
+
   const progressParts: string[] = [];
   if (latestPlan) {
     progressParts.push(
       `最近方案《${titleOf(latestPlan)}》${planHours != null ? `计划 ${planHours} 课时` : "课时数未写明"}` +
       (planLessons.length ? `、共 ${planLessons.length} 条课表` : "、没有逐次课表"),
     );
+  } else if (extraTotalHours != null) {
+    progressParts.push(`档案填写总课时 ${extraTotalHours} 课时（还没有辅导方案，无法对比逐次课表）`);
   } else {
     progressParts.push("还没有辅导方案，无法对比计划进度");
   }
@@ -420,6 +450,9 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
         ? `按方案课表对应第 ${matchedLesson.index}/${matchedLesson.total} 条（${matchedLesson.stage || "未标阶段"}·${matchedLesson.content}）`
         : "未能在方案课表中匹配到这次反馈的对应条目（方案可能已调整）",
     );
+    if (consumedHours != null) {
+      progressParts.push(`按课表估算已消耗约 ${consumedHours} 课时`);
+    }
   } else {
     progressParts.push("还没有课后反馈，无法判断实际学到哪里");
   }
@@ -430,14 +463,15 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
           ? {
               date: sortKey(latestPlan),
               title: titleOf(latestPlan),
-              totalHours: planHours,
-              targetScore: planTarget ? planTarget.target : null,
+              totalHours: extraTotalHours ?? planHours,
+              targetScore: planTarget ? planTarget.target : extraTarget,
               lessons: planLessons,
             }
           : null,
         recentFeedback,
         latestFeedback,
         matchedLesson,
+        consumedHours,
         summary: progressParts.join("；"),
       }
     : null;
@@ -446,7 +480,8 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
   const firstScorePoint = scores.length ? scores[0] : null;
   const latestScorePoint = scores.length ? scores[scores.length - 1] : null;
   const planInitial = planTarget ? planTarget.initial : null;
-  const planTargetScore = planTarget ? planTarget.target : null;
+  const planTargetScore = planTarget ? planTarget.target : extraTarget;
+  const targetFromProfile = planTarget == null && extraTarget != null;
   const gapToTarget = planTargetScore != null && latestScorePoint
     ? round1(planTargetScore - latestScorePoint.score) : null;
   const improvement = firstScorePoint && latestScorePoint
@@ -459,11 +494,15 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
 
   const targetParts: string[] = [];
   if (planTargetScore != null) {
-    targetParts.push(`方案目标 ${planInitial} → ${planTargetScore} 分`);
+    targetParts.push(
+      targetFromProfile
+        ? `档案目标 ${planTargetScore} 分`
+        : `方案目标 ${planInitial} → ${planTargetScore} 分`,
+    );
   } else if (latestPlan) {
     targetParts.push("最近方案没有写「提分目标」");
   } else {
-    targetParts.push("还没有辅导方案，无法做目标分对比");
+    targetParts.push("还没有辅导方案/档案目标，无法做目标分对比");
   }
   if (firstScorePoint && latestScorePoint) {
     targetParts.push(
@@ -489,7 +528,7 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
         months,
         pointsPerMonth,
         planDate: latestPlan ? sortKey(latestPlan) : "",
-        planTitle: latestPlan ? titleOf(latestPlan) : "",
+        planTitle: targetFromProfile ? "档案填写" : (latestPlan ? titleOf(latestPlan) : ""),
         summary: targetParts.join("；"),
       }
     : null;
@@ -521,6 +560,21 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     }
   }
 
+  // ---------------- 薄弱模块计数（图表用） ----------------
+  const moduleCounts = new Map<string, number>();
+  for (const w of weaknesses) {
+    for (const part of w.text.split(/[；;、]/)) {
+      const name = part.trim().replace(/^[①②③④⑤⑥⑦⑧⑨⑩\d.、\s]+/, "").slice(0, 30);
+      if (name.length < 2) continue;
+      if (/^(暂无|没有|无|未发现|材料里没有)/.test(name)) continue;
+      moduleCounts.set(name, (moduleCounts.get(name) ?? 0) + 1);
+    }
+  }
+  const weaknessModules = [...moduleCounts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans-CN"))
+    .slice(0, 8);
+
   // ---------------- 「抽不到」的如实说明 ----------------
   const notes: string[] = [];
   if (!source.length) notes.push("这位学生还没有任何记录（辅导方案 / 试卷分析 / 课后反馈）。");
@@ -539,13 +593,13 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
   if (trend && trend.count < 2) {
     notes.push("只有 1 次带分数的考试，看不出趋势（至少两次才能比较）。");
   }
-  if (latestPlan && !planTarget) {
-    notes.push("最近一份辅导方案没有写「提分目标」，无法做分数目标对比。");
-  } else if (!latestPlan && scores.length) {
-    notes.push("还没有辅导方案，无法做分数目标对比。");
+  if (latestPlan && !planTarget && extraTarget == null) {
+    notes.push("最近一份辅导方案没有写「提分目标」，档案里也没填目标分，无法做分数目标对比。");
+  } else if (!latestPlan && extraTarget == null && scores.length) {
+    notes.push("还没有辅导方案/档案目标分，无法做分数目标对比。");
   }
-  if (planTarget && !scores.length) {
-    notes.push("方案里有目标分，但还没有带满分的考试记录，无法对比目标差距。");
+  if (planTargetScore != null && !scores.length) {
+    notes.push("已有目标分，但还没有带满分的考试记录，无法对比目标差距。");
   }
   if (!feedbackRows.length) {
     notes.push("还没有课后反馈，学习进度只能看方案计划，无法判断实际学到哪里。");
@@ -609,6 +663,10 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
       (plansWithoutHours ? `；另有 ${plansWithoutHours} 份方案读不到课时数` : ""));
     for (const e of hourEntries) lines.push(`- ${e.date || "日期未知"} ${e.title}：${e.hours} 课时`);
   }
+  if (extraTotalHours != null) {
+    lines.push("");
+    lines.push(`档案填写总课时：${extraTotalHours} 课时（用于课时消耗对比）`);
+  }
   if (progress) {
     lines.push("");
     lines.push("学习进度（按时间轴）：");
@@ -656,6 +714,7 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     progress,
     target,
     weaknesses,
+    weaknessModules,
     notes,
     digest,
   };

@@ -291,20 +291,57 @@ try {
       form.querySelectorAll('input[name]').forEach(i => { ph[i.getAttribute('name')] = i.getAttribute('placeholder') || ''; });
       return { names, labels, inputs, ph, hasTeacherInput: !!form.querySelector('input[name="teacher"]') };
     `);
-    record("★★档案编辑区正好**三格**：年级 / 学校 / 学管师（勾选框与输入框一一对应）",
-      JSON.stringify(ed?.names) === JSON.stringify(["change_campus", "change_grade", "change_manager"]) &&
-      JSON.stringify(ed?.inputs) === JSON.stringify(["grade", "campus", "manager"]),
+    record("★★档案编辑区**五格**：年级 / 学校 / 学管师 / 目标分数 / 总课时数",
+      JSON.stringify(ed?.names) === JSON.stringify(["change_campus", "change_grade", "change_manager", "change_targetScore", "change_totalHours"]) &&
+      JSON.stringify(ed?.inputs) === JSON.stringify(["grade", "campus", "manager", "targetScore", "totalHours"]),
       JSON.stringify({ 勾选框: ed?.names, 输入框: ed?.inputs }));
     record("★★第二格显示名是「学校」（不再叫「校区」）、第三格是「学管师」（不再叫「教师」）",
       /改「年级」/.test(ed?.labels?.join("|") ?? "") && /改「学校」/.test(ed?.labels?.join("|") ?? "") &&
       /改「学管师」/.test(ed?.labels?.join("|") ?? "") && !/改「校区」/.test(ed?.labels?.join("|") ?? "") &&
-      !/改「教师」/.test(ed?.labels?.join("|") ?? ""),
+      !/改「教师」/.test(ed?.labels?.join("|") ?? "") &&
+      /改「目标分数」/.test(ed?.labels?.join("|") ?? "") && /改「总课时数」/.test(ed?.labels?.join("|") ?? ""),
       JSON.stringify(ed?.labels));
     record("★★「任课教师」不再占编辑区一格（但它没有被删除：库里、报告里都还在）",
       ed?.hasTeacherInput === false, `有 teacher 输入框=${ed?.hasTeacherInput}`);
     record("★占位提示也换了（学校给的是真学校的例子，不是「燕郊中学校区」）",
       /三河一中|学校/.test(String(ed?.ph?.campus ?? "")) && !/校区/.test(String(ed?.ph?.campus ?? "")),
       JSON.stringify(ed?.ph));
+
+    // ★ 2026-10-23：目标分数 / 总课时数（存 extra，不新增列）真的能写进去
+    const setExtra = await inDoc(`
+      const form = [...document.querySelectorAll('form')].find(f => f.querySelector('input[name="change_grade"]'));
+      if(!form) return { err: '没有修改表单' };
+      const setVal = (el, v) => {
+        const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+        d.set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      setVal(form.querySelector('input[name="targetScore"]'), '100');
+      setVal(form.querySelector('input[name="totalHours"]'), '40');
+      form.querySelector('input[name="change_targetScore"]').checked = true;
+      form.querySelector('input[name="change_totalHours"]').checked = true;
+      form.requestSubmit();
+      return 'submitted';
+    `);
+    if (setExtra && setExtra.err) record("（准备）保存目标分数/总课时", false, setExtra.err);
+    await sleepMs(2500);
+    const afterExtra = await api(`/api/students?name=${encodeURIComponent(STU)}`);
+    record("★★目标分数 / 总课时数能保存（写进 extra，不新增数据库列）",
+      Number(afterExtra.body?.student?.extra?.targetScore) === 100 &&
+        Number(afterExtra.body?.student?.extra?.totalHours) === 40,
+      JSON.stringify(afterExtra.body?.student?.extra));
+
+    // 造一份带逐次课表的方案，供「学习进度/课时消耗图」使用
+    const mkPlan = await api("/api/students", {
+      method: "POST",
+      body: JSON.stringify({
+        op: "import",
+        items: [{
+          student_name: STU, tool: "math-plan", title: "目标课时方案", date: "2026-10-18",
+          text: "【提分目标】60 → 100 分\n【课时安排】共 40 课时\n【逐次课表】\n函数｜函数的单调性｜10 课时｜掌握\n解析几何｜直线与圆｜10 课时｜会求弦长",
+        }],
+      }),
+    });
+    record("（准备）造一份带逐次课表的辅导方案", mkPlan.body?.inserted === 1, JSON.stringify(mkPlan.body));
 
     // 详情页抬头与名单卡片都要能**一眼看到对接人**（只显示人名，前后不加"学管师"三个字）
     const head = await inDoc(`return document.body.innerText.replace(/\\s+/g,' ')`);
@@ -390,7 +427,7 @@ try {
   {
     const items = [1, 2, 3, 4].map((i) => ({
       student_name: STU,
-      text: `【课堂内容】第 ${i} 次课\n【主要失分点】第 ${i} 个失分点`,
+      text: `【课堂内容】${i === 4 ? "函数的单调性" : `第 ${i} 次课`}\n【主要失分点】第 ${i} 个失分点`,
       date: `2026-10-${10 + i}`,
       tool: "feedback",
       title: `课后反馈（补录 · 10月${10 + i}日）`,
@@ -401,6 +438,7 @@ try {
     });
     record("（准备）造 4 条带「补录·日期」标题的课后反馈", seed.body?.inserted === 4, JSON.stringify(seed.body));
     await goto(`/dashboard?name=${encodeURIComponent(STU)}`, 4500);
+    await sleepMs(900);
     const folded = await inDoc(`
       const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));
       if(!sec) return { err: '没有课后反馈分组' };
@@ -414,6 +452,7 @@ try {
         hasBackfillText: /补录/.test(sec.innerText),
         hasProgressSection: /学习进度/.test(document.body.innerText),
         hasTargetSection: /分数目标对比/.test(document.body.innerText),
+        chartLabels: [...document.querySelectorAll('canvas')].map(c => c.getAttribute('aria-label')).filter(Boolean),
       };
     `);
     record("★课后反馈默认只展示最近 3 条（第 4 条在折叠里）",
@@ -427,6 +466,11 @@ try {
     record("★免费学情分析页也出现「学习进度」「分数目标对比」两节（与 AI 摘要同源）",
       folded?.hasProgressSection === true && folded?.hasTargetSection === true,
       JSON.stringify({ progress: folded?.hasProgressSection, target: folded?.hasTargetSection }));
+    record("★学情分析图表真的渲染了（成绩趋势折线图 + 课时消耗环形图 + 模块薄弱条形图）",
+      (folded?.chartLabels ?? []).includes("成绩趋势折线图") &&
+        (folded?.chartLabels ?? []).includes("课时消耗环形图") &&
+        (folded?.chartLabels ?? []).includes("模块薄弱分布条形图"),
+      JSON.stringify(folded?.chartLabels));
 
     await inDoc(`
       const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));

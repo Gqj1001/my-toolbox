@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { cached, clearCache, createTtlCache } from "@/lib/ttl-cache";
 import { resolveViewerUser } from "@/lib/session-freshness";
+import { readRoleRow } from "@/lib/role-read";
 import {
   computeIsVip,
   type AccountStatus,
@@ -129,19 +130,25 @@ async function loadViewer(): Promise<Viewer> {
   }
 
   // 读不到行（含查询出错）时按「普通用户 + 免费」处理，与改动前行为一致。
-  // ⚠️ 注意 `null` 也是**会被缓存**的（它就是「没有这行」的正常结果）：
-  //    · 从未建过行的用户 → 缓存「免费」，正确；
-  //    · 查询**出错**时拿到的也是 null，于是「免费」会被缓存 30 秒 ——
-  //      对一个本来就按免费处理的人来说没有更坏，且有 TTL 兜底。
-  //      （真正危险的是反过来：把「查到了 VIP」缓存成「没查到」，那不会发生。）
-  const data = await cached(userRolesCache, user.id, async () => {
-    const { data: row } = await supabase
-      .from("user_roles")
-      .select("role, plan, status, expires_at")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    return (row as UserRoleRow | null) ?? null;
-  });
+  // ⚠️ **查询失败不能缓存**：`cached` 只在 load 成功返回时写缓存；这里让
+  //    `readRoleRow` 在 error 时抛异常，catch 后本次按普通用户处理、但不写缓存。
+  //    旧写法把 error 吞掉返回 null，于是管理员一次瞬时失败就被锁 30 秒
+  //    —— 这正是 2026-10「刷新后进不去 /admin」的根因。
+  let data: UserRoleRow | null = null;
+  try {
+    data = await cached(userRolesCache, user.id, () =>
+      readRoleRow<UserRoleRow>(() =>
+        supabase
+          .from("user_roles")
+          .select("role, plan, status, expires_at")
+          .eq("user_id", user.id)
+          .maybeSingle(),
+      ),
+    );
+  } catch (e) {
+    console.error("[viewer] 读取 user_roles 失败（本次按普通用户处理，不缓存）:", String(e));
+    data = null;
+  }
 
   const roleResolved: AppRole = data?.role === "admin" ? "admin" : DEFAULT_ROLE;
   const plan: PlanId = data?.plan === "vip" ? "vip" : "free";

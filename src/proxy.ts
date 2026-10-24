@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { createThreeStateCache, readCacheTtlMs } from "@/lib/three-state-cache";
+import { readRoleRow } from "@/lib/role-read";
 import {
   authRefreshOnce,
   authSingleFlight,
@@ -260,16 +261,27 @@ export default async function proxy(request: NextRequest) {
       role = cachedRole.value?.role ?? null;
       status = cachedRole.value?.status ?? null;
     } else {
-      // 受 RLS "users read own role" 策略保护，只能读到自己那一行
-      const { data } = await supabase
-        .from("user_roles")
-        .select("role, status")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      role = data?.role ?? null;
-      status = data?.status ?? null;
-      roleCache.set(user.id, { role, status });
+      // 受 RLS "users read own role" 策略保护，只能读到自己那一行。
+      // ⚠️ **查询失败绝不能当“没有角色”缓存**：旧写法只看 data、不看 error，
+      //    一次瞬时失败就把 `{role:null,status:null}` 写进 30 秒缓存，
+      //    管理员刷新后被锁在 /admin 外（2026-10 线上 Bug 的根因）。
+      //    现在交给 `readRoleRow`：成功才缓存；失败本次按最小权限处理，下次重查。
+      try {
+        const row = await readRoleRow<{ role: string | null; status: string | null }>(() =>
+          supabase
+            .from("user_roles")
+            .select("role, status")
+            .eq("user_id", user.id)
+            .maybeSingle(),
+        );
+        role = row?.role ?? null;
+        status = row?.status ?? null;
+        roleCache.set(user.id, { role, status });
+      } catch (e) {
+        console.error("[proxy] 读取 user_roles 失败（本次按最小权限处理，不缓存）:", String(e));
+        role = null;
+        status = null;
+      }
     }
 
     // 3) 封禁拦截：status='banned' 的用户访问任何页面都跳到 /banned

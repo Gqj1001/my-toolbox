@@ -1,5 +1,6 @@
 import { formatDisplayDate } from "@/lib/feedback-db";
 import { TOOL_LABELS, type StudentReport } from "@/lib/student-report";
+import AnalysisCharts from "./analysis-charts";
 
 /**
  * 学情分析 · **统计部分**（服务端渲染，所有人可见，不花 AI 钱）
@@ -16,8 +17,12 @@ const th = "px-2 py-1 text-left font-medium text-zinc-500 dark:text-zinc-400";
 const td = "px-2 py-1 text-zinc-700 dark:text-zinc-200";
 
 export default function AnalysisSummary({ report }: { report: StudentReport }) {
-  const { overview, scores, trend, hours, progress, target, weaknesses, notes } = report;
+  const { overview, scores, trend, hours, progress, target, weaknesses, weaknessModules, notes } = report;
   const hasAnything = overview.total > 0;
+  // 课时消耗图：优先档案里填的「总课时数」，其次最近方案计划课时。
+  // 已消耗只能按方案课表估算（progress.consumedHours）；估不出来就不画，避免显示成 0。
+  const totalHours = hours.extraTotal ?? progress?.plan?.totalHours ?? (hours.total || null);
+  const consumedHours = progress?.consumedHours ?? null;
 
   return (
     <section className={card}>
@@ -34,6 +39,15 @@ export default function AnalysisSummary({ report }: { report: StudentReport }) {
         </p>
       ) : (
         <>
+          {/* ---------------- 图表（2026-10-23 新增） ----------------
+              放在文字上方：先看趋势/课时/薄弱分布，再看下面的数字与 AI 报告。 */}
+          <AnalysisCharts
+            scores={scores}
+            totalHours={totalHours}
+            consumedHours={consumedHours}
+            weaknessModules={weaknessModules}
+          />
+
           {/* ---------------- 概览 ---------------- */}
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
             共 <b>{overview.total}</b> 条记录：
@@ -146,6 +160,12 @@ export default function AnalysisSummary({ report }: { report: StudentReport }) {
             ) : (
               <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">还没有能从辅导方案里读到课时的记录。</p>
             )}
+            {hours.extraTotal != null ? (
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
+                档案填写总课时：<b>{hours.extraTotal}</b> 课时
+                {progress?.consumedHours != null ? `；按方案课表估算已消耗约 ${progress.consumedHours} 课时` : "；已消耗暂无法估算"}
+              </p>
+            ) : null}
           </div>
 
           {/* ---------------- 薄弱与失分 ---------------- */}

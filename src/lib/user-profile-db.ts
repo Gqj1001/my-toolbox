@@ -76,22 +76,53 @@ async function readProfile(userId: string): Promise<UserProfile | null> {
   }
 }
 
-/** 批量读资料（后台用户列表用；查不到的行就不出现在结果里） */
+/** 批量读资料（后台用户列表用；查不到的行就不出现在结果里）
+ *
+ *  ⚠️ **必须走 `admin_list_profiles()`**，不能直接 `.from("user_profiles")`：
+ *     0021 的 RLS 只允许本人读，管理员会话直接查全表**只能读到管理员自己**，
+ *     别人的资料会被静默过滤掉 ⇒ 后台一直显示「资料未填」。
+ *     函数是 SECURITY DEFINER，内部用 `public.is_admin()` 校验，只返回后台需要的四列。
+ *
+ *  迁移 `0026` 还没跑时（函数不存在）退回旧的直接查询：至少管理员自己的资料能显示，
+ *  页面不会崩；跑完迁移后自动恢复全员显示。
+ */
 export async function getProfiles(userIds: string[]): Promise<Record<string, UserProfile>> {
   const ids = userIds.filter(Boolean);
   if (!ids.length) return {};
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase
+    const { data, error } = await supabase.rpc("admin_list_profiles");
+    if (!error) {
+      const out: Record<string, UserProfile> = {};
+      for (const r of (data ?? []) as (Row & { user_id: string })[]) {
+        const p = shape(r);
+        if (p) out[r.user_id] = p;
+      }
+      return out;
+    }
+
+    const missingFn =
+      error.code === "PGRST202" ||
+      /Could not find the function|function .*admin_list_profiles.* does not exist/i.test(error.message ?? "");
+    if (!missingFn) {
+      console.error("[user-profile] 批量读取失败:", error.message);
+      return {};
+    }
+
+    // 兜底：迁移 0026 还没跑。直接查只会拿到管理员自己（RLS），但不会让页面报错。
+    console.warn(
+      "[user-profile] admin_list_profiles() 不存在，后台只能显示自己的资料；请执行 supabase/migrations/0026_admin_list_profiles.sql",
+    );
+    const { data: rows, error: fallbackError } = await supabase
       .from("user_profiles")
       .select(`user_id, ${COLUMNS}`)
       .in("user_id", ids);
-    if (error) {
-      if (!isMissingTable(error)) console.error("[user-profile] 批量读取失败:", error.message);
+    if (fallbackError) {
+      if (!isMissingTable(fallbackError)) console.error("[user-profile] 批量读取失败:", fallbackError.message);
       return {};
     }
     const out: Record<string, UserProfile> = {};
-    for (const r of (data ?? []) as (Row & { user_id: string })[]) {
+    for (const r of (rows ?? []) as (Row & { user_id: string })[]) {
       const p = shape(r);
       if (p) out[r.user_id] = p;
     }

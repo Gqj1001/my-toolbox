@@ -443,6 +443,38 @@ await cdp.send("Page.enable", {}, sessionId);   // 不 enable 收不到这个事
   被「页面无真实 JS 异常」误抓成页面缺陷。已在**所有 8 处** Edge 启动参数加
   `--disable-extensions`；测试自己的异常收集也顺手忽略扩展来源（双保险）。
 
+### 24. `user_roles` 查询失败**不能缓存成 null**（2026-10-24 线上 Bug：管理员刷新后进不去后台）
+
+**症状**：管理员刷新 / 重新登录后，`/admin` 偶发提示「仅对 admin 角色开放」，过一会儿又好了。
+
+**根因**：中间件（`src/proxy.ts`）和页面侧（`src/lib/viewer.ts`）都把 `user_roles` 查询结果
+放进 30 秒进程缓存；旧代码只取 `data`、不看 `error`，一次瞬时失败拿到 `null` 就当成
+「没有角色」缓存了 30 秒 ⇒ 管理员被当成普通用户锁在后台外。`ttl-cache.ts` 的注释其实
+早就写了「查失败必须抛异常」，但这两个调用点没遵守。
+
+**做法**：
+- 统一走 `src/lib/role-read.ts` 的 `readRoleRow()`：**成功没行才返回 null；查询报错抛异常**，
+  默认重试一次；
+- 调用方 catch 后本次按最小权限处理，但**绝不写缓存**；下一次请求会重查；
+- 回归：`tests/role-read.test.mjs`（失败必抛 / 重试 / 源码契约）+
+  `admin-feature-flags` 里「连续刷新 3 次仍能进后台」。
+
+### 25. RLS 是「本人可读」时，后台**不能直接查别人的资料**（2026-10-24 线上 Bug：后台一直「资料未填」）
+
+`user_profiles` 的 RLS 是 `auth.uid() = user_id`（0021 有意这么设计）。后台却用管理员会话
+`.from("user_profiles").select(...)` 查全表 ⇒ RLS 只返回管理员自己那一行，别人的老师资料
+**被静默过滤**，页面就显示「资料未填」。
+
+**做法**：
+- 不当“接口没 join”去修，也不随便放宽 RLS；
+- 加 **SECURITY DEFINER 函数**（`0026_admin_list_profiles.sql`）：函数内部 `public.is_admin()`，
+  只返回后台需要的 `user_id / teacher_name / subject / campus` 四列；
+- 代码里 `getProfiles()` 改调 `admin_list_profiles()`，迁移没跑时才退回旧查询并打日志；
+- 回归：`tests/admin-profiles.test.mjs`（要求 0026 先执行；没执行会明确红，提示跑哪份 SQL）。
+
+> 通用判断：看到「管理员只能看到自己 / 后台列表缺数据」，先查 RLS 的 `using`，
+> 再决定「加受控 SECURITY DEFINER 读口」还是「放宽 RLS」。后者影响面大，默认不选。
+
 ## 开工前先确认的路径与命令（省得第一步就卡住）
 
 | 项 | 值 |
