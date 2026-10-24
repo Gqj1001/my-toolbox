@@ -139,7 +139,7 @@ where u.email = 'trial-test-<日期>@example.com';
 ⚠️ **为什么不写成 Node 自动测试**：本地只有 `anon` key，**没有 `service_role`**；
 在 Node 里建 auth 用户要么需要 `service_role`，要么用公开 signup（会真的发确认邮件、
 而且删不掉测试用户）。所以运行期验证放在 SQL Editor，事务 + rollback，既不依赖密钥也不留垃圾。
-静态契约测试已加入全套回归（**54 套 / 1798 项**），每次都会检查 SQL 没被改坏。
+静态契约测试已加入全套回归（**55 套 / 1811 项**），每次都会检查 SQL 没被改坏。
 
 ---
 

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import SiteHeader from "@/components/site-header";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
-import { listAllStudents, type AdminArchiveRow } from "@/lib/admin-archives";
+import { getArchiveStats, listAllStudents, type AdminArchiveRow } from "@/lib/admin-archives";
+import ArchiveCharts from "./archive-charts";
 import { setArchiveCampusAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -15,11 +16,12 @@ function one(v: string | string[] | undefined): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
-function returnTo(q: string, campus: string, teacher: string): string {
+function returnTo(q: string, campus: string, teacher: string, month: string): string {
   const sp = new URLSearchParams();
   if (q) sp.set("q", q);
   if (campus) sp.set("campus", campus);
   if (teacher) sp.set("teacher", teacher);
+  if (month) sp.set("month", month);
   const s = sp.toString();
   return s ? `/admin/archives?${s}` : "/admin/archives";
 }
@@ -47,14 +49,16 @@ export default async function AdminArchivesPage({
   const q = one(params.q);
   const campus = one(params.campus);
   const teacher = one(params.teacher);
+  const month = one(params.month);
   const err = one(params.err);
   const saved = one(params.saved) === "1";
 
   // 一次取全量（上限 1000）用于“校区/老师”下拉选项；再按筛选条件取当前页。
   // 早期机构档案规模远小于 1000；超过时页面会明确提示。
-  const [all, filtered] = await Promise.all([
+  const [all, filtered, stats] = await Promise.all([
     listAllStudents({ limit: 1000 }),
-    listAllStudents({ search: q, campus, teacher, limit: 500 }),
+    listAllStudents({ search: q, campus, teacher, month, limit: 500 }),
+    getArchiveStats(),
   ]);
 
   if (!all.ok || !filtered.ok) {
@@ -99,6 +103,27 @@ export default async function AdminArchivesPage({
           </p>
         </header>
 
+        {stats.ok ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Kpi label="总学员数" value={stats.stats.totalStudents} unit="人" hint="全机构档案总数" />
+              <Kpi label="本月新增学员" value={stats.stats.newThisMonth} unit="人" hint="按最早一条记录日期" />
+              <Kpi
+                label="本月消耗课时（约）"
+                value={stats.stats.estimatedHoursThisMonth}
+                unit="课时"
+                hint={`按本月 ${stats.stats.feedbackThisMonth} 条课后反馈 × 2 课时估算`}
+              />
+              <Kpi label="进行中方案" value={stats.stats.activePlans} unit="份" hint="近 90 天有辅导方案记录" />
+            </div>
+            <ArchiveCharts stats={stats.stats} />
+          </>
+        ) : (
+          <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+            {stats.message}
+          </p>
+        )}
+
         {err ? (
           <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             {err}
@@ -111,6 +136,7 @@ export default async function AdminArchivesPage({
         ) : null}
 
         <form method="get" className="flex flex-wrap items-end gap-2 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+          {month ? <input type="hidden" name="month" value={month} /> : null}
           <label className="flex min-w-[220px] flex-1 flex-col gap-1 text-xs text-zinc-500 dark:text-zinc-400">
             搜索（学生 / 老师 / 学校 / 学管师 / 邮箱）
             <input name="q" defaultValue={q} placeholder="如：张三 / 郭老师 / 三河一中" className={field} />
@@ -136,6 +162,15 @@ export default async function AdminArchivesPage({
             清除
           </Link>
         </form>
+
+        {month ? (
+          <p className="text-xs text-zinc-600 dark:text-zinc-300">
+            当前下钻月份：<b>{month}</b>
+            <Link href={returnTo(q, campus, teacher, "")} className="ml-2 underline">
+              清除月份
+            </Link>
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-sm text-zinc-600 dark:text-zinc-300">
@@ -163,7 +198,7 @@ export default async function AdminArchivesPage({
             </thead>
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {filtered.rows.map((r) => (
-                <ArchiveRow key={r.id} row={r} returnTo={returnTo(q, campus, teacher)} />
+                <ArchiveRow key={r.id} row={r} returnTo={returnTo(q, campus, teacher, month)} />
               ))}
               {filtered.rows.length === 0 ? (
                 <tr>
@@ -177,6 +212,19 @@ export default async function AdminArchivesPage({
         </div>
       </main>
     </>
+  );
+}
+
+function Kpi({ label, value, unit, hint }: { label: string; value: number; unit: string; hint: string }) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+        {value}
+        <span className="ml-1 text-sm font-normal text-zinc-500 dark:text-zinc-400">{unit}</span>
+      </p>
+      <p className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">{hint}</p>
+    </div>
   );
 }
 

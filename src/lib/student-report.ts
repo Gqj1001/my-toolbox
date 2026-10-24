@@ -254,6 +254,39 @@ function textOverlap(a: string, b: string): number {
   return n;
 }
 
+/** 明显不是“知识点”的泛化短语（不要拿它们画雷达图） */
+const GENERIC_MODULE = /^(基础一般|基础薄弱|基础较差|基础不牢|计算|审题|粗心|马虎|态度|习惯|知识体系|综合|其他|暂无|没有|无|未发现|材料里没有)/;
+
+/**
+ * 把「三角恒等变换用错公式」「导数含参讨论不完整」这类长句压成知识点。
+ * 优先匹配已知模块（试卷/方案里出现过的），否则去掉解释性动词/症状词。
+ * 压不出来就返回 null —— 宁可不画，也不拿一整段反馈当标签。
+ */
+function cleanModuleName(raw: string, known: string[]): string | null {
+  let s = String(raw ?? "")
+    .replace(/[。！？!?；;、，,：:]/g, " ")
+    .replace(/^[①②③④⑤⑥⑦⑧⑨⑩\d.、\s]+/, "")
+    .replace(/^(主要|其中|尤其|由于|因为|在|对|关于|学生|孩子)\s*/, "")
+    .trim();
+
+  if (!s) return null;
+
+  // 已知模块优先（长匹配优先，避免“函数”抢先匹配“函数单调性”）
+  const hit = known
+    .filter((k) => k.length >= 2 && s.includes(k))
+    .sort((a, b) => b.length - a.length)[0];
+  if (hit) return hit;
+
+  s = s
+    .split(/(?:用错|不会|不熟|不清|不牢|不足|较弱|薄弱|失分|出错|错误|混淆|粗心|马虎|计算|审题|步骤|公式|定理|概念|导致|所以|但是|而且|需要|建议|掌握|知识体系|尚未|不完整|不规范|不扎实|方面|部分|模块|内容|问题|现象|情况)/)[0]
+    .replace(/[的了吗呢啊吧\s]+$/g, "")
+    .trim();
+
+  if (s.length < 2 || s.length > 14) return null;
+  if (GENERIC_MODULE.test(s)) return null;
+  return s;
+}
+
 /** paper 报告里那句固定句式：「核心薄弱板块集中在以下 N 处：A；B；C。」取不到就空数组 */
 export function extractPaperWeakness(text: string): string[] {
   const m = String(text ?? "").match(/核心薄弱板块集中在以下\s*\d+\s*处：([^。\n]*)/);
@@ -560,20 +593,34 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     }
   }
 
-  // ---------------- 薄弱模块计数（图表用） ----------------
+  // ---------------- 薄弱模块计数（雷达图用） ----------------
+  // 已知模块名优先取：试卷分析的「核心薄弱板块」 + 方案课表里的模块/内容。
+  // 这样反馈里的「三角恒等变换用错公式」会被归到「三角恒等变换」，而不是整句。
+  const knownModules = new Set<string>();
+  for (const r of source) {
+    const tool = String(r.tool ?? "feedback");
+    if (tool === "paper") {
+      for (const m of extractPaperWeakness(r.text)) knownModules.add(m.trim());
+    } else if (tool === "math-plan") {
+      for (const l of parsePlanLessons(r.text)) {
+        if (l.content.trim()) knownModules.add(l.content.trim());
+      }
+    }
+  }
+  const known = [...knownModules].filter((k) => k.length >= 2 && k.length <= 20);
+
   const moduleCounts = new Map<string, number>();
   for (const w of weaknesses) {
     for (const part of w.text.split(/[；;、]/)) {
-      const name = part.trim().replace(/^[①②③④⑤⑥⑦⑧⑨⑩\d.、\s]+/, "").slice(0, 30);
-      if (name.length < 2) continue;
-      if (/^(暂无|没有|无|未发现|材料里没有)/.test(name)) continue;
+      const name = cleanModuleName(part, known);
+      if (!name) continue;
       moduleCounts.set(name, (moduleCounts.get(name) ?? 0) + 1);
     }
   }
   const weaknessModules = [...moduleCounts.entries()]
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans-CN"))
-    .slice(0, 8);
+    .slice(0, 6);
 
   // ---------------- 「抽不到」的如实说明 ----------------
   const notes: string[] = [];

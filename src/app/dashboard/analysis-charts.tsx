@@ -118,28 +118,32 @@ export default function AnalysisCharts({ scores, totalHours, consumedHours, weak
 
     if (weakRef.current && weaknessModules.length) {
       charts.push(new Chart(weakRef.current, {
-        type: "bar",
+        type: "radar",
         data: {
           labels: weaknessModules.map((m) => m.name),
           datasets: [{
-            label: "出现次数",
+            label: "失分频次",
             data: weaknessModules.map((m) => m.count),
-            backgroundColor: AMBER,
-            borderRadius: 4,
+            borderColor: AMBER,
+            backgroundColor: "rgba(245, 158, 11, 0.22)",
+            pointBackgroundColor: AMBER,
+            pointBorderColor: "#fff",
+            pointRadius: 3,
           }],
         },
         options: {
-          indexAxis: "y",
           responsive: true,
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: {
-            x: {
+            r: {
               beginAtZero: true,
-              ticks: { precision: 0, color: TEXT },
+              suggestedMax: Math.max(3, Math.max(...weaknessModules.map((m) => m.count)) + 1),
+              ticks: { stepSize: 1, precision: 0, color: TEXT, backdropColor: "transparent" },
               grid: { color: GRID },
+              angleLines: { color: GRID },
+              pointLabels: { color: TEXT, font: { size: 11 } },
             },
-            y: { ticks: { color: TEXT }, grid: { display: false } },
           },
         },
       }));
@@ -177,9 +181,9 @@ export default function AnalysisCharts({ scores, totalHours, consumedHours, weak
 
       {weaknessModules.length ? (
         <div className="lg:col-span-2">
-          <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">模块薄弱分布（原文出现次数）</p>
-          <div className="h-56 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-            <canvas ref={weakRef} aria-label="模块薄弱分布条形图" role="img" />
+          <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">模块薄弱雷达（失分频次）</p>
+          <div className="h-64 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+            <canvas ref={weakRef} aria-label="模块薄弱雷达图" role="img" />
           </div>
         </div>
       ) : null}

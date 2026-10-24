@@ -98,6 +98,22 @@ try {
   record("（准备）两位老师各建一份档案", mkA.status === 200 && mkB.status === 200,
     `${mkA.status}/${mkB.status}`);
 
+  // A 造一条 10 月的历史，供“月份下钻”与大盘趋势使用
+  const mkHist = await api(adminCookie, "/api/students", {
+    method: "POST",
+    body: JSON.stringify({
+      op: "import",
+      items: [{
+        student_name: A_NAME,
+        text: "【课堂内容】总览测试课\n【主要失分点】函数单调性。",
+        date: "2026-10-15",
+        tool: "feedback",
+        title: "总览测试反馈",
+      }],
+    }),
+  });
+  record("（准备）给 A 造一条 10 月反馈（月份下钻/趋势用）", mkHist.status === 200, JSON.stringify(mkHist.body));
+
   // 管理员 RPC：跨老师可见
   const rpc = await fetch(`${SUPABASE_URL}/rest/v1/rpc/admin_list_all_students`, {
     method: "POST",
@@ -124,6 +140,16 @@ try {
     record("（后续页面/筛选断言）跳过：函数不存在", true, "见上面迁移提示");
   }
 
+  const statsRpc = await fetch(`${SUPABASE_URL}/rest/v1/rpc/admin_archive_stats`, {
+    method: "POST",
+    headers: H(adminTok),
+    body: "{}",
+  });
+  const stats = await statsRpc.json().catch(() => null);
+  record("★迁移 0028 已执行：admin_archive_stats() 可调用（大盘 KPI/图表）",
+    statsRpc.status === 200 && stats && Number(stats.totalStudents) >= 2,
+    `HTTP ${statsRpc.status} ${JSON.stringify(stats).slice(0, 200)}`);
+
   // 页面 + 筛选
   const page = await fetch(`${BASE}/admin/archives`, { headers: { cookie: adminCookie } });
   const html = await page.text();
@@ -134,6 +160,13 @@ try {
     html.includes(A_TEACHER) && html.includes(B_TEACHER) &&
       html.includes(A_CAMPUS) && html.includes(B_CAMPUS),
     "含老师/校区");
+  record("★机构数据大盘：四张 KPI 卡片都在",
+    html.includes("总学员数") && html.includes("本月新增学员") &&
+      html.includes("本月消耗课时") && html.includes("进行中方案"),
+    "KPI 文案");
+  record("★机构数据大盘：两张图（校区饼图 + 提分趋势折线）都渲染",
+    html.includes("各校区学员分布饼图") && html.includes("整体学情提分趋势折线图"),
+    "图表 aria-label");
 
   const bySearch = await (await fetch(`${BASE}/admin/archives?q=${encodeURIComponent("总览探针A")}`, { headers: { cookie: adminCookie } })).text();
   record("★搜索能过滤：搜 A 只出现 A，不出现 B",
@@ -146,6 +179,10 @@ try {
   const byTeacher = await (await fetch(`${BASE}/admin/archives?teacher=${encodeURIComponent(A_TEACHER)}`, { headers: { cookie: adminCookie } })).text();
   record("★按老师筛选：A 老师只出现 A，不出现 B",
     byTeacher.includes(A_NAME) && !byTeacher.includes(B_NAME), "teacher=总览老师A");
+
+  const byMonth = await (await fetch(`${BASE}/admin/archives?month=2026-10`, { headers: { cookie: adminCookie } })).text();
+  record("★按月份下钻：2026-10 只出现本月有记录的 A，不出现无记录的 B",
+    byMonth.includes(A_NAME) && !byMonth.includes(B_NAME), "month=2026-10");
 
   // 手动纠正归属（只改 extra.institutionCampus）
   if (rpc.status === 200 && Array.isArray(rpcRows)) {

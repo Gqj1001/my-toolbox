@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import ReportView from "./report-view";
 
 type Props = {
   name: string;
@@ -115,11 +116,7 @@ export default function AnalysisPanel({ name, isVip, hasRecords }: Props) {
         </p>
       ) : null}
 
-      {text ? (
-        <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-50 px-3 py-2.5 text-sm leading-relaxed text-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
-          {text}
-        </pre>
-      ) : null}
+      {text ? <ReportView text={text} /> : null}
     </section>
   );
 }

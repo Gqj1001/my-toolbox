@@ -203,6 +203,9 @@ try {
   record("★提示词：学习进度要对照方案课表第几条；分数目标对比要写差距/提升速度",
     /方案.{0,20}第几条|第几条/.test(sys) && /目标分/.test(sys) && /提升速度|每月|分\/月/.test(sys),
     JSON.stringify(sys.slice(0, 160)));
+  record("★提示词：允许 Markdown 表格（分数趋势/学习进度/目标对比），且表格数字也要与摘要一致",
+    /Markdown 表格/.test(sys) && /\| ---/.test(sys) && /表格里的数字/.test(sys),
+    JSON.stringify(sys.slice(0, 200)));
   record("★提示词：明确要求「只依据材料、不许编造」并且材料不足要说出来",
     /不许编造|不得编造/.test(sys) && /材料不足|如实/.test(sys),
     JSON.stringify(sys.slice(0, 120)));
