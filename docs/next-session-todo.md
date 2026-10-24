@@ -1,12 +1,13 @@
 # 下个会话待办
 
-> **当前状态一句话**（2026-10-24，后台 Bug 修复 + 档案目标/课时 + 学情图表）：
-> 全站 **53 个套件 / 1780 项断言全绿**（2026-10-24 实测）。
+> **当前状态一句话**（2026-10-24，后台 Bug 修复 + 档案目标/课时 + 学情图表 + A2 总览）：
+> 全站 **54 个套件 / 1798 项断言全绿**（2026-10-24 实测）。
 > 2026-10-24 本批：① 管理员刷新进不去后台（`user_roles` 查询失败被缓存成“无角色”30 秒）已修；
 > ② 后台看不到老师资料（`user_profiles` RLS 只允许本人读）改用 `0026_admin_list_profiles()`（✅ 已执行）；
 > ③ 档案顶部新增「目标分数 / 总课时数」（存 `extra`，不新增列），学情分析自动带入；
-> ④ 学情分析加三张 Chart.js 图（成绩趋势 / 课时消耗 / 模块薄弱）。
-> **跨校区权限只出方案**：`docs/cross-campus-permissions-plan.md`，等用户拍板后再动。
+> ④ 学情分析加三张 Chart.js 图（成绩趋势 / 课时消耗 / 模块薄弱）；
+> ⑤ **A2 全机构档案总览已上线**：`0027`（只读 RPC + 归属标签纠正）+ `/admin/archives`（✅ 已执行）。
+> 跨校区**分级（校区管理员）尚未做**，完整方案见 `docs/cross-campus-permissions-plan.md`，等二期拍板。
 > 此前：学情报告六段式、档案折叠/标题/日期、后台高度（2026-10-23）；
 > v2 三套 39 项。测试明细见第七节。
 > 最近三批上线了 **🗂 学员档案三格（年级/学校/学管师）**、**👤 教师个人资料**（姓名/学科/校区 +
@@ -244,6 +245,7 @@
 
 | 事项 | 结论 |
 |---|---|
+| **A2 全机构档案总览（2026-10-24）** | ✅ **已完成并上线**：`0027_admin_archives_a2.sql`（`admin_list_all_students()` 只读搜索/筛选 + `admin_set_student_campus()` 归属标签纠正，SECURITY DEFINER + `is_admin()`）；后台 `/admin/archives` 从 `/admin` 进入。口径：老板只看、校区=机构校区、历史默认按老师当前校区、推错可手动纠正；**未动现有 RLS/老师端/表结构**。测试 `admin-archives` 18/18；全套 **54 套 / 1798 项**全绿。校区分级（校区管理员）未做，见 `docs/cross-campus-permissions-plan.md`。 |
 | **后台 Bug 修复 + 档案目标/课时 + 图表（2026-10-24）** | ✅ **已完成**：① 管理员刷新进不去后台（`user_roles` 查询失败被缓存成“无角色”30 秒）→ `readRoleRow()` 失败必抛、重试一次、不缓存失败；② 后台看不到老师资料（`user_profiles` RLS 只允许本人读）→ `0026_admin_list_profiles()`（✅ 已执行）+ `admin-profiles` 6/6；③ 档案顶部「目标分数 / 总课时数」存 `extra`，学情分析自动带入；④ 学情分析三张 Chart.js 图（成绩趋势 / 课时消耗 / 模块薄弱）。测试 `role-read` 7 / `admin-profiles` 6 / `student-report` 57 / `archive-students` 46 / `admin-feature-flags` 27；全套 **53 套 / 1780 项**全绿。跨校区权限**只出方案**：`docs/cross-campus-permissions-plan.md`，未动代码/表。 |
 | **学情分析 AI 升级 + 档案体验（2026-10-23）** | ✅ **已完成并上线**：学情报告改六段式（整体学情 / **学习进度** / **分数目标对比** / 优势 / 薄弱与原因 / **针对性提升方案**），提示词要求“像老教师一样推理、每个判断带依据”；免费统计新增「学习进度」「分数目标对比」两节。档案列表去掉补录日期、课后反馈默认折叠 3 条；补录 AI 从正文抽日期；后台用户列表外层容器加高。测试 `student-report` 54 / `student-analysis` 24 / `archive-students` 43 / `backfill` 45 / `admin-feature-flags` 26，全套 **51 套 / 1760 项**全绿。详见 `docs/project-overview.md` §十「最近已完成」与 `docs/analysis-product-brief.md`。 |
 | 第一批 | 空壳工具口径对齐（**没有代码可删**，只改文档）· 非法日期导致 500 已修 · `vision-scores` 防回归测试 |
@@ -281,13 +283,13 @@
 | ⚠️ 测试环境坑（2026-10 已修） | **`profile` 的两条假红不是环境问题，是套件的「测试死结」**：旧版用 `/api/profile` 有没有资料来判断「`user_profiles` 表建没建」，而「表没建」与「表建了但没填」都返回 `null`。清理账号后套件误判没建 → 提交表单 → 把「测试老师」写回去 → 下次跑又红。**2026-10 已修**：直接探测表（200/PGRST205），表在但没资料时**不写**。详见 `tests/profile.test.mjs` 顶部与 `docs/test-data-cleanup.md`。 |
 | ⚠️ 回归怎么跑（2026-10 新增） | **一次只跑一个 runner**。`paper-analysis` 等套件**需要外面先起好服务**，单独跑会干等 ⇒ 别用"一把梭"的批量 runner 跑全套，按 `tests/_run-ui-suites.mjs` 的名单分两批（需要外部服务的 / 自己起服务的）。`plan-generator-ui` 与 `plan-generator-ai` 已登记进那个 runner。 |
 
-**全套回归现状（2026-10-24 实测：52 个 `*.test.mjs` + `verify-checklist.mjs` = 53 套，全绿）**：
+**全套回归现状（2026-10-24 实测：53 个 `*.test.mjs` + `verify-checklist.mjs` = 54 套，全绿）**：
 
-- **53 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1780 项断言**。
+- **54 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1798 项断言**。
 - 任务一修复前 **1690/1692**；两条红都是**测试自身的死结**（`profile` 31/32、`admin-grant90` 17/18），
   已修。修完后 **1691/1691**（`profile` 正常态 **31/31**、`admin-grant90` 18/18）。
-- 2026-10-21 v2 三套 **39 项**；2026-10-23 学情/档案净增 **18 项**；2026-10-24 新增 2 套 **13 项**、
-  旧套件净增 **7 项** ⇒ **53 套 / 1780 项**。
+- 2026-10-21 v2 三套 **39 项**；2026-10-23 学情/档案净增 **18 项**；2026-10-24 新增 3 套 **31 项**、
+  旧套件净增 **7 项** ⇒ **54 套 / 1798 项**。
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -306,7 +308,7 @@ archive-students 46/46     vision-scores 15/15
 manual-score 45/45         student-report 57/57       password-flows 42/42
 student-analysis 24/24     company-export 77/77       backfill 45/45
 admin-feature-flags 27/27  profile 31/31
-role-read 7/7              admin-profiles 6/6
+role-read 7/7              admin-profiles 6/6        admin-archives 18/18
 plan-generator-engine 45/45   plan-generator-subjects 68/68   plan-generator-subjects-new 56/56
 plan-generator-docx 20/20     plan-generator-template 22/22   plan-generator-company 29/29
 plan-generator-archive 40/40  plan-generator-ai-client 36/36  plan-generator-ui 27/27
