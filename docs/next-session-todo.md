@@ -8,8 +8,8 @@
 > ④ 学情分析三张图：成绩趋势 / 课时消耗 / **能力维度雷达（固定 6 维）**；AI 报告支持 **Markdown 表格**；
 > ⑤ **A2 全机构档案总览 + 机构数据大盘**：`0027` / `0028`（✅ 已执行），KPI、饼图、提分折线、校区/月份下钻；
 > ⑥ **Phase 1 权限 RLS/代码**：`0029`（表/列）、`0031`（RLS + RPC scope + 建档快照）、
->    `0032`（Owner 个人直读边界）已执行；Owner/大区只读/老师本人范围已测（`region-scope` 17/17）；
->    `0030` 已于 2026-10-26 执行（owner_count=1 / other_admin=0 / pending=0）；测试库 rolea 已设 Test Owner。
+>    `0032`（Owner 个人直读边界）、`0030`（Owner 切换）已执行；测试前置/降级流程见
+>    `docs/test-owner-runbook.md`；`region-scope` 17/17，全套 **57 套 / 1833 项**全绿。
 > 跨校区**三级完整方案**见 `docs/three-level-permissions-plan.md`；项目总结见
 > `docs/project-summary-and-optimization.md`。
 > 此前：学情报告六段式、档案折叠/标题/日期、后台高度（2026-10-23）；

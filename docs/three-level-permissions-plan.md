@@ -12,8 +12,8 @@
 > - `0031_permissions_phase1_rls.sql` ✅ 已执行（RLS + RPC scope + 建档快照触发器）
 > - `0032_permissions_phase1_owner_self_only.sql` ✅ 已执行（Owner 个人直读只自己；全量只走 admin RPC）
 > - `0030_permissions_phase1_backfill_REVIEW_ONLY.sql` ✅ 已于 2026-10-26 执行（owner=1 / other_admin=0 / pending=0）
-> - 0030 后**测试库**先跑 `tests/test-owner-setup.sql`（rolea = Test Owner），再跑全套；
->   `test-owner-preflight` 会检查，避免整套跑一半才红。
+> - 0030 后**测试库**先跑 `tests/test-owner-grant.sql`（rolea = Test Owner），再跑全套；
+>   跑完立刻跑 `tests/test-owner-revoke.sql` 降回普通 user；`test-owner-preflight` 会检查。
 > - 审阅说明：`docs/three-level-permissions-phase1-migration-review.md`
 >
 > 本文在已上线的 A2（只读总览 + `extra.institutionCampus` 归属标签）基础上，

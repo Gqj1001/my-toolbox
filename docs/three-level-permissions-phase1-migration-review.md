@@ -59,11 +59,12 @@
    代码已写完、编译通过、`region-scope` 17/17、全套 57 套 / 1833 项回归全绿；
 5. 跑待确认查询，先看有多少老师/学生匹配不上；
 6. 在 `0030` 里填临时映射表（或先补老师资料），**最后**执行 `0030`（Owner 切换 + 降级其他 admin）；
-7. **0030 之后（仅测试库）**：执行 `tests/test-owner-setup.sql`，把 rolea 设为 Test Owner；
+7. **0030 之后（仅测试库）**：执行 `tests/test-owner-grant.sql`，把 rolea 设为 Test Owner；
    先跑 `tests/test-owner-preflight.test.mjs`，再跑全套（预期 57 套 / 1833 项全绿）；
+   **跑完立刻执行 `tests/test-owner-revoke.sql`**，把 rolea 降回普通 user。
 8. 验证：
    - 真实 Owner 账号能进 `/admin`；
-   - 原 rolea 测试账号在**生产**已降级（生产不要跑 test-owner-setup）；
+   - 原 rolea 测试账号在**生产**已降级（生产不要跑 grant）；
    - `pending_students` 数量；
    - 大区管理员只读，不能改档案/角色。
 
@@ -85,13 +86,13 @@
 
 1. `0030` 的 Owner 邮箱/降级范围确认无误吗？执行前是否先备份 `user_roles`？
 2. 0030 执行后 `rolea` 会降级为普通 user：**生产**这是预期；
-   **测试库**需执行 `tests/test-owner-setup.sql` 把 rolea 设为 Test Owner，否则所有 admin 测试会红。
+   **测试库**需执行 `tests/test-owner-grant.sql` 把 rolea 设为 Test Owner，否则所有 admin 测试会红。
 3. `test-owner-preflight` 会先检查 rolea 是 admin + owner（或 0030 前 legacy）；
-   不满足时它会明确提示跑 `tests/test-owner-setup.sql`，不会让你跑一半才红。
+   不满足时它会明确提示跑 `tests/test-owner-grant.sql`，不会让你跑一半才红。
 4. 0030 后的测试预期：
-   - 测试库先跑 `tests/test-owner-setup.sql` → `test-owner-preflight` 3/3；
+   - 测试库先跑 `tests/test-owner-grant.sql` → `test-owner-preflight` 3/3；
    - 全套 57 套 / 1833 项全绿；
-   - 生产库只有真实 Owner，**不要**在生产跑 `test-owner-setup.sql`。
+   - 生产库只有真实 Owner，**不要**在生产跑 grant；跑完测试必须跑 `tests/test-owner-revoke.sql`。
 5. 大区/校区清单已建好；回填后“待确认”学生由 Owner 后台手动改。
 
 > 0030 已于 2026-10-26 执行；0029/0031/0032 也已执行。应用代码本轮已 commit + push。

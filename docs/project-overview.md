@@ -29,7 +29,7 @@
 > · **2026-10-26：能力维度雷达 + 档案列表高度 + 0030 测试隔离**：
 >   雷达固定 6 维（计算 / 概念 / 应用 / 创新 / 规范 / 体系），不再正则切原文；
 >   `/admin/archives` 外层按视口高度自适应、表格独立内部滚动；
->   新增 `test-owner-preflight` 与 `tests/test-owner-setup.sql`（**只在测试库**给 rolea 设 Test Owner）。
+>   新增 `test-owner-preflight` 与 `tests/test-owner-grant.sql` / `tests/test-owner-revoke.sql`（测试前临时提权、测试后立刻降级）。
 > · **2026-10-24：Phase 1 权限 RLS/代码上线**：`0029`（regions/campuses/加列）与
 >   `0031`（Owner/大区/校区/老师范围、学生与历史 RLS、RPC scope、建档快照触发器）已执行；
 >   `0032` 修正 Owner 个人直读边界（全量只走 admin RPC）；`viewer`/`requireOwner`/后台入口识别 `admin_scope`；
