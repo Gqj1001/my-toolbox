@@ -427,7 +427,7 @@ try {
   {
     const items = [1, 2, 3, 4].map((i) => ({
       student_name: STU,
-      text: `【课堂内容】${i === 4 ? "函数的单调性" : `第 ${i} 次课`}\n【主要失分点】第 ${i} 个失分点`,
+      text: `【课堂内容】${i === 4 ? "函数的单调性" : `第 ${i} 次课`}\n【主要失分点】计算失误：第 ${i} 个失分点`,
       date: `2026-10-${10 + i}`,
       tool: "feedback",
       title: `课后反馈（补录 · 10月${10 + i}日）`,
@@ -466,10 +466,10 @@ try {
     record("★免费学情分析页也出现「学习进度」「分数目标对比」两节（与 AI 摘要同源）",
       folded?.hasProgressSection === true && folded?.hasTargetSection === true,
       JSON.stringify({ progress: folded?.hasProgressSection, target: folded?.hasTargetSection }));
-    record("★学情分析图表真的渲染了（成绩趋势折线图 + 课时消耗环形图 + 模块薄弱雷达图）",
+    record("★学情分析图表真的渲染了（成绩趋势折线图 + 课时消耗环形图 + 能力维度雷达图）",
       (folded?.chartLabels ?? []).includes("成绩趋势折线图") &&
         (folded?.chartLabels ?? []).includes("课时消耗环形图") &&
-        (folded?.chartLabels ?? []).includes("模块薄弱雷达图"),
+        (folded?.chartLabels ?? []).includes("能力维度雷达图"),
       JSON.stringify(folded?.chartLabels));
 
     await inDoc(`

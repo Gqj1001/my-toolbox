@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getViewer, type AppRole } from "@/lib/viewer";
+import { getViewer, type AdminScope, type AppRole } from "@/lib/viewer";
 
 /**
  * 应用层角色：数据库 user_role 枚举的超集，未建行的用户按 'user' 处理。
@@ -11,6 +11,15 @@ export { DEFAULT_ROLE } from "@/lib/viewer";
 
 export function isAdminRole(role: AppRole | null | undefined): boolean {
   return role === "admin";
+}
+
+/**
+ * 是否 Owner。
+ * 0030 执行前，`admin_scope` 为 null 的 legacy admin 仍按 Owner 兼容；
+ * 0030 执行后，其他 admin 已降级，只有 `admin_scope='owner'` 生效。
+ */
+export function isOwnerRole(role: AppRole | null | undefined, scope: AdminScope | null | undefined): boolean {
+  return role === "admin" && (scope === "owner" || scope == null);
 }
 
 /**
@@ -32,24 +41,43 @@ export async function getCurrentUserRole(): Promise<AppRole | null> {
  */
 export async function getCurrentUserWithRole() {
   const viewer = await getViewer();
-  return { user: viewer.user, role: viewer.role };
+  return {
+    user: viewer.user,
+    role: viewer.role,
+    adminScope: viewer.adminScope,
+    scopeId: viewer.scopeId,
+    campusId: viewer.campusId,
+  };
 }
 
 /**
- * 校验调用者身份（Server Action / Route Handler 的权威校验）。
- * 前端隐藏 UI 不构成安全边界，所有管理操作都必须先过这里。
+ * 校验调用者是否为 Owner（Server Action / Route Handler 的权威校验）。
+ * 所有管理写操作都必须先过这里；大区/校区管理者一期只读，不走这个口子。
  */
-export async function requireAdmin() {
+export async function requireOwner() {
   const viewer = await getViewer();
 
   if (!viewer.user) {
     return { ok: false as const, reason: "unauthenticated" as const };
   }
-  if (!isAdminRole(viewer.role)) {
+  if (!isOwnerRole(viewer.role, viewer.adminScope)) {
     return { ok: false as const, reason: "forbidden" as const };
   }
 
-  return { ok: true as const, user: viewer.user, role: viewer.role as AppRole };
+  return {
+    ok: true as const,
+    user: viewer.user,
+    role: viewer.role as AppRole,
+    adminScope: viewer.adminScope,
+  };
+}
+
+/**
+ * 兼容旧调用名：**现在等价于 requireOwner()**。
+ * 大区/校区管理者不再能通过这个口子做全局写操作（会员、开关、关键词、角色等）。
+ */
+export async function requireAdmin() {
+  return requireOwner();
 }
 
 export { getViewer };

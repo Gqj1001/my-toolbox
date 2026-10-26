@@ -1,8 +1,20 @@
 # 三级权限架构升级方案（Owner / 大区 / 校区 / 教师）
 
-> 2026-10-24 · **只出方案，未写任何代码/迁移**。
-> 用户拍板方向：作者（Owner）> 大区管理者 > 校区管理者 > 普通教师；
-> 目前 Owner 只看，不改别人校区档案；历史归属先按老师当前校区推断，错了后台手动改。
+> 2026-10-24 · **Phase 1 RLS/代码已完成并全绿；0030 Owner 切换仍冻结**。
+> 用户拍板：作者（Owner）> 大区管理者 > 校区管理者 > 普通教师；
+> **Owner 唯一 = `1502569564@qq.com`**；其他 admin 全部降级为普通 user；
+> 老师一人只能属于一个校区；大区/校区清单由 Owner 在后台建；
+> 一期只做 **Owner + 大区只读**，校区管理员二期；历史回填后“待确认”由 Owner 后台手动改；
+> 学生归属用**快照**，不跟老师调动走；大区/校区管理者一期**只读**。
+>
+> 迁移状态：
+> - `0029_permissions_phase1_schema.sql` ✅ 已执行（只建表/加列）
+> - `0031_permissions_phase1_rls.sql` ✅ 已执行（RLS + RPC scope + 建档快照触发器）
+> - `0032_permissions_phase1_owner_self_only.sql` ✅ 已执行（Owner 个人直读只自己；全量只走 admin RPC）
+> - `0030_permissions_phase1_backfill_REVIEW_ONLY.sql` ⛔ **仍冻结**（回填+Owner切换，最后跑）
+> - 0030 后**测试库**先跑 `tests/test-owner-setup.sql`（rolea = Test Owner），再跑全套；
+>   `test-owner-preflight` 会检查，避免整套跑一半才红。
+> - 审阅说明：`docs/three-level-permissions-phase1-migration-review.md`
 >
 > 本文在已上线的 A2（只读总览 + `extra.institutionCampus` 归属标签）基础上，
 > 给出**真正的三级权限**需要动哪些表、RLS 怎么写、历史数据怎么迁、风险和工作量。

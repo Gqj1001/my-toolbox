@@ -1,10 +1,11 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { fetchAllUsers } from "@/app/admin/membership-actions";
 import FeatureFlagList from "@/components/feature-flag-list";
 import MemberActions from "@/components/member-actions";
 import RoleSelect from "@/components/role-select";
 import SiteHeader from "@/components/site-header";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
+import { getCurrentUserWithRole, isOwnerRole } from "@/lib/auth-role";
 import { getFeatureFlags } from "@/lib/feature-flags";
 import { getProfiles } from "@/lib/user-profile-db";
 import { subjectName } from "@/lib/user-profile";
@@ -19,7 +20,7 @@ function formatTime(value: string | null) {
 
 export default async function AdminPage() {
   // proxy.ts 已经拦截过一轮；这里再校验一次，避免守卫被绕过时页面仍然渲染
-  const { user, role } = await getCurrentUserWithRole();
+  const { user, role, adminScope } = await getCurrentUserWithRole();
 
   if (role !== "admin") {
     return (
@@ -32,6 +33,11 @@ export default async function AdminPage() {
         </main>
       </>
     );
+  }
+
+  // 大区/校区管理者一期只读：不能进用户管理/会员/开关，只能去全机构档案总览。
+  if (!isOwnerRole(role, adminScope)) {
+    redirect("/admin/archives");
   }
 
   const result = await fetchAllUsers();

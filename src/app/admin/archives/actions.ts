@@ -2,17 +2,17 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { getCurrentUserWithRole } from "@/lib/auth-role";
+import { requireOwner } from "@/lib/auth-role";
 import { setStudentCampus } from "@/lib/admin-archives";
 
 /**
  * 只改「机构校区归属标签」，不改档案正文/分数。
- * 非管理员直接拒绝；数据库函数内部还会再校验一次 `public.is_admin()`。
+ * 只 Owner 可改；大区/校区管理者一期只读。数据库函数内部还会再校验一次 `is_owner()`。
  */
 export async function setArchiveCampusAction(formData: FormData) {
-  const { role } = await getCurrentUserWithRole();
-  if (role !== "admin") {
-    redirect("/tools?error=admin_required");
+  const guard = await requireOwner();
+  if (!guard.ok) {
+    redirect(guard.reason === "unauthenticated" ? "/login" : "/tools?error=admin_required");
   }
 
   const rawReturn = String(formData.get("returnTo") ?? "/admin/archives");

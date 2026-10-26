@@ -1,14 +1,16 @@
 # 下个会话待办
 
-> **当前状态一句话**（2026-10-24，学情图表 2.0 + 机构数据大盘 + A2 总览）：
-> 全站 **55 个套件 / 1811 项断言全绿**（2026-10-24 实测）。
+> **当前状态一句话**（2026-10-26，能力维度雷达 + 列表高度 + 0030 测试隔离）：
+> 全站 **57 个套件 / 1833 项断言全绿**（2026-10-26 实测）。
 > 2026-10-24 本批：① 管理员刷新进不去后台（`user_roles` 查询失败被缓存成“无角色”30 秒）已修；
 > ② 后台看不到老师资料（`user_profiles` RLS 只允许本人读）改用 `0026_admin_list_profiles()`（✅ 已执行）；
 > ③ 档案顶部新增「目标分数 / 总课时数」（存 `extra`，不新增列），学情分析自动带入；
-> ④ 学情分析三张图：成绩趋势 / 课时消耗 / **模块薄弱雷达**（先提知识点）；AI 报告支持 **Markdown 表格**；
-> ⑤ **A2 全机构档案总览 + 机构数据大盘**：`0027` / `0028`（✅ 已执行），KPI、饼图、提分折线、校区/月份下钻。
-> 跨校区**三级分级**尚未做：完整方案见 `docs/three-level-permissions-plan.md`；项目总结见
-> `docs/project-summary-and-optimization.md`。**权限代码未动，等拍板。**
+> ④ 学情分析三张图：成绩趋势 / 课时消耗 / **能力维度雷达（固定 6 维）**；AI 报告支持 **Markdown 表格**；
+> ⑤ **A2 全机构档案总览 + 机构数据大盘**：`0027` / `0028`（✅ 已执行），KPI、饼图、提分折线、校区/月份下钻；
+> ⑥ **Phase 1 权限 RLS/代码**：`0029`（表/列）、`0031`（RLS + RPC scope + 建档快照）、
+>    `0032`（Owner 个人直读边界）已执行；Owner/大区只读/老师本人范围已测（`region-scope` 17/17），`0030` **仍冻结**等确认。
+> 跨校区**三级完整方案**见 `docs/three-level-permissions-plan.md`；项目总结见
+> `docs/project-summary-and-optimization.md`。
 > 此前：学情报告六段式、档案折叠/标题/日期、后台高度（2026-10-23）；
 > v2 三套 39 项。测试明细见第七节。
 > 最近三批上线了 **🗂 学员档案三格（年级/学校/学管师）**、**👤 教师个人资料**（姓名/学科/校区 +
@@ -246,6 +248,7 @@
 
 | 事项 | 结论 |
 |---|---|
+| **Phase 1 权限 RLS/代码（2026-10-24）** | ✅ **代码/RLS 已完成并全绿**：`0029`（regions/campuses/加列）、`0031`（`is_owner`/`is_region_admin`/`can_read_student`、学生/历史 RLS、RPC scope、建档快照触发器）、`0032`（Owner 个人直读边界）已执行；`viewer`/`requireOwner`/后台入口升级为 `admin_scope`；大区管理员只读、老师本人范围、Owner 全量已测。测试 `region-scope` 17/17；全套 **57 套 / 1833 项**全绿。⛔ `0030`（回填+Owner 切换）**仍冻结**；0030 后先在**测试库**跑 `tests/test-owner-setup.sql` 设 Test Owner，否则全套会红。 |
 | **学情图表 2.0 + 机构数据大盘（2026-10-24）** | ✅ **已完成**：① 模块薄弱改**雷达图**，先提核心知识点（优先匹配试卷/方案模块，去掉解释词/泛化短语）；② AI 报告支持 **Markdown 表格**，前端解析成规整 `<table>`；③ `/admin/archives` 加四张 KPI（总学员/本月新增/本月估算课时/进行中方案）、各校区饼图、整体提分折线，点击下钻校区/月份；④ `0028` 已执行。测试 `markdown-tables` 7 / `student-analysis` 25 / `admin-archives` 23；全套 **55 套 / 1811 项**全绿。 |
 | **A2 全机构档案总览（2026-10-24）** | ✅ **已完成并上线**：`0027_admin_archives_a2.sql`（`admin_list_all_students()` 只读搜索/筛选 + `admin_set_student_campus()` 归属标签纠正，SECURITY DEFINER + `is_admin()`）；后台 `/admin/archives` 从 `/admin` 进入。口径：老板只看、校区=机构校区、历史默认按老师当前校区、推错可手动纠正；**未动现有 RLS/老师端/表结构**。测试 `admin-archives` 18/18；全套 **54 套 / 1798 项**全绿。校区分级（校区管理员）未做，见 `docs/cross-campus-permissions-plan.md`。 |
 | **后台 Bug 修复 + 档案目标/课时 + 图表（2026-10-24）** | ✅ **已完成**：① 管理员刷新进不去后台（`user_roles` 查询失败被缓存成“无角色”30 秒）→ `readRoleRow()` 失败必抛、重试一次、不缓存失败；② 后台看不到老师资料（`user_profiles` RLS 只允许本人读）→ `0026_admin_list_profiles()`（✅ 已执行）+ `admin-profiles` 6/6；③ 档案顶部「目标分数 / 总课时数」存 `extra`，学情分析自动带入；④ 学情分析三张 Chart.js 图（成绩趋势 / 课时消耗 / 模块薄弱）。测试 `role-read` 7 / `admin-profiles` 6 / `student-report` 57 / `archive-students` 46 / `admin-feature-flags` 27；全套 **53 套 / 1780 项**全绿。跨校区权限**只出方案**：`docs/cross-campus-permissions-plan.md`，未动代码/表。 |
@@ -285,13 +288,14 @@
 | ⚠️ 测试环境坑（2026-10 已修） | **`profile` 的两条假红不是环境问题，是套件的「测试死结」**：旧版用 `/api/profile` 有没有资料来判断「`user_profiles` 表建没建」，而「表没建」与「表建了但没填」都返回 `null`。清理账号后套件误判没建 → 提交表单 → 把「测试老师」写回去 → 下次跑又红。**2026-10 已修**：直接探测表（200/PGRST205），表在但没资料时**不写**。详见 `tests/profile.test.mjs` 顶部与 `docs/test-data-cleanup.md`。 |
 | ⚠️ 回归怎么跑（2026-10 新增） | **一次只跑一个 runner**。`paper-analysis` 等套件**需要外面先起好服务**，单独跑会干等 ⇒ 别用"一把梭"的批量 runner 跑全套，按 `tests/_run-ui-suites.mjs` 的名单分两批（需要外部服务的 / 自己起服务的）。`plan-generator-ui` 与 `plan-generator-ai` 已登记进那个 runner。 |
 
-**全套回归现状（2026-10-24 实测：54 个 `*.test.mjs` + `verify-checklist.mjs` = 55 套，全绿）**：
+**全套回归现状（2026-10-26 实测：56 个 `*.test.mjs` + `verify-checklist.mjs` = 57 套，全绿）**：
 
-- **55 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1811 项断言**。
+- **57 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1833 项断言**。
 - 任务一修复前 **1690/1692**；两条红都是**测试自身的死结**（`profile` 31/32、`admin-grant90` 17/18），
   已修。修完后 **1691/1691**（`profile` 正常态 **31/31**、`admin-grant90` 18/18）。
-- 2026-10-21 v2 三套 **39 项**；2026-10-23 学情/档案净增 **18 项**；2026-10-24 新增 4 套 **43 项**、
-  旧套件净增 **13 项** ⇒ **55 套 / 1811 项**。
+- 2026-10-21 v2 三套 **39 项**；2026-10-23 学情/档案净增 **18 项**；2026-10-24 新增 5 套 **60 项**
+  （A2/大盘/图表/权限）、旧套件净增 **8 项**；2026-10-26 新增 `test-owner-preflight` **3 项**
+  ⇒ **57 套 / 1833 项**。
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -311,7 +315,7 @@ manual-score 45/45         student-report 57/57       password-flows 42/42
 student-analysis 25/25     company-export 77/77       backfill 45/45
 admin-feature-flags 27/27  profile 31/31
 role-read 7/7              admin-profiles 6/6        admin-archives 23/23
-markdown-tables 7/7
+markdown-tables 7/7            region-scope 17/17         test-owner-preflight 3/3
 plan-generator-engine 45/45   plan-generator-subjects 68/68   plan-generator-subjects-new 56/56
 plan-generator-docx 20/20     plan-generator-template 22/22   plan-generator-company 29/29
 plan-generator-archive 40/40  plan-generator-ai-client 36/36  plan-generator-ui 27/27

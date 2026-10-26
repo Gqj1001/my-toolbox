@@ -254,10 +254,27 @@ const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subje
       cleanHistoryTitle("期中（补录）"),
     ].join(" / "));
 
-  record("★图表数据：薄弱模块按分号拆开并计数（导数/解析几何各 1）",
-    r.weaknessModules.some((m) => m.name.includes("函数单调性") && m.count === 1) &&
-      r.weaknessModules.some((m) => m.name.includes("解析几何") && m.count === 1),
-    JSON.stringify(r.weaknessModules));
+  const radarNames = ["基础计算能力", "概念理解能力", "综合应用能力", "创新思维能力", "答题规范程度", "知识体系完整性"];
+  record("★雷达固定 6 维：名称/顺序固定（不切原文）",
+    r.skillRadar.length === 6 &&
+      r.skillRadar.every((d, i) => d.name === radarNames[i]),
+    JSON.stringify(r.skillRadar));
+}
+
+{
+  // 六个维度的关键词映射逐项验（一条反馈同时命中 6 类）
+  const rows = [
+    ROW({
+      id: 51, tool: "feedback", date: "2026-10-22", title: "六维反馈",
+      text: "【主要失分点】计算粗心；审题理解概念不清；中档题应用综合；难题创新拓展；步骤不规范漏步骤；知识体系零散框架。",
+    }),
+  ];
+  const r = buildStudentReport({ name: "六维", student: STUDENT, rows });
+  const counts = Object.fromEntries(r.skillRadar.map((d) => [d.key, d.count]));
+  record("★六维映射：计算/概念/应用/创新/规范/体系各命中 1 次",
+    counts.calc === 1 && counts.concept === 1 && counts.application === 1 &&
+      counts.innovation === 1 && counts.standard === 1 && counts.system === 1,
+    JSON.stringify(r.skillRadar));
 }
 
 {

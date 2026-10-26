@@ -22,15 +22,24 @@
 >   （`profile` 正常态 **31/31**、`admin-grant90` 18/18）⇒ 任务一 **1691/1691**；
 >   任务二 `signup-trial-vip` **12 项**；v2 新增 3 套 **39 项**；2026-10-23 学情/档案净增 **18 项**；
 >   2026-10-24 后台/档案/图表新增 2 套 **13 项**、旧套件净增 **7 项**；
->   A2 总览新增 1 套 **18 项**；同日晚间图表/表格/大盘新增 1 套 **7 项**、旧套件净增 **6 项**
->   ⇒ **55 套 / 1811 项**。
->   文档里旧的「39 套 / 1267 项」「48 套 / 1703 项」「51 套 / 1742 项」「51 套 / 1760 项」「53 套 / 1780 项」「54 套 / 1798 项」作废。
+>   A2 总览新增 1 套 **18 项**；同日晚间图表/表格/大盘新增 1 套 **7 项**、旧套件净增 **6 项**；
+>   Phase 1 权限新增 1 套 **17 项**；2026-10-26 能力雷达/高度/测试隔离新增 1 套 **3 项**
+>   ⇒ **57 套 / 1833 项**。
+>   文档里旧的「39 套 / 1267 项」「48 套 / 1703 项」「51 套 / 1742 项」「51 套 / 1760 项」「53 套 / 1780 项」「54 套 / 1798 项」「55 套 / 1811 项」「56 套 / 1828 项」作废。
+> · **2026-10-26：能力维度雷达 + 档案列表高度 + 0030 测试隔离**：
+>   雷达固定 6 维（计算 / 概念 / 应用 / 创新 / 规范 / 体系），不再正则切原文；
+>   `/admin/archives` 外层按视口高度自适应、表格独立内部滚动；
+>   新增 `test-owner-preflight` 与 `tests/test-owner-setup.sql`（**只在测试库**给 rolea 设 Test Owner）。
+> · **2026-10-24：Phase 1 权限 RLS/代码上线**：`0029`（regions/campuses/加列）与
+>   `0031`（Owner/大区/校区/老师范围、学生与历史 RLS、RPC scope、建档快照触发器）已执行；
+>   `0032` 修正 Owner 个人直读边界（全量只走 admin RPC）；`viewer`/`requireOwner`/后台入口识别 `admin_scope`；
+>   大区管理员只读。**`0030`（回填 + Owner 切换）仍冻结**，等 Owner 确认后最后跑。
 > · **2026-10-24：学情图表 2.0 + 机构数据大盘**：
 >   「模块薄弱」改为**雷达图**，先从试卷/方案/反馈里提取核心知识点（不再拿整段反馈当标签）；
 >   AI 报告允许并解析 **Markdown 表格**；`/admin/archives` 顶部加 KPI 卡片（总学员/本月新增/本月估算课时/进行中方案）、
 >   各校区饼图、整体提分折线，点击图可下钻到校区/月份；迁移 `0028_admin_archive_stats.sql` 已执行。
 >   三级权限方案与项目总结已写成文档（见 `docs/three-level-permissions-plan.md` /
->   `docs/project-summary-and-optimization.md`），**权限代码未动**。
+>   `docs/project-summary-and-optimization.md`）；权限代码见上面的 Phase 1 说明。
 > · **2026-10-24：跨校区 A2 只读总览上线**：迁移 `0027_admin_archives_a2.sql`
 >   （`admin_list_all_students()` + 归属标签纠正），后台 `/admin/archives`；
 >   老板只看、校区=机构校区、历史默认按老师当前校区、推错可手动纠正；未动现有 RLS/老师端。
@@ -520,6 +529,8 @@ vs 网站"谁能进得来"），混着改容易一边修好另一边弄坏。所
 | ✅ | ~~**执行 `0026_admin_list_profiles.sql`**（后台读取教师姓名/校区）~~ | — | **2026-10-24 已执行并验证**：`admin_list_profiles()` 可调用，后台用户列表显示真实姓名/校区（`admin-profiles` 6/6）。 |
 | ✅ | ~~**执行 `0027_admin_archives_a2.sql`**（A2 全机构档案总览 + 归属纠正）~~ | — | **2026-10-24 已执行并验证**：`admin_list_all_students()` / `admin_set_student_campus()` 可调用，`/admin/archives` 跨老师可见、筛选/纠正/恢复全通（`admin-archives` 18/18）。 |
 | ✅ | ~~**执行 `0028_admin_archive_stats.sql`**（机构数据大盘 + 月份下钻）~~ | — | **2026-10-24 已执行并验证**：`admin_archive_stats()` / 新版 `admin_list_all_students(...p_month)` 可调用，KPI、饼图、提分折线、月份筛选全通（`admin-archives` 23/23）。 |
+| ✅ | ~~**执行 `0031_permissions_phase1_rls.sql`**（Phase 1 RLS + RPC scope）~~ | — | **2026-10-24 已执行并验证**：Owner/大区/老师范围、学生/历史 RLS、RPC scope、建档快照触发器全通（`region-scope` 17/17）。⛔ `0030` 仍冻结。 |
+| ✅ | ~~**执行 `0032_permissions_phase1_owner_self_only.sql`**（Owner 个人直读边界）~~ | — | **2026-10-24 已执行**：Owner 个人 `/api/students` 只读自己，全量仍走 admin RPC；`students-unified` 同名隔离恢复 91/91。 |
 | 🔴 | **`public/tools/*.html` 本机模式的默认模型名**（7 处仍是已停用的 `deepseek-chat`） | 1 小时 | 服务端 5 个路由第四批已改对，**工具页那 7 处没改**（那是工具会话地盘，只在明确授权时动） |
 | 🟠 | 观察「AI 自由写知识点」的归类质量（"其他"桶占比） | 跟着验收一起看 | 落到「其他」太多会让报告的模块失分统计退化；必要时给 `kp-dict.js` 加词 |
 | ✅ | ~~**公司模板导出 · 附件3 的接线**~~ | — | **2026-10 第十八批后半已做**：数学方案页有「🏢 公司模板导出（附件3）」；`plan-generator` 也复用同一引擎。原方案留档 `docs/company-attachment3-plan.md`。 |
@@ -547,7 +558,8 @@ vs 网站"谁能进得来"），混着改容易一边修好另一边弄坏。所
 
 | 完成项 | 说明 |
 |---|---|
-| **📊 学情图表 2.0 + 机构数据大盘（2026-10-24）** | ① **模块薄弱雷达**：先提取核心知识点（优先匹配试卷/方案模块，去掉「用错/不完整/基础一般」等解释词），再画 Radar；不再把整段反馈当标签。<br>② **AI 报告 Markdown 表格**：提示词允许 `| 表头 |` 表格；前端 `parseMarkdownTables` 解析成规整 `<table>`，文字仍保留换行。<br>③ **`/admin/archives` 大盘**：总学员 / 本月新增 / 本月估算课时 / 进行中方案四张 KPI；各校区饼图、整体提分折线；点击扇形/数据点下钻到 `?campus=` / `?month=`。<br>④ 迁移 `0028_admin_archive_stats.sql`（统计 JSON + 总览月份参数）✅ 已执行；未改表结构/RLS/老师端。<br>测试：`markdown-tables` 7 / `student-analysis` 25 / `admin-archives` 23；全套 **55 套 / 1811 项**全绿。 |
+| **🔐 Phase 1 权限 RLS/代码（2026-10-24）** | `0029`（regions/campuses/加列）、`0031`（`is_owner`/`is_region_admin`/`can_read_student`、学生/历史 RLS、RPC scope、建档快照触发器）、`0032`（Owner 个人直读边界）已执行；`viewer`/`requireOwner`/后台入口识别 `admin_scope`；大区管理员只读、老师本人范围、Owner 全量。测试 `region-scope` 17/17（含直接查学生/历史表的 RLS）；全套 **57 套 / 1833 项**全绿。⛔ `0030`（回填+Owner 切换）仍冻结；0030 后测试库需先跑 `tests/test-owner-setup.sql`。 |
+| **📊 学情图表 2.0 + 机构数据大盘（2026-10-24）** | ① **能力维度雷达（固定 6 维）**：基础计算 / 概念理解 / 综合应用 / 创新思维 / 答题规范 / 知识体系；按错因与难度关键词统计失分频次，**不再从原文正则切词**。<br>② **AI 报告 Markdown 表格**：提示词允许 `| 表头 |` 表格；前端 `parseMarkdownTables` 解析成规整 `<table>`，文字仍保留换行。<br>③ **`/admin/archives` 大盘**：总学员 / 本月新增 / 本月估算课时 / 进行中方案四张 KPI；各校区饼图、整体提分折线；点击扇形/数据点下钻到 `?campus=` / `?month=`；列表外层按视口高度自适应，表格独立内部滚动。<br>④ 迁移 `0028_admin_archive_stats.sql`（统计 JSON + 总览月份参数）✅ 已执行；未改表结构/RLS/老师端。<br>测试：`markdown-tables` 7 / `student-analysis` 25 / `admin-archives` 24；全套 **57 套 / 1833 项**全绿。 |
 | **🗂 跨校区 A2 只读总览（2026-10-24）** | 用户拍板：老板只看、校区=机构校区、历史默认按创建老师当前校区、推错后台手动纠正、目前只有老板一人。落地迁移 `0027_admin_archives_a2.sql`：`admin_list_all_students()`（SECURITY DEFINER 只读，搜索 + 机构校区/老师筛选 + 分页）与 `admin_set_student_campus()`（只改 `extra.institutionCampus` 归属标签，不改档案正文）；后台页面 `/admin/archives`，从 `/admin` 的「🗂 全机构档案总览」进入。**未动现有 RLS、未改老师端、未加表/列。** 测试 `admin-archives` 18/18（跨老师可见、筛选、归属纠正/恢复）；全套 **54 套 / 1798 项**全绿。 |
 | **🐞 后台两个线上 Bug + 档案目标/课时 + 学情图表（2026-10-24）** | ① **管理员刷新进不去后台**：根因是 `user_roles` 查询失败被当成“无角色”写进 30 秒缓存；改走 `readRoleRow()`（失败必抛、默认重试一次、不缓存失败），中间件与页面侧都改。回归 `role-read` 7 + `admin-feature-flags` 连续刷新 3 次。<br>② **后台看不到老师资料**：根因是 `user_profiles` RLS 只允许本人读；新增迁移 `0026_admin_list_profiles.sql`（SECURITY DEFINER + `is_admin()`，只返回四列），后台改调该 RPC。✅ 已执行；回归 `admin-profiles` 6。<br>③ **档案顶部**新增「目标分数 / 总课时数」输入（存 `extra`，**不新增列**），学情分析自动带入目标对比/课时进度。<br>④ **学情图表**：引入 `chart.js`，在文字上方渲染成绩趋势折线、课时消耗环形、模块薄弱条形三张图（数据同源、纯前端）。<br>⑤ **跨校区权限**只出方案 `docs/cross-campus-permissions-plan.md`，未动代码/表。测试：`student-report` 57 / `archive-students` 46 / `admin-feature-flags` 27 / `admin-profiles` 6 / `role-read` 7；全套 **53 套 / 1780 项**全绿。 |
 | **🧠 学情分析 AI 升级 + 档案体验优化（2026-10-23）** | ① **学情分析**：新增「学习进度」（最近反馈的【课堂内容】/【下节课内容】对照方案【逐次课表】第几条）、「分数目标对比」（初始分/本次分/目标分/差距/提升速度）、「针对性提升方案」；提示词升级为**六段式**并明确要求“像老教师一样推理，不要罗列数据”。<br>② **档案列表**：补录记录的「（补录 · 日期）」后缀不再显示；课后反馈默认只展示最近 3 条，其余用「展开全部（共 X 条）」折叠。<br>③ **补录 AI**：提示词要求从正文抽 `facts.examDate`（如「8月25日数学课反馈」），预览日期框自动带出。<br>④ **后台用户列表**：外层容器 `min-h-[55vh]` + 主区 `min-h-[calc(100dvh-3.5rem)]`，一进后台就能看到表头和首行。<br>测试：`student-report` 54 / `student-analysis` 24 / `archive-students` 43 / `backfill` 45 / `admin-feature-flags` 26，全套 51 套 / 1760 项全绿。 |

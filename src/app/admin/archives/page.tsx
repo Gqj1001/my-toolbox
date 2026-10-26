@@ -31,7 +31,7 @@ export default async function AdminArchivesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { role } = await getCurrentUserWithRole();
+  const { role, adminScope } = await getCurrentUserWithRole();
   if (role !== "admin") {
     return (
       <>
@@ -85,21 +85,31 @@ export default async function AdminArchivesPage({
     .sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
   const total = filtered.total;
   const tooManyOptions = all.rows.length >= 1000;
+  const scopeLabel = adminScope === "region" ? "本大区" : adminScope === "campus" ? "本校区" : "全机构";
 
   return (
     <>
       <SiteHeader role="admin" current="/admin" />
-      <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-7xl flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
+      <main className="mx-auto flex h-[calc(100dvh-64px)] min-h-[calc(100dvh-64px)] w-full max-w-7xl flex-1 flex-col overflow-hidden px-6 py-6">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
         <Link href="/admin" className="w-fit text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
           ← 返回管理后台
         </Link>
 
         <header className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">全机构档案总览</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            {scopeLabel}档案总览
+          </h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-300">
-            只读总览：老板可以看所有校区的学生档案，但不能在这里改档案正文。
-            “校区”指老师所在的机构校区（如燕郊 / 大厂）；默认按创建老师当前校区推断，
-            推错时可在最右列单独纠正这个学生的归属标签。
+            {adminScope === "region"
+              ? "大区管理者：只看本大区的学生档案，只读；不能改档案正文或老师资料。"
+              : adminScope === "campus"
+                ? "校区管理者：只看本校区的学生档案，只读；不能改档案正文或老师资料。"
+                : "只读总览：老板可以看所有校区的学生档案，但不能在这里改档案正文。"}
+            “校区”指老师所在的机构校区（如燕郊 / 大厂）；默认按创建老师当前校区推断。
+            {adminScope === "region" || adminScope === "campus"
+              ? "归属纠正仅 Owner 可用。"
+              : "推错时可在最右列单独纠正这个学生的归属标签。"}
           </p>
         </header>
 
@@ -181,9 +191,9 @@ export default async function AdminArchivesPage({
           ) : null}
         </div>
 
-        <div className="overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <div className="max-h-[60vh] min-h-[16rem] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
           <table className="w-full min-w-[1000px] border-collapse text-left text-sm">
-            <thead className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+            <thead className="sticky top-0 z-10 bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
               <tr>
                 <th className={th}>学生</th>
                 <th className={th}>年级</th>
@@ -198,7 +208,7 @@ export default async function AdminArchivesPage({
             </thead>
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {filtered.rows.map((r) => (
-                <ArchiveRow key={r.id} row={r} returnTo={returnTo(q, campus, teacher, month)} />
+                <ArchiveRow key={r.id} row={r} returnTo={returnTo(q, campus, teacher, month)} canEdit={adminScope === null || adminScope === "owner"} />
               ))}
               {filtered.rows.length === 0 ? (
                 <tr>
@@ -209,6 +219,7 @@ export default async function AdminArchivesPage({
               ) : null}
             </tbody>
           </table>
+        </div>
         </div>
       </main>
     </>
@@ -228,7 +239,7 @@ function Kpi({ label, value, unit, hint }: { label: string; value: number; unit:
   );
 }
 
-function ArchiveRow({ row, returnTo }: { row: AdminArchiveRow; returnTo: string }) {
+function ArchiveRow({ row, returnTo, canEdit }: { row: AdminArchiveRow; returnTo: string; canEdit: boolean }) {
   return (
     <tr className="align-top">
       <td className={`${cell} font-medium text-zinc-900 dark:text-zinc-100`}>{row.name}</td>
@@ -247,31 +258,35 @@ function ArchiveRow({ row, returnTo }: { row: AdminArchiveRow; returnTo: string 
         {row.updatedAt ? new Date(row.updatedAt).toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" }) : "—"}
       </td>
       <td className={cell}>
-        <div className="flex flex-col gap-1.5">
-          <form action={setArchiveCampusAction} className="flex items-center gap-1">
-            <input type="hidden" name="id" value={row.id} />
-            <input type="hidden" name="returnTo" value={returnTo} />
-            <input
-              name="campus"
-              defaultValue={row.institutionCampus}
-              placeholder="纠正机构校区"
-              className="h-8 w-28 rounded-lg border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            />
-            <button type="submit" className="h-8 rounded-lg border border-zinc-300 px-2 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
-              保存
-            </button>
-          </form>
-          {row.campusSource === "manual" ? (
-            <form action={setArchiveCampusAction}>
+        {canEdit ? (
+          <div className="flex flex-col gap-1.5">
+            <form action={setArchiveCampusAction} className="flex items-center gap-1">
               <input type="hidden" name="id" value={row.id} />
               <input type="hidden" name="returnTo" value={returnTo} />
-              <input type="hidden" name="campus" value="" />
-              <button type="submit" className="text-left text-xs text-zinc-500 underline hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
-                恢复按老师校区
+              <input
+                name="campus"
+                defaultValue={row.institutionCampus}
+                placeholder="纠正机构校区"
+                className="h-8 w-28 rounded-lg border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              />
+              <button type="submit" className="h-8 rounded-lg border border-zinc-300 px-2 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                保存
               </button>
             </form>
-          ) : null}
-        </div>
+            {row.campusSource === "manual" ? (
+              <form action={setArchiveCampusAction}>
+                <input type="hidden" name="id" value={row.id} />
+                <input type="hidden" name="returnTo" value={returnTo} />
+                <input type="hidden" name="campus" value="" />
+                <button type="submit" className="text-left text-xs text-zinc-500 underline hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
+                  恢复按老师校区
+                </button>
+              </form>
+            ) : null}
+          </div>
+        ) : (
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">只读</span>
+        )}
       </td>
     </tr>
   );

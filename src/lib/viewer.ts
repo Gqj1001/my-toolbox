@@ -16,6 +16,9 @@ import {
 /** 应用层角色：数据库 user_role 枚举的超集，未建行的用户按 'user' 处理 */
 export type AppRole = "admin" | "user";
 
+/** 管理员范围：0030 前 admin_scope 为 null 的 legacy admin 按 owner 兼容 */
+export type AdminScope = "owner" | "region" | "campus" | null;
+
 export const DEFAULT_ROLE: AppRole = "user";
 
 export type Viewer = {
@@ -23,6 +26,9 @@ export type Viewer = {
   role: AppRole | null;
   membership: Membership;
   roleResolved: AppRole;
+  adminScope: AdminScope;
+  scopeId: string | null;
+  campusId: string | null;
 };
 
 /** 未登录 / 读不到时的兜底会员状态（与历史行为一致：无行 = 免费用户） */
@@ -60,6 +66,9 @@ type UserRoleRow = {
   plan: string | null;
   status: string | null;
   expires_at: string | null;
+  admin_scope: string | null;
+  scope_id: string | null;
+  campus_id: string | null;
 };
 
 /** 清掉 `user_roles` 缓存（改过会员/角色/封禁之后调用；本进程立即生效）
@@ -125,6 +134,9 @@ async function loadViewer(): Promise<Viewer> {
       user: null,
       role: null,
       roleResolved: DEFAULT_ROLE,
+      adminScope: null,
+      scopeId: null,
+      campusId: null,
       membership: { user: null, ...EMPTY_MEMBERSHIP },
     };
   }
@@ -140,7 +152,7 @@ async function loadViewer(): Promise<Viewer> {
       readRoleRow<UserRoleRow>(() =>
         supabase
           .from("user_roles")
-          .select("role, plan, status, expires_at")
+          .select("role, plan, status, expires_at, admin_scope, scope_id, campus_id")
           .eq("user_id", user.id)
           .maybeSingle(),
       ),
@@ -154,6 +166,10 @@ async function loadViewer(): Promise<Viewer> {
   const plan: PlanId = data?.plan === "vip" ? "vip" : "free";
   const status: AccountStatus = data?.status === "banned" ? "banned" : "active";
   const expiresAt = data?.expires_at ?? null;
+  const adminScope: AdminScope =
+    data?.admin_scope === "owner" || data?.admin_scope === "region" || data?.admin_scope === "campus"
+      ? data.admin_scope
+      : null;
 
   const viewerUser = { id: user.id, email: user.email ?? null };
 
@@ -161,6 +177,9 @@ async function loadViewer(): Promise<Viewer> {
     user: viewerUser,
     role: roleResolved,
     roleResolved,
+    adminScope,
+    scopeId: data?.scope_id ?? null,
+    campusId: data?.campus_id ?? null,
     membership: {
       user: viewerUser,
       plan,

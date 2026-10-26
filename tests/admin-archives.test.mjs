@@ -167,6 +167,10 @@ try {
   record("★机构数据大盘：两张图（校区饼图 + 提分趋势折线）都渲染",
     html.includes("各校区学员分布饼图") && html.includes("整体学情提分趋势折线图"),
     "图表 aria-label");
+  record("★列表高度：外层按视口高度自适应，表格有独立内部滚动（max-h + overflow）",
+    html.includes("h-[calc(100dvh-64px)]") && html.includes("max-h-[60vh]") &&
+      html.includes("sticky top-0") && html.includes("overflow-auto"),
+    "高度/滚动类");
 
   const bySearch = await (await fetch(`${BASE}/admin/archives?q=${encodeURIComponent("总览探针A")}`, { headers: { cookie: adminCookie } })).text();
   record("★搜索能过滤：搜 A 只出现 A，不出现 B",

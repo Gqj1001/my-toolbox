@@ -79,6 +79,22 @@ export type ProgressFeedback = {
   next: string;
 };
 
+export type SkillDimension = {
+  key: "calc" | "concept" | "application" | "innovation" | "standard" | "system";
+  name: string;
+  count: number;
+};
+
+/** 用户 2026-10-26 拍板的固定 6 维；顺序就是雷达图顺序 */
+const SKILL_DIMENSIONS: { key: SkillDimension["key"]; name: string; re: RegExp }[] = [
+  { key: "calc", name: "基础计算能力", re: /计算|粗心|算错|运算|简单题|容易题|基础题/ },
+  { key: "concept", name: "概念理解能力", re: /审题|理解|概念|题意|定义|读题/ },
+  { key: "application", name: "综合应用能力", re: /应用|综合|中档题|实际|建模|迁移/ },
+  { key: "innovation", name: "创新思维能力", re: /创新|拓展|新定义|难题|压轴|探究/ },
+  { key: "standard", name: "答题规范程度", re: /规范|格式|漏步骤|步骤|书写|跳步|单位/ },
+  { key: "system", name: "知识体系完整性", re: /体系|零散|框架|知识网络|系统/ },
+];
+
 export type StudentReport = {
   name: string;
   identity: {
@@ -150,8 +166,8 @@ export type StudentReport = {
     summary: string;
   } | null;
   weaknesses: { tool: string; label: string; date: string; title: string; text: string }[];
-  /** 薄弱模块计数（从薄弱/失分原文里按分号/顿号拆出来，给图表用；拆不出就空） */
-  weaknessModules: { name: string; count: number }[];
+  /** 固定 6 个能力维度的失分频次（雷达图用；不按原文正则切词） */
+  skillRadar: SkillDimension[];
   /** 「抽不到 / 没算进去」的如实说明（要显示给老师看，不能只存在注释里） */
   notes: string[];
   /** 交给 AI 的结构化摘要（也顺手当"报告依据"给人看） */
@@ -252,39 +268,6 @@ function textOverlap(a: string, b: string): number {
   let n = 0;
   for (const g of ga) if (gb.has(g)) n++;
   return n;
-}
-
-/** 明显不是“知识点”的泛化短语（不要拿它们画雷达图） */
-const GENERIC_MODULE = /^(基础一般|基础薄弱|基础较差|基础不牢|计算|审题|粗心|马虎|态度|习惯|知识体系|综合|其他|暂无|没有|无|未发现|材料里没有)/;
-
-/**
- * 把「三角恒等变换用错公式」「导数含参讨论不完整」这类长句压成知识点。
- * 优先匹配已知模块（试卷/方案里出现过的），否则去掉解释性动词/症状词。
- * 压不出来就返回 null —— 宁可不画，也不拿一整段反馈当标签。
- */
-function cleanModuleName(raw: string, known: string[]): string | null {
-  let s = String(raw ?? "")
-    .replace(/[。！？!?；;、，,：:]/g, " ")
-    .replace(/^[①②③④⑤⑥⑦⑧⑨⑩\d.、\s]+/, "")
-    .replace(/^(主要|其中|尤其|由于|因为|在|对|关于|学生|孩子)\s*/, "")
-    .trim();
-
-  if (!s) return null;
-
-  // 已知模块优先（长匹配优先，避免“函数”抢先匹配“函数单调性”）
-  const hit = known
-    .filter((k) => k.length >= 2 && s.includes(k))
-    .sort((a, b) => b.length - a.length)[0];
-  if (hit) return hit;
-
-  s = s
-    .split(/(?:用错|不会|不熟|不清|不牢|不足|较弱|薄弱|失分|出错|错误|混淆|粗心|马虎|计算|审题|步骤|公式|定理|概念|导致|所以|但是|而且|需要|建议|掌握|知识体系|尚未|不完整|不规范|不扎实|方面|部分|模块|内容|问题|现象|情况)/)[0]
-    .replace(/[的了吗呢啊吧\s]+$/g, "")
-    .trim();
-
-  if (s.length < 2 || s.length > 14) return null;
-  if (GENERIC_MODULE.test(s)) return null;
-  return s;
 }
 
 /** paper 报告里那句固定句式：「核心薄弱板块集中在以下 N 处：A；B；C。」取不到就空数组 */
@@ -593,34 +576,20 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     }
   }
 
-  // ---------------- 薄弱模块计数（雷达图用） ----------------
-  // 已知模块名优先取：试卷分析的「核心薄弱板块」 + 方案课表里的模块/内容。
-  // 这样反馈里的「三角恒等变换用错公式」会被归到「三角恒等变换」，而不是整句。
-  const knownModules = new Set<string>();
-  for (const r of source) {
-    const tool = String(r.tool ?? "feedback");
-    if (tool === "paper") {
-      for (const m of extractPaperWeakness(r.text)) knownModules.add(m.trim());
-    } else if (tool === "math-plan") {
-      for (const l of parsePlanLessons(r.text)) {
-        if (l.content.trim()) knownModules.add(l.content.trim());
-      }
-    }
-  }
-  const known = [...knownModules].filter((k) => k.length >= 2 && k.length <= 20);
-
-  const moduleCounts = new Map<string, number>();
+  // ---------------- 固定 6 个能力维度（雷达图用） ----------------
+  // 不再从原文里正则切“模块名”。只按用户确认的 6 个维度做关键词/难度映射，
+  // 每条薄弱/失分记录最多给每个维度 +1（频次 = 有多少条证据提到该维度）。
+  const skillRadar: SkillDimension[] = SKILL_DIMENSIONS.map((d) => ({
+    key: d.key,
+    name: d.name,
+    count: 0,
+  }));
   for (const w of weaknesses) {
-    for (const part of w.text.split(/[；;、]/)) {
-      const name = cleanModuleName(part, known);
-      if (!name) continue;
-      moduleCounts.set(name, (moduleCounts.get(name) ?? 0) + 1);
-    }
+    const text = w.text;
+    SKILL_DIMENSIONS.forEach((d, i) => {
+      if (d.re.test(text)) skillRadar[i].count++;
+    });
   }
-  const weaknessModules = [...moduleCounts.entries()]
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans-CN"))
-    .slice(0, 6);
 
   // ---------------- 「抽不到」的如实说明 ----------------
   const notes: string[] = [];
@@ -761,7 +730,7 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
     progress,
     target,
     weaknesses,
-    weaknessModules,
+    skillRadar,
     notes,
     digest,
   };

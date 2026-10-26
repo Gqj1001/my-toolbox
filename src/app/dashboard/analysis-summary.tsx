@@ -17,7 +17,7 @@ const th = "px-2 py-1 text-left font-medium text-zinc-500 dark:text-zinc-400";
 const td = "px-2 py-1 text-zinc-700 dark:text-zinc-200";
 
 export default function AnalysisSummary({ report }: { report: StudentReport }) {
-  const { overview, scores, trend, hours, progress, target, weaknesses, weaknessModules, notes } = report;
+  const { overview, scores, trend, hours, progress, target, weaknesses, skillRadar, notes } = report;
   const hasAnything = overview.total > 0;
   // 课时消耗图：优先档案里填的「总课时数」，其次最近方案计划课时。
   // 已消耗只能按方案课表估算（progress.consumedHours）；估不出来就不画，避免显示成 0。
@@ -45,7 +45,7 @@ export default function AnalysisSummary({ report }: { report: StudentReport }) {
             scores={scores}
             totalHours={totalHours}
             consumedHours={consumedHours}
-            weaknessModules={weaknessModules}
+            skillRadar={skillRadar}
           />
 
           {/* ---------------- 概览 ---------------- */}
