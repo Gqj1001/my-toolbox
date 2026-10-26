@@ -1,6 +1,6 @@
 # 三级权限架构升级方案（Owner / 大区 / 校区 / 教师）
 
-> 2026-10-24 · **Phase 1 RLS/代码已完成并全绿；0030 Owner 切换仍冻结**。
+> 2026-10-24 · **Phase 1 已完成并上线；0030 Owner 切换已于 2026-10-26 执行**。
 > 用户拍板：作者（Owner）> 大区管理者 > 校区管理者 > 普通教师；
 > **Owner 唯一 = `1502569564@qq.com`**；其他 admin 全部降级为普通 user；
 > 老师一人只能属于一个校区；大区/校区清单由 Owner 在后台建；
@@ -11,7 +11,7 @@
 > - `0029_permissions_phase1_schema.sql` ✅ 已执行（只建表/加列）
 > - `0031_permissions_phase1_rls.sql` ✅ 已执行（RLS + RPC scope + 建档快照触发器）
 > - `0032_permissions_phase1_owner_self_only.sql` ✅ 已执行（Owner 个人直读只自己；全量只走 admin RPC）
-> - `0030_permissions_phase1_backfill_REVIEW_ONLY.sql` ⛔ **仍冻结**（回填+Owner切换，最后跑）
+> - `0030_permissions_phase1_backfill_REVIEW_ONLY.sql` ✅ 已于 2026-10-26 执行（owner=1 / other_admin=0 / pending=0）
 > - 0030 后**测试库**先跑 `tests/test-owner-setup.sql`（rolea = Test Owner），再跑全套；
 >   `test-owner-preflight` 会检查，避免整套跑一半才红。
 > - 审阅说明：`docs/three-level-permissions-phase1-migration-review.md`

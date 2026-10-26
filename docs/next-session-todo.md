@@ -8,7 +8,8 @@
 > ④ 学情分析三张图：成绩趋势 / 课时消耗 / **能力维度雷达（固定 6 维）**；AI 报告支持 **Markdown 表格**；
 > ⑤ **A2 全机构档案总览 + 机构数据大盘**：`0027` / `0028`（✅ 已执行），KPI、饼图、提分折线、校区/月份下钻；
 > ⑥ **Phase 1 权限 RLS/代码**：`0029`（表/列）、`0031`（RLS + RPC scope + 建档快照）、
->    `0032`（Owner 个人直读边界）已执行；Owner/大区只读/老师本人范围已测（`region-scope` 17/17），`0030` **仍冻结**等确认。
+>    `0032`（Owner 个人直读边界）已执行；Owner/大区只读/老师本人范围已测（`region-scope` 17/17）；
+>    `0030` 已于 2026-10-26 执行（owner_count=1 / other_admin=0 / pending=0）；测试库 rolea 已设 Test Owner。
 > 跨校区**三级完整方案**见 `docs/three-level-permissions-plan.md`；项目总结见
 > `docs/project-summary-and-optimization.md`。
 > 此前：学情报告六段式、档案折叠/标题/日期、后台高度（2026-10-23）；
@@ -248,7 +249,7 @@
 
 | 事项 | 结论 |
 |---|---|
-| **Phase 1 权限 RLS/代码（2026-10-24）** | ✅ **代码/RLS 已完成并全绿**：`0029`（regions/campuses/加列）、`0031`（`is_owner`/`is_region_admin`/`can_read_student`、学生/历史 RLS、RPC scope、建档快照触发器）、`0032`（Owner 个人直读边界）已执行；`viewer`/`requireOwner`/后台入口升级为 `admin_scope`；大区管理员只读、老师本人范围、Owner 全量已测。测试 `region-scope` 17/17；全套 **57 套 / 1833 项**全绿。⛔ `0030`（回填+Owner 切换）**仍冻结**；0030 后先在**测试库**跑 `tests/test-owner-setup.sql` 设 Test Owner，否则全套会红。 |
+| **Phase 1 权限 RLS/代码（2026-10-24）** | ✅ **已完成并上线**：`0029`（regions/campuses/加列）、`0031`（`is_owner`/`is_region_admin`/`can_read_student`、学生/历史 RLS、RPC scope、建档快照触发器）、`0032`（Owner 个人直读边界）已执行；`0030` 已于 2026-10-26 执行（owner_count=1 / other_admin=0 / pending=0）；`viewer`/`requireOwner`/后台入口升级为 `admin_scope`；大区管理员只读、老师本人范围、Owner 全量已测。测试 `region-scope` 17/17；全套 **57 套 / 1833 项**全绿。测试库 rolea 已设 Test Owner；生产库只保留真实 Owner。 |
 | **学情图表 2.0 + 机构数据大盘（2026-10-24）** | ✅ **已完成**：① 模块薄弱改**雷达图**，先提核心知识点（优先匹配试卷/方案模块，去掉解释词/泛化短语）；② AI 报告支持 **Markdown 表格**，前端解析成规整 `<table>`；③ `/admin/archives` 加四张 KPI（总学员/本月新增/本月估算课时/进行中方案）、各校区饼图、整体提分折线，点击下钻校区/月份；④ `0028` 已执行。测试 `markdown-tables` 7 / `student-analysis` 25 / `admin-archives` 23；全套 **55 套 / 1811 项**全绿。 |
 | **A2 全机构档案总览（2026-10-24）** | ✅ **已完成并上线**：`0027_admin_archives_a2.sql`（`admin_list_all_students()` 只读搜索/筛选 + `admin_set_student_campus()` 归属标签纠正，SECURITY DEFINER + `is_admin()`）；后台 `/admin/archives` 从 `/admin` 进入。口径：老板只看、校区=机构校区、历史默认按老师当前校区、推错可手动纠正；**未动现有 RLS/老师端/表结构**。测试 `admin-archives` 18/18；全套 **54 套 / 1798 项**全绿。校区分级（校区管理员）未做，见 `docs/cross-campus-permissions-plan.md`。 |
 | **后台 Bug 修复 + 档案目标/课时 + 图表（2026-10-24）** | ✅ **已完成**：① 管理员刷新进不去后台（`user_roles` 查询失败被缓存成“无角色”30 秒）→ `readRoleRow()` 失败必抛、重试一次、不缓存失败；② 后台看不到老师资料（`user_profiles` RLS 只允许本人读）→ `0026_admin_list_profiles()`（✅ 已执行）+ `admin-profiles` 6/6；③ 档案顶部「目标分数 / 总课时数」存 `extra`，学情分析自动带入；④ 学情分析三张 Chart.js 图（成绩趋势 / 课时消耗 / 模块薄弱）。测试 `role-read` 7 / `admin-profiles` 6 / `student-report` 57 / `archive-students` 46 / `admin-feature-flags` 27；全套 **53 套 / 1780 项**全绿。跨校区权限**只出方案**：`docs/cross-campus-permissions-plan.md`，未动代码/表。 |

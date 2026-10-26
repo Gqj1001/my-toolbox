@@ -1,7 +1,7 @@
 # Phase 1 权限迁移 · SQL 审阅说明（先别执行）
 
 > 2026-10-24 · 按用户拍板的一期范围写的**审阅稿**。
-> **0031 已执行、代码已全绿；0030 仍冻结，等 Owner 确认后最后跑。**
+> **0029/0031/0032 已执行；0030 已于 2026-10-26 执行（owner=1 / other_admin=0 / pending=0）。**
 
 ## 一、这次只给两份 SQL
 
@@ -10,7 +10,7 @@
 | `supabase/migrations/0029_permissions_phase1_schema.sql` | 只建表/加列/加索引/枚举 | **否** | ✅ 已执行 |
 | `supabase/migrations/0031_permissions_phase1_rls.sql` | RLS + RPC scope + 建档快照触发器 | **否**（只改权限/函数/触发器） | ✅ 已执行；代码已全绿 |
 | `supabase/migrations/0032_permissions_phase1_owner_self_only.sql` | 修正 Owner 个人直读边界（全量仍走 admin RPC） | **否** | ✅ 已执行 |
-| `supabase/migrations/0030_permissions_phase1_backfill_REVIEW_ONLY.sql` | 回填老师/学生归属、补 `created_at`、Owner 切换、其他 admin 降级 | **是** | **REVIEW ONLY，最后跑** |
+| `supabase/migrations/0030_permissions_phase1_backfill_REVIEW_ONLY.sql` | 回填老师/学生归属、补 `created_at`、Owner 切换、其他 admin 降级 | **是** | ✅ 已于 2026-10-26 执行（owner=1 / other_admin=0 / pending=0） |
 
 > 为什么拆开：建表失败只影响新结构，回滚简单；Owner 切换/降级 admin 是**不可逆权限变更**，
 > 必须单独审、单独执行、执行前备份。混在一起一旦回填有问题，事务虽然能回滚，但排查范围太大。
@@ -94,4 +94,4 @@
    - 生产库只有真实 Owner，**不要**在生产跑 `test-owner-setup.sql`。
 5. 大区/校区清单已建好；回填后“待确认”学生由 Owner 后台手动改。
 
-> 再次强调：**0030 不要直接跑**；0029/0031/0032 已执行。应用代码本轮还没有 commit/push。
+> 0030 已于 2026-10-26 执行；0029/0031/0032 也已执行。应用代码本轮已 commit + push。
