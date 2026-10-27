@@ -45,7 +45,7 @@ export default async function ToolsPage({ searchParams }: PageProps<"/tools">) {
 
   return (
     <>
-      <SiteHeader role={role ?? "user"} current="/tools" />
+      <SiteHeader role={role ?? "user"} current="/tools" adminScope={viewer.adminScope} />
 
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">
         {errorMessage ? (

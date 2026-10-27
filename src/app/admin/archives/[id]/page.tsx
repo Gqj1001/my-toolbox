@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import SiteHeader from "@/components/site-header";
+import PrintPdfButton from "@/components/print-pdf-button";
 import AnalysisSummary from "@/app/dashboard/analysis-summary";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
 import { getStudentDetail } from "@/lib/admin-archives";
@@ -10,8 +11,6 @@ import { buildStudentReport, TOOL_LABELS } from "@/lib/student-report";
 export const dynamic = "force-dynamic";
 
 const card = "rounded-xl border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-900/40";
-const th = "px-3 py-2 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400";
-const td = "px-3 py-2 align-top text-sm text-zinc-700 dark:text-zinc-200";
 
 function fmt(v: string | null): string {
   if (!v) return "—";
@@ -25,11 +24,11 @@ export default async function AdminStudentDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { role } = await getCurrentUserWithRole();
+  const { role, adminScope } = await getCurrentUserWithRole();
   if (role !== "admin") {
     return (
       <>
-        <SiteHeader role={role ?? "user"} current="/admin" />
+        <SiteHeader role={role ?? "user"} current="/admin" adminScope={adminScope} />
         <main className="mx-auto w-full max-w-5xl flex-1 overflow-y-auto px-6 py-10">
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             没有访问权限：学生详情仅对管理员开放。
@@ -46,7 +45,7 @@ export default async function AdminStudentDetailPage({
   if (!result.ok) {
     return (
       <>
-        <SiteHeader role="admin" current="/admin" />
+        <SiteHeader role="admin" current="/admin" adminScope={adminScope} />
         <main className="mx-auto w-full max-w-5xl flex-1 overflow-y-auto px-6 py-10">
           <Link href="/admin/archives" className="text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
             ← 返回全机构档案
@@ -91,11 +90,19 @@ export default async function AdminStudentDetailPage({
     full_score: h.fullScore,
   }));
   const report = buildStudentReport({ name: student.name, student: studentRow, rows });
+  const latestAnalysis = history.find((h) => h.tool === "analysis");
+  const toolOrder = ["math-plan", "plan-generator", "paper", "feedback", "manual", "analysis"];
+  const groups = toolOrder
+    .map((tool) => ({ tool, items: history.filter((h) => h.tool === tool) }))
+    .filter((g) => g.items.length);
+  for (const tool of [...new Set(history.map((h) => h.tool))]) {
+    if (!toolOrder.includes(tool)) groups.push({ tool, items: history.filter((h) => h.tool === tool) });
+  }
 
   return (
     <>
-      <SiteHeader role="admin" current="/admin" />
-      <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
+      <SiteHeader role="admin" current="/admin" adminScope={adminScope} />
+      <main id="print-report" className="mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
         <Link href="/admin/archives" className="w-fit text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
           ← 返回全机构档案
         </Link>
@@ -109,6 +116,10 @@ export default async function AdminStudentDetailPage({
             管理员只读视图：可以查看这位学生的全部记录与学情统计，不能在这里修改档案正文。
           </p>
         </header>
+
+        <div className="flex flex-wrap gap-2">
+          <PrintPdfButton />
+        </div>
 
         <section className={card}>
           <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">基础信息</h2>
@@ -126,37 +137,45 @@ export default async function AdminStudentDetailPage({
 
         <AnalysisSummary report={report} />
 
+        {latestAnalysis ? (
+          <section className={card}>
+            <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">AI 学情报告</h2>
+            <p className="mt-1 text-xs text-zinc-400">{latestAnalysis.title || "最近一份学情报告"} · {latestAnalysis.date || fmt(latestAnalysis.createdAt)}</p>
+            <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-zinc-700 dark:text-zinc-200">{latestAnalysis.text}</div>
+          </section>
+        ) : null}
+
         <section className={card}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">历史记录</h2>
-            <span className="text-xs text-zinc-400">共 {history.length} 条</span>
+            <span className="text-xs text-zinc-400">共 {history.length} 条 · 按工具折叠</span>
           </div>
           {history.length === 0 ? (
             <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">这位学生还没有记录。</p>
           ) : (
-            <div className="mt-2 overflow-x-auto">
-              <table className="w-full min-w-[720px] border-collapse text-left">
-                <thead>
-                  <tr>
-                    <th className={th}>日期</th>
-                    <th className={th}>类型</th>
-                    <th className={th}>标题</th>
-                    <th className={th}>分数</th>
-                    <th className={th}>正文</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {history.map((h) => (
-                    <tr key={h.id}>
-                      <td className={td}>{h.date || fmt(h.createdAt)}</td>
-                      <td className={td}>{TOOL_LABELS[h.tool] ?? h.tool}</td>
-                      <td className={td}>{h.title || "—"}</td>
-                      <td className={td}>{h.score != null && h.fullScore != null ? `${h.score} / ${h.fullScore}` : "—"}</td>
-                      <td className={`${td} max-w-[520px] whitespace-pre-wrap break-words`}>{h.text}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="mt-3 flex flex-col gap-2">
+              {groups.map((g) => (
+                <details key={g.tool} className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+                  <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-100">
+                    <span className="font-medium">{TOOL_LABELS[g.tool] ?? g.tool}</span>
+                    <span className="text-xs text-zinc-400">{g.items.length} 条</span>
+                  </summary>
+                  <div className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">
+                    {g.items.map((h) => (
+                      <article key={h.id} className="px-3 py-2.5">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                          <span className="font-medium text-zinc-800 dark:text-zinc-100">{h.title || "—"}</span>
+                          <span className="text-xs text-zinc-400">
+                            {h.date || fmt(h.createdAt)}
+                            {h.score != null && h.fullScore != null ? ` · ${h.score} / ${h.fullScore}` : ""}
+                          </span>
+                        </div>
+                        <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-zinc-600 dark:text-zinc-300">{h.text}</div>
+                      </article>
+                    ))}
+                  </div>
+                </details>
+              ))}
             </div>
           )}
         </section>

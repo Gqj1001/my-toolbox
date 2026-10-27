@@ -1,7 +1,7 @@
 # 下个会话待办
 
 > **当前状态一句话**（2026-10-27，学生详情 + Owner 权限页 + 能力值雷达）：
-> 全站 **58 个套件 / 1847 项断言全绿**（2026-10-27 实测）。
+> 全站 **59 个套件 / 1856 项断言全绿**（2026-10-27 实测）。
 > 2026-10-24 本批：① 管理员刷新进不去后台（`user_roles` 查询失败被缓存成“无角色”30 秒）已修；
 > ② 后台看不到老师资料（`user_profiles` RLS 只允许本人读）改用 `0026_admin_list_profiles()`（✅ 已执行）；
 > ③ 档案顶部新增「目标分数 / 总课时数」（存 `extra`，不新增列），学情分析自动带入；
@@ -9,7 +9,7 @@
 > ⑤ **A2 全机构档案总览 + 机构数据大盘**：`0027` / `0028`（✅ 已执行），KPI、饼图、提分折线、校区/月份下钻；
 > ⑥ **Phase 1 权限 RLS/代码**：`0029`（表/列）、`0031`（RLS + RPC scope + 建档快照）、
 >    `0032`（Owner 个人直读边界）、`0030`（Owner 切换）已执行；测试前置/降级流程见
->    `docs/test-owner-runbook.md`；`region-scope` 19/19，全套 **58 套 / 1847 项**全绿。
+>    `docs/test-owner-runbook.md`；`region-scope` 20/20，全套 **59 套 / 1856 项**全绿。
 > ⑦ **2026-10-27**：`/admin/archives/[id]` 学生详情（只读）+ `/admin/scopes` Owner 权限管理页；
 >    迁移 `0033`；能力值改为 100 分制、每条证据扣 6、最低 40，老师可手动微调。
 > 跨校区**三级完整方案**见 `docs/three-level-permissions-plan.md`；项目总结见
@@ -251,8 +251,8 @@
 
 | 事项 | 结论 |
 |---|---|
-| **学生详情 + Owner 权限管理（2026-10-27）** | ✅ **已完成**：`/admin/archives` 学生姓名可点进 `/admin/archives/[id]`（基础信息/历史时间轴/学情图表/课时，只读；Owner 全量、大区管理员本区）；`/admin/scopes` Owner 专属（新建大区/校区、分配 Owner/大区/校区管理员/取消）；迁移 `0033`；能力雷达改 100 分制能力值（每条证据扣 6，最低 40，老师可调）。测试 `admin-archives` 26/26、`region-scope` 19/19、`admin-scopes` 8/8；全套 **58 套 / 1847 项**全绿。 |
-| **Phase 1 权限 RLS/代码（2026-10-24）** | ✅ **已完成并上线**：`0029`（regions/campuses/加列）、`0031`（`is_owner`/`is_region_admin`/`can_read_student`、学生/历史 RLS、RPC scope、建档快照触发器）、`0032`（Owner 个人直读边界）已执行；`0030` 已于 2026-10-26 执行（owner_count=1 / other_admin=0 / pending=0）；`viewer`/`requireOwner`/后台入口升级为 `admin_scope`；大区管理员只读、老师本人范围、Owner 全量已测。测试 `region-scope` 19/19；全套 **58 套 / 1847 项**全绿。测试库 rolea 已设 Test Owner；生产库只保留真实 Owner。 |
+| **学生详情 + Owner 权限管理（2026-10-27）** | ✅ **已完成**：`/admin/archives` 学生姓名可点进 `/admin/archives/[id]`（基础信息/历史时间轴/学情图表/课时，只读；Owner 全量、大区管理员本区）；`/admin/scopes` Owner 专属（新建大区/校区、分配 Owner/大区/校区管理员/取消）；`/admin` 增加角色分配表单；迁移 `0033`；能力雷达改 100 分制能力值；档案历史按工具折叠；批量导入 + PDF 打印。测试 `admin-archives` 27/27、`region-scope` 20/20、`admin-scopes` 9/9、`batch-import` 5/5；全套 **59 套 / 1856 项**全绿。 |
+| **Phase 1 权限 RLS/代码（2026-10-24）** | ✅ **已完成并上线**：`0029`（regions/campuses/加列）、`0031`（`is_owner`/`is_region_admin`/`can_read_student`、学生/历史 RLS、RPC scope、建档快照触发器）、`0032`（Owner 个人直读边界）已执行；`0030` 已于 2026-10-26 执行（owner_count=1 / other_admin=0 / pending=0）；`viewer`/`requireOwner`/后台入口升级为 `admin_scope`；大区管理员只读、老师本人范围、Owner 全量已测。测试 `region-scope` 20/20；全套 **59 套 / 1856 项**全绿。测试库 rolea 已设 Test Owner；生产库只保留真实 Owner。 |
 | **学情图表 2.0 + 机构数据大盘（2026-10-24）** | ✅ **已完成**：① 模块薄弱改**雷达图**，先提核心知识点（优先匹配试卷/方案模块，去掉解释词/泛化短语）；② AI 报告支持 **Markdown 表格**，前端解析成规整 `<table>`；③ `/admin/archives` 加四张 KPI（总学员/本月新增/本月估算课时/进行中方案）、各校区饼图、整体提分折线，点击下钻校区/月份；④ `0028` 已执行。测试 `markdown-tables` 7 / `student-analysis` 25 / `admin-archives` 23；全套 **55 套 / 1811 项**全绿。 |
 | **A2 全机构档案总览（2026-10-24）** | ✅ **已完成并上线**：`0027_admin_archives_a2.sql`（`admin_list_all_students()` 只读搜索/筛选 + `admin_set_student_campus()` 归属标签纠正，SECURITY DEFINER + `is_admin()`）；后台 `/admin/archives` 从 `/admin` 进入。口径：老板只看、校区=机构校区、历史默认按老师当前校区、推错可手动纠正；**未动现有 RLS/老师端/表结构**。测试 `admin-archives` 18/18；全套 **54 套 / 1798 项**全绿。校区分级（校区管理员）未做，见 `docs/cross-campus-permissions-plan.md`。 |
 | **后台 Bug 修复 + 档案目标/课时 + 图表（2026-10-24）** | ✅ **已完成**：① 管理员刷新进不去后台（`user_roles` 查询失败被缓存成“无角色”30 秒）→ `readRoleRow()` 失败必抛、重试一次、不缓存失败；② 后台看不到老师资料（`user_profiles` RLS 只允许本人读）→ `0026_admin_list_profiles()`（✅ 已执行）+ `admin-profiles` 6/6；③ 档案顶部「目标分数 / 总课时数」存 `extra`，学情分析自动带入；④ 学情分析三张 Chart.js 图（成绩趋势 / 课时消耗 / 模块薄弱）。测试 `role-read` 7 / `admin-profiles` 6 / `student-report` 57 / `archive-students` 46 / `admin-feature-flags` 27；全套 **53 套 / 1780 项**全绿。跨校区权限**只出方案**：`docs/cross-campus-permissions-plan.md`，未动代码/表。 |
@@ -292,15 +292,15 @@
 | ⚠️ 测试环境坑（2026-10 已修） | **`profile` 的两条假红不是环境问题，是套件的「测试死结」**：旧版用 `/api/profile` 有没有资料来判断「`user_profiles` 表建没建」，而「表没建」与「表建了但没填」都返回 `null`。清理账号后套件误判没建 → 提交表单 → 把「测试老师」写回去 → 下次跑又红。**2026-10 已修**：直接探测表（200/PGRST205），表在但没资料时**不写**。详见 `tests/profile.test.mjs` 顶部与 `docs/test-data-cleanup.md`。 |
 | ⚠️ 回归怎么跑（2026-10 新增） | **一次只跑一个 runner**。`paper-analysis` 等套件**需要外面先起好服务**，单独跑会干等 ⇒ 别用"一把梭"的批量 runner 跑全套，按 `tests/_run-ui-suites.mjs` 的名单分两批（需要外部服务的 / 自己起服务的）。`plan-generator-ui` 与 `plan-generator-ai` 已登记进那个 runner。 |
 
-**全套回归现状（2026-10-27 实测：57 个 `*.test.mjs` + `verify-checklist.mjs` = 58 套，全绿）**：
+**全套回归现状（2026-10-27 实测：58 个 `*.test.mjs` + `verify-checklist.mjs` = 59 套，全绿）**：
 
-- **58 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1847 项断言**。
+- **59 套全部串行亲跑过**（一次一个 runner，不并行）；下面是**实测值**，合计 **1856 项断言**。
 - 任务一修复前 **1690/1692**；两条红都是**测试自身的死结**（`profile` 31/32、`admin-grant90` 17/18），
   已修。修完后 **1691/1691**（`profile` 正常态 **31/31**、`admin-grant90` 18/18）。
 - 2026-10-21 v2 三套 **39 项**；2026-10-23 学情/档案净增 **18 项**；2026-10-24 新增 5 套 **60 项**
   （A2/大盘/图表/权限）、旧套件净增 **8 项**；2026-10-26 新增 `test-owner-preflight` **3 项**；
-  2026-10-27 新增 `admin-scopes` **8 项**、`admin-archives` +2、`region-scope` +2、`student-report` +2
-  ⇒ **58 套 / 1847 项**。
+  2026-10-27 新增 `admin-scopes` **9 项**、`batch-import` **5 项**、`admin-archives` +3、`region-scope` +3、
+  `archive-students` +1、`student-report` +2 ⇒ **59 套 / 1856 项**。
 
 ```
 math-plan-template 82/82   math-plan-lessons 44/44   math-plan-students 37/37
@@ -315,13 +315,13 @@ vision-paper 41/41
 school-paper 43/43
 feedback-data-cache 26/26  feedback-client-cache 51/51
 students-unified 91/91     date-input 15/15           admin-grant90 18/18
-archive-students 46/46     vision-scores 15/15
+archive-students 47/47     vision-scores 15/15
 manual-score 45/45         student-report 60/60       password-flows 42/42
 student-analysis 25/25     company-export 77/77       backfill 45/45
 admin-feature-flags 27/27  profile 31/31
-role-read 7/7              admin-profiles 6/6        admin-archives 26/26
-markdown-tables 7/7        region-scope 19/19         test-owner-preflight 3/3
-admin-scopes 8/8
+role-read 7/7              admin-profiles 6/6        admin-archives 27/27
+markdown-tables 7/7        region-scope 20/20         test-owner-preflight 3/3
+admin-scopes 9/9           batch-import 5/5
 plan-generator-engine 45/45   plan-generator-subjects 68/68   plan-generator-subjects-new 56/56
 plan-generator-docx 20/20     plan-generator-template 22/22   plan-generator-company 29/29
 plan-generator-archive 40/40  plan-generator-ai-client 36/36  plan-generator-ui 27/27

@@ -17,7 +17,7 @@ export default async function AccountPasswordPage() {
 
   return (
     <>
-      <SiteHeader role={viewer.role ?? "user"} current="" />
+      <SiteHeader role={viewer.role ?? "user"} current="" adminScope={viewer.adminScope} />
 
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 overflow-y-auto px-6 py-12">
         <div className="flex flex-col gap-1">

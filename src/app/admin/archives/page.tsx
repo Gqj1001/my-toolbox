@@ -35,7 +35,7 @@ export default async function AdminArchivesPage({
   if (role !== "admin") {
     return (
       <>
-        <SiteHeader role={role ?? "user"} current="/admin" />
+        <SiteHeader role={role ?? "user"} current="/admin" adminScope={adminScope} />
         <main className="mx-auto w-full max-w-5xl flex-1 overflow-y-auto px-6 py-10">
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             没有访问权限：全机构档案总览仅对 admin 角色开放。
@@ -65,7 +65,7 @@ export default async function AdminArchivesPage({
     const message = !all.ok ? all.message : (!filtered.ok ? filtered.message : "读取全机构档案失败。");
     return (
       <>
-        <SiteHeader role="admin" current="/admin" />
+        <SiteHeader role="admin" current="/admin" adminScope={adminScope} />
         <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-6 py-8">
           <Link href="/admin" className="w-fit text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400">
             ← 返回管理后台
@@ -89,12 +89,14 @@ export default async function AdminArchivesPage({
 
   return (
     <>
-      <SiteHeader role="admin" current="/admin" />
+      <SiteHeader role="admin" current="/admin" adminScope={adminScope} />
       <main className="mx-auto flex h-[calc(100dvh-64px)] min-h-[calc(100dvh-64px)] w-full max-w-7xl flex-1 flex-col overflow-hidden px-6 py-6">
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-        <Link href="/admin" className="w-fit text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
-          ← 返回管理后台
-        </Link>
+        {adminScope === null || adminScope === "owner" ? (
+          <Link href="/admin" className="w-fit text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
+            ← 返回管理后台
+          </Link>
+        ) : null}
 
         <header className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">

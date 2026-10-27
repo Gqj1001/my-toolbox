@@ -186,6 +186,7 @@ try {
       detailHtml.includes("历史记录") &&
       detailHtml.includes("只读"),
     `status=${detailPage.status}`);
+  record("★学生详情页有「下载 PDF 报告」按钮", detailHtml.includes("下载 PDF 报告"));
 
   const bySearch = await (await fetch(`${BASE}/admin/archives?q=${encodeURIComponent("总览探针A")}`, { headers: { cookie: adminCookie } })).text();
   record("★搜索能过滤：搜 A 只出现 A，不出现 B",

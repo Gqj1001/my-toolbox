@@ -40,6 +40,8 @@ try {
   const adminPage = await fetch(`${BASE}/admin`, { headers: { cookie: adminCookie } });
   const adminHtml = await adminPage.text();
   record("★/admin 页面有「大区与权限管理」入口", adminHtml.includes("大区与权限管理"));
+  record("★/admin 页面有「角色分配」表单（邮箱 + 普通老师/管理员）",
+    adminHtml.includes("角色分配") && adminHtml.includes("普通老师") && adminHtml.includes("管理员"));
 
   const regionRes = await fetch(`${SUPABASE_URL}/rest/v1/regions?select=id,name&name=eq.${encodeURIComponent("廊坊大区（三河区域）")}`, { headers: { apikey: ANON_KEY, Authorization: `Bearer ${admin.access_token}` } });
   const regions = await regionRes.json().catch(() => []);

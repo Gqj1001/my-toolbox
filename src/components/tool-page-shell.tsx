@@ -61,7 +61,7 @@ export default async function ToolPageShell({ route, skeleton }: ToolPageShellPr
 
   return (
     <>
-      <SiteHeader role={role ?? "user"} current="/tools" />
+      <SiteHeader role={role ?? "user"} current="/tools" adminScope={viewer.adminScope} />
 
       {iframeSrc ? (
         // 单文件 HTML 工具：iframe 撑满剩余高度；传了 skeleton 就先顶着加载骨架

@@ -172,6 +172,9 @@ try {
   record("★大区管理员页面：归属纠正列显示「只读」（没有保存表单）",
     html.includes("只读") && !html.includes("纠正机构校区"),
     "只读列");
+  record("★大区管理员顶栏不显示 /admin（只显示「档案总览」）",
+    !html.includes("管理后台") && html.includes("档案总览"),
+    "顶栏");
 
   const detailB = await fetch(`${BASE}/admin/archives/${bRow?.id}`, { headers: { cookie: userCookie } });
   const detailBHtml = await detailB.text();

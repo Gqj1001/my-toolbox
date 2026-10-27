@@ -26,6 +26,7 @@ import type { HistoryRow, StudentRow } from "@/lib/feedback-db";
 /** 归属工具 → 给老师看的名字。**标签的唯一来源**（页面与接口都从这里取）。 */
 export const TOOL_LABELS: Record<string, string> = {
   "math-plan": "辅导方案",
+  "plan-generator": "辅导方案",
   paper: "试卷分析",
   feedback: "课后反馈",
   manual: "手动补录",
@@ -45,7 +46,7 @@ export const ANALYSIS_TOOL = "analysis";
  *     **不**参与「薄弱与失分」的抽取（手动记录没有诊断正文，编不出来也不该编）。
  *     ⚠️ 只登记在 `TOOL_LABELS` 里、忘了加到这里的话，「记录概览」里就看不到它
  *     （统计条数照常包含它）—— `tests/student-report.test.mjs` 有断言钉住"登记与展示一致"。 */
-export const SOURCE_TOOLS = ["math-plan", "paper", "feedback", "manual"] as const;
+export const SOURCE_TOOLS = ["math-plan", "plan-generator", "paper", "feedback", "manual"] as const;
 
 export type ReportInput = {
   name: string;
@@ -402,7 +403,7 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
   }
 
   // ---------------- 课时（来自辅导方案正文） ----------------
-  const planRows = source.filter((r) => String(r.tool ?? "feedback") === "math-plan");
+  const planRows = source.filter((r) => ["math-plan", "plan-generator"].includes(String(r.tool ?? "feedback")));
   const hourEntries: { date: string; title: string; hours: number }[] = [];
   let plansWithoutHours = 0;
   for (const r of planRows) {
@@ -575,7 +576,7 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
       for (const s of secs) weaknesses.push({ ...base, label: s.label, text: s.body });
       continue;
     }
-    if (tool === "math-plan") {
+    if (tool === "math-plan" || tool === "plan-generator") {
       const sec = extractSections(r.text).find((s) => s.label.includes("学情诊断"));
       if (!sec || !sec.body) continue;   // 方案里没有学情诊断就不再单独计数（课时那边已经报过）
       weaknesses.push({ ...base, label: "学情诊断", text: sec.body });

@@ -24,3 +24,54 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  #print-report,
+  #print-report * {
+    visibility: visible;
+  }
+
+  #print-report {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    max-width: none;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    color: #111 !important;
+    background: #fff !important;
+  }
+
+  #print-report .no-print,
+  #print-report button,
+  #print-report a {
+    display: none !important;
+  }
+
+  #print-report canvas {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  #print-report section,
+  #print-report details,
+  #print-report table,
+  #print-report .print-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  #print-report details > *:not(summary) {
+    display: block !important;
+  }
+}

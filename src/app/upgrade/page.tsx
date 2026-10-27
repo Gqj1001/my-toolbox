@@ -34,7 +34,7 @@ export default async function UpgradePage({ searchParams }: PageProps<"/upgrade"
     redirect("/tools");
   }
 
-  const { user, role } = await getCurrentUserWithRole();
+  const { user, role, adminScope } = await getCurrentUserWithRole();
   const allTools = await getActiveTools();
   const vipTools = allTools.filter((t) => t.min_plan === "vip");
 
@@ -49,7 +49,7 @@ export default async function UpgradePage({ searchParams }: PageProps<"/upgrade"
 
   return (
     <>
-      <SiteHeader role={role ?? "user"} current="/tools" />
+      <SiteHeader role={role ?? "user"} current="/tools" adminScope={adminScope} />
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 overflow-y-auto px-6 py-10">
         <Link

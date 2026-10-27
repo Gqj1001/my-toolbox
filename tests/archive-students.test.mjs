@@ -453,6 +453,7 @@ try {
         hasProgressSection: /学习进度/.test(document.body.innerText),
         hasTargetSection: /分数目标对比/.test(document.body.innerText),
         chartLabels: [...document.querySelectorAll('canvas')].map(c => c.getAttribute('aria-label')).filter(Boolean),
+        hasPdfButton: /下载 PDF 报告/.test(document.body.innerText),
       };
     `);
     record("★课后反馈默认只展示最近 3 条（第 4 条在折叠里）",
@@ -471,6 +472,7 @@ try {
         (folded?.chartLabels ?? []).includes("课时消耗环形图") &&
         (folded?.chartLabels ?? []).includes("能力值雷达图"),
       JSON.stringify(folded?.chartLabels));
+    record("★学员详情有「下载 PDF 报告」按钮", folded?.hasPdfButton === true, "PDF 按钮");
 
     await inDoc(`
       const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));

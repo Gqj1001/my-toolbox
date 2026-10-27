@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { assignRoleAction } from "@/app/admin/role-actions";
 import { fetchAllUsers } from "@/app/admin/membership-actions";
 import FeatureFlagList from "@/components/feature-flag-list";
 import MemberActions from "@/components/member-actions";
-import RoleSelect from "@/components/role-select";
 import SiteHeader from "@/components/site-header";
 import { getCurrentUserWithRole, isOwnerRole } from "@/lib/auth-role";
 import { getFeatureFlags } from "@/lib/feature-flags";
+import { getScopeData } from "@/lib/admin-scopes";
 import { getProfiles } from "@/lib/user-profile-db";
 import { subjectName } from "@/lib/user-profile";
 import { PLAN_LABELS, STATUS_LABELS, remainingDays } from "@/lib/membership-types";
@@ -18,7 +19,11 @@ function formatTime(value: string | null) {
   return date.toLocaleString("zh-CN", { hour12: false });
 }
 
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   // proxy.ts 已经拦截过一轮；这里再校验一次，避免守卫被绕过时页面仍然渲染
   const { user, role, adminScope } = await getCurrentUserWithRole();
 
@@ -48,6 +53,10 @@ export default async function AdminPage() {
 
   // 功能开关（读不到表时 ready=false，功能一律保持开启）
   const flagState = await getFeatureFlags();
+  const scopeData = await getScopeData();
+  const params = (await searchParams) ?? {};
+  const roleOk = typeof params.roleOk === "string" ? params.roleOk : "";
+  const roleErr = typeof params.roleErr === "string" ? params.roleErr : "";
 
   // ★ 2026-10 第二十批（用户要求）：用户列表要能看**老师姓名与校区**等基本信息。
   //   一次批量查询取回所有资料（不是每人一次）—— 6 个用户一次请求。
@@ -82,6 +91,12 @@ export default async function AdminPage() {
               🏢 大区与权限管理 →
             </Link>
             <Link
+              href="/admin/import"
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              📥 批量导入 →
+            </Link>
+            <Link
               href="/admin/feedback-keywords"
               className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
             >
@@ -95,6 +110,9 @@ export default async function AdminPage() {
             </Link>
           </div>
         </div>
+
+        {roleOk ? <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">{roleOk}</p> : null}
+        {roleErr ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{roleErr}</p> : null}
 
         {!result.ok ? (
           <div
@@ -169,12 +187,7 @@ export default async function AdminPage() {
                       </td>
 
                       <td className="px-4 py-3">
-                        <RoleSelect
-                          userId={item.user_id}
-                          email={item.email}
-                          currentRole={item.role}
-                          isSelf={isSelf}
-                        />
+                        <span className="text-sm text-zinc-700 dark:text-zinc-200">{item.role}</span>
                       </td>
 
                       <td className="px-4 py-3">
@@ -234,6 +247,44 @@ export default async function AdminPage() {
             </table>
           </div>
         )}
+
+        <section className="rounded-xl border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">角色分配</h2>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            输入邮箱，改成普通老师或大区/校区管理员。管理员必须选择范围；Owner 不能在这里降级。
+          </p>
+          <form action={assignRoleAction} className="mt-3 grid gap-3 md:grid-cols-5">
+            <label className="text-xs text-zinc-500 md:col-span-2">
+              老师邮箱
+              <input name="email" type="email" required placeholder="teacher@example.com" className="mt-1 h-9 w-full rounded-lg border border-zinc-300 bg-white px-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
+            </label>
+            <label className="text-xs text-zinc-500">
+              角色
+              <select name="role" required className="mt-1 h-9 w-full rounded-lg border border-zinc-300 bg-white px-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-900">
+                <option value="">选择…</option>
+                <option value="user">普通老师</option>
+                <option value="admin">管理员</option>
+              </select>
+            </label>
+            <label className="text-xs text-zinc-500">
+              大区
+              <select name="regionId" className="mt-1 h-9 w-full rounded-lg border border-zinc-300 bg-white px-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-900">
+                <option value="">（管理员选大区）</option>
+                {scopeData.ok ? scopeData.regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>) : null}
+              </select>
+            </label>
+            <label className="text-xs text-zinc-500">
+              校区
+              <select name="campusId" className="mt-1 h-9 w-full rounded-lg border border-zinc-300 bg-white px-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-900">
+                <option value="">（管理员选校区）</option>
+                {scopeData.ok ? scopeData.regions.flatMap((r) => r.campuses.map((c) => <option key={c.id} value={c.id}>{r.name} / {c.name}</option>)) : null}
+              </select>
+            </label>
+            <div className="md:col-span-5">
+              <button type="submit" className="h-9 rounded-lg bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">保存角色</button>
+            </div>
+          </form>
+        </section>
 
         {/* ⚙️ 功能开关：初版功能的"一键关掉"（关掉的是**入口**，代码与数据都不变）
             ⚠️ 页面上**只留管理员需要的一句**（关掉会发生什么 + 多久生效）。

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { AdminScope } from "@/lib/viewer";
 
 /**
  * 全站顶栏。
@@ -11,9 +12,22 @@ import Link from "next/link";
  * 所以本组件**不再需要** `email` 之类的会员数据 —— 它不再查库，
  * 也就顺手省掉了每页一次 `getMembership()`（以及它背后可能的一次外网往返）。
  * ⚠️ 但 `role` 必须留着：「管理后台」入口只有管理员看得见，去掉它等于把后台入口藏了。
+ * 2026-10-27：只有 Owner 显示 `/admin`；大区/校区管理员只显示 `/admin/archives`，
+ * 避免普通 Admin 点进用户管理页后再被重定向。
  */
-export default function SiteHeader({ role, current }: { role: "admin" | "user"; current?: string }) {
+export default function SiteHeader({
+  role,
+  current,
+  adminScope = null,
+}: {
+  role: "admin" | "user";
+  current?: string;
+  adminScope?: AdminScope;
+}) {
   const isAdmin = role === "admin";
+  const isOwner = isAdmin && (adminScope === "owner" || adminScope == null);
+  const adminHref = isOwner ? "/admin" : "/admin/archives";
+  const adminLabel = isOwner ? "管理后台" : "档案总览";
   const linkClass = (href: string) =>
     `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
       current === href
@@ -35,12 +49,8 @@ export default function SiteHeader({ role, current }: { role: "admin" | "user"; 
             学员档案
           </Link>
           {isAdmin ? (
-            // prefetch={false}：减少「危险窗口」内的并发请求数，同时省掉多余的 RSC 预取。
-            // 打开一个页面会并行预取十几个链接（/tools、/admin、/upgrade、每张工具卡片），
-            // 每一条都要重跑中间件；实测 13 条预取。管理后台不是高频点击对象，
-            // 预取它收益低、却贡献了其中几条。
-            <Link href="/admin" prefetch={false} className={linkClass("/admin")}>
-              管理后台
+            <Link href={adminHref} prefetch={false} className={linkClass(adminHref)}>
+              {adminLabel}
             </Link>
           ) : null}
         </div>

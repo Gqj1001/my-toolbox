@@ -9,6 +9,7 @@ import SiteHeader from "@/components/site-header";
 import AnalysisPanel from "./analysis-panel";
 import AnalysisSummary from "./analysis-summary";
 import AbilityEditor from "@/components/ability-editor";
+import PrintPdfButton from "@/components/print-pdf-button";
 import {
   getHistoryFresh,
   getStudentsFresh,
@@ -22,6 +23,7 @@ import { getViewer } from "@/lib/viewer";
 /** 记录按工具分组时的显示名与顺序（顺序 = 老师看档案的习惯：方案 → 卷子 → 反馈 → 学情报告） */
 const TOOL_META: Record<string, { label: string; badge: string }> = {
   "math-plan": { label: TOOL_LABELS["math-plan"], badge: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" },
+  "plan-generator": { label: TOOL_LABELS["plan-generator"], badge: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" },
   paper: { label: TOOL_LABELS.paper, badge: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300" },
   feedback: { label: TOOL_LABELS.feedback, badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
   // ★ 第十四批：老师**手动补录**的成绩（在别处考的试）也是档案里的一类记录
@@ -29,7 +31,7 @@ const TOOL_META: Record<string, { label: string; badge: string }> = {
   // ★ 第三批：学情分析生成的 AI 报告也以一条记录的形式存在档案里（tool='analysis'）
   analysis: { label: TOOL_LABELS.analysis, badge: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" },
 };
-const TOOL_ORDER = ["math-plan", "paper", "feedback", "manual", "analysis"];
+const TOOL_ORDER = ["math-plan", "plan-generator", "paper", "feedback", "manual", "analysis"];
 /** 认不出来的归属（将来加工具时会先出现这种）也要显示出来，不能静默丢掉 */
 function toolMeta(tool: string) {
   return TOOL_META[tool] ?? { label: tool || "未标归属", badge: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300" };
@@ -150,8 +152,8 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
 
     return (
       <>
-        <SiteHeader role={role ?? "user"} current="/dashboard" />
-        <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">
+        <SiteHeader role={role ?? "user"} current="/dashboard" adminScope={viewer.adminScope} />
+        <main id="print-report" className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">
           <Link href="/dashboard" className="w-fit text-sm text-zinc-500 transition hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
             ← 返回学员名单
           </Link>
@@ -168,6 +170,10 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
               {" · 共 "}{items.length}{" 条记录"}
             </p>
           </header>
+
+          <div className="flex flex-wrap gap-2">
+            <PrintPdfButton />
+          </div>
 
           {!isKnown ? (
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
@@ -278,7 +284,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
   // ---------------- 名单视图 ----------------
   return (
     <>
-      <SiteHeader role={role ?? "user"} current="/dashboard" />
+      <SiteHeader role={role ?? "user"} current="/dashboard" adminScope={viewer.adminScope} />
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 overflow-y-auto px-6 py-10">
         <header className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">学员档案</h1>
