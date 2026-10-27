@@ -23,7 +23,7 @@ type Props = {
   scores: ScoreChartPoint[];
   totalHours: number | null;
   consumedHours: number | null;
-  skillRadar: { key: string; name: string; count: number }[];
+  skillRadar: { key: string; name: string; count: number; score: number }[];
 };
 
 const GRID = "rgba(148, 163, 184, 0.25)";
@@ -116,14 +116,14 @@ export default function AnalysisCharts({ scores, totalHours, consumedHours, skil
       }));
     }
 
-    if (weakRef.current && skillRadar.some((d) => d.count > 0)) {
+    if (weakRef.current && skillRadar.some((d) => d.count > 0 || d.score !== 100)) {
       charts.push(new Chart(weakRef.current, {
         type: "radar",
         data: {
           labels: skillRadar.map((d) => d.name),
           datasets: [{
-            label: "失分频次",
-            data: skillRadar.map((d) => d.count),
+            label: "能力值（100 分制）",
+            data: skillRadar.map((d) => d.score),
             borderColor: AMBER,
             backgroundColor: "rgba(245, 158, 11, 0.22)",
             pointBackgroundColor: AMBER,
@@ -138,8 +138,9 @@ export default function AnalysisCharts({ scores, totalHours, consumedHours, skil
           scales: {
             r: {
               beginAtZero: true,
-              suggestedMax: Math.max(3, Math.max(...skillRadar.map((d) => d.count)) + 1),
-              ticks: { stepSize: 1, precision: 0, color: TEXT, backdropColor: "transparent" },
+              min: 0,
+              max: 100,
+              ticks: { stepSize: 20, color: TEXT, backdropColor: "transparent" },
               grid: { color: GRID },
               angleLines: { color: GRID },
               pointLabels: { color: TEXT, font: { size: 11 } },
@@ -153,7 +154,7 @@ export default function AnalysisCharts({ scores, totalHours, consumedHours, skil
   }, [scores, totalHours, consumedHours, skillRadar]);
 
   const hasHours = totalHours != null && totalHours > 0 && consumedHours != null;
-  const hasSkill = skillRadar.some((d) => d.count > 0);
+  const hasSkill = skillRadar.some((d) => d.count > 0 || d.score !== 100);
   const noData = !scores.length && !hasHours && !hasSkill;
   if (noData) return null;
 
@@ -182,9 +183,9 @@ export default function AnalysisCharts({ scores, totalHours, consumedHours, skil
 
       {hasSkill ? (
         <div className="lg:col-span-2">
-          <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">能力维度雷达（失分频次）</p>
+          <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">能力值雷达（100 分制）</p>
           <div className="h-64 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-            <canvas ref={weakRef} aria-label="能力维度雷达图" role="img" />
+            <canvas ref={weakRef} aria-label="能力值雷达图" role="img" />
           </div>
         </div>
       ) : null}

@@ -242,7 +242,11 @@ function Kpi({ label, value, unit, hint }: { label: string; value: number; unit:
 function ArchiveRow({ row, returnTo, canEdit }: { row: AdminArchiveRow; returnTo: string; canEdit: boolean }) {
   return (
     <tr className="align-top">
-      <td className={`${cell} font-medium text-zinc-900 dark:text-zinc-100`}>{row.name}</td>
+      <td className={`${cell} font-medium text-zinc-900 dark:text-zinc-100`}>
+        <Link href={`/admin/archives/${row.id}`} className="underline decoration-zinc-300 underline-offset-2 hover:decoration-zinc-900 dark:decoration-zinc-600 dark:hover:decoration-zinc-100">
+          {row.name}
+        </Link>
+      </td>
       <td className={cell}>{row.grade || "—"}</td>
       <td className={cell}>{row.school || "—"}</td>
       <td className={cell}>{row.manager || "—"}</td>

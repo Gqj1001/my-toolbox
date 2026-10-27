@@ -466,10 +466,10 @@ try {
     record("★免费学情分析页也出现「学习进度」「分数目标对比」两节（与 AI 摘要同源）",
       folded?.hasProgressSection === true && folded?.hasTargetSection === true,
       JSON.stringify({ progress: folded?.hasProgressSection, target: folded?.hasTargetSection }));
-    record("★学情分析图表真的渲染了（成绩趋势折线图 + 课时消耗环形图 + 能力维度雷达图）",
+    record("★学情分析图表真的渲染了（成绩趋势折线图 + 课时消耗环形图 + 能力值雷达图）",
       (folded?.chartLabels ?? []).includes("成绩趋势折线图") &&
         (folded?.chartLabels ?? []).includes("课时消耗环形图") &&
-        (folded?.chartLabels ?? []).includes("能力维度雷达图"),
+        (folded?.chartLabels ?? []).includes("能力值雷达图"),
       JSON.stringify(folded?.chartLabels));
 
     await inDoc(`

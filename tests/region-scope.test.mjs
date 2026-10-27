@@ -112,9 +112,10 @@ try {
   });
 
   // 触发器应自动写入 B 的快照；A 无大区（Owner 直读现在只看自己，所以分开查）
-  const snapA = await rest(adminTok, `/feedback_students?select=name,region_id,campus_id,created_at&name=eq.${encodeURIComponent(A_NAME)}`);
-  const snapB = await rest(userTok, `/feedback_students?select=name,region_id,campus_id,created_at&name=eq.${encodeURIComponent(B_NAME)}`);
+  const snapA = await rest(adminTok, `/feedback_students?select=id,name,region_id,campus_id,created_at&name=eq.${encodeURIComponent(A_NAME)}`);
+  const snapB = await rest(userTok, `/feedback_students?select=id,name,region_id,campus_id,created_at&name=eq.${encodeURIComponent(B_NAME)}`);
   const bRow = snapB.body?.[0];
+  const aRow = snapA.body?.[0];
   record("★学生建档快照：B 自动带上 region_id/campus_id/created_at，A 无大区",
     bRow?.region_id === regionId && bRow?.campus_id === campusId && !!bRow?.created_at &&
       snapA.body?.[0]?.region_id == null,
@@ -171,6 +172,18 @@ try {
   record("★大区管理员页面：归属纠正列显示「只读」（没有保存表单）",
     html.includes("只读") && !html.includes("纠正机构校区"),
     "只读列");
+
+  const detailB = await fetch(`${BASE}/admin/archives/${bRow?.id}`, { headers: { cookie: userCookie } });
+  const detailBHtml = await detailB.text();
+  record("★大区管理员能打开本区学生详情（只读）",
+    detailB.status === 200 && detailBHtml.includes(B_NAME) && detailBHtml.includes("只读"),
+    `status=${detailB.status}`);
+
+  const detailA = await fetch(`${BASE}/admin/archives/${aRow?.id}`, { headers: { cookie: userCookie } });
+  const detailAHtml = await detailA.text();
+  record("★大区管理员打不开外区学生详情（403 / 不在范围）",
+    !detailAHtml.includes(A_NAME) && (detailA.status === 403 || detailAHtml.includes("不在你的查看范围")),
+    `status=${detailA.status}`);
 
   const ownerRpc = await rest(adminTok, "/rpc/admin_list_all_students", {
     method: "POST",

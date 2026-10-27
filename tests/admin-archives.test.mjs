@@ -124,9 +124,11 @@ try {
   record("★迁移 0027 已执行：admin_list_all_students() 可调用（没执行请先去 SQL Editor 跑）",
     rpc.status === 200, `HTTP ${rpc.status} ${JSON.stringify(rpcRows).slice(0, 160)}`);
 
+  let aId = 0;
   if (rpc.status === 200 && Array.isArray(rpcRows)) {
     const a = rpcRows.find((r) => r.name === A_NAME);
     const b = rpcRows.find((r) => r.name === B_NAME);
+    aId = Number(a?.id ?? 0);
     record("★管理员 RPC 跨老师看到两份档案（普通老师 RLS 只让自己看自己的）",
       !!a && !!b, JSON.stringify(rpcRows.map((r) => r.name)));
     record("★机构校区默认按创建老师当前校区推断（A→燕郊 / B→大厂）",
@@ -171,6 +173,19 @@ try {
     html.includes("h-[calc(100dvh-64px)]") && html.includes("max-h-[60vh]") &&
       html.includes("sticky top-0") && html.includes("overflow-auto"),
     "高度/滚动类");
+  record("★学生姓名是可点击链接，指向学生详情",
+    html.includes(`/admin/archives/${aId}`), `id=${aId}`);
+
+  const detailPage = await fetch(`${BASE}/admin/archives/${aId}`, { headers: { cookie: adminCookie } });
+  const detailHtml = await detailPage.text();
+  record("★学生详情页 200：基础信息 + 学情分析 + 历史记录 + 只读",
+    detailPage.status === 200 &&
+      detailHtml.includes(A_NAME) &&
+      detailHtml.includes("基础信息") &&
+      detailHtml.includes("学情分析") &&
+      detailHtml.includes("历史记录") &&
+      detailHtml.includes("只读"),
+    `status=${detailPage.status}`);
 
   const bySearch = await (await fetch(`${BASE}/admin/archives?q=${encodeURIComponent("总览探针A")}`, { headers: { cookie: adminCookie } })).text();
   record("★搜索能过滤：搜 A 只出现 A，不出现 B",

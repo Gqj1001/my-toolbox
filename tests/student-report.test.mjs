@@ -275,6 +275,18 @@ const STUDENT = { grade: "高三", campus: "燕郊", teacher: "郭庆杰", subje
     counts.calc === 1 && counts.concept === 1 && counts.application === 1 &&
       counts.innovation === 1 && counts.standard === 1 && counts.system === 1,
     JSON.stringify(r.skillRadar));
+  record("★能力值：从 100 起每条证据扣 6 分（命中 1 次 = 94），且不低于 40",
+    r.skillRadar.every((d) => d.score === 94),
+    JSON.stringify(r.skillRadar));
+
+  const overridden = buildStudentReport({
+    name: "六维",
+    student: { ...STUDENT, extra: { abilityScores: { calc: 88 } } },
+    rows,
+  });
+  record("★能力值可手动覆盖：extra.abilityScores.calc=88 优先生效",
+    overridden.skillRadar.find((d) => d.key === "calc")?.score === 88,
+    JSON.stringify(overridden.skillRadar));
 }
 
 {

@@ -8,6 +8,7 @@ import RecordDateButton from "@/components/record-date-button";
 import SiteHeader from "@/components/site-header";
 import AnalysisPanel from "./analysis-panel";
 import AnalysisSummary from "./analysis-summary";
+import AbilityEditor from "@/components/ability-editor";
 import {
   getHistoryFresh,
   getStudentsFresh,
@@ -196,6 +197,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           {/* ★ 第三批：学情分析 —— 统计部分所有人可见（服务端算好、不花 AI 钱），
               AI 报告是会员专属（`AnalysisPanel` 里的按钮）。 */}
           <AnalysisSummary report={report} />
+          <AbilityEditor name={selected} radar={report.skillRadar} />
           <AnalysisPanel
             name={selected}
             isVip={!!viewer.membership.isVip}

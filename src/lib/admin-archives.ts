@@ -44,8 +44,46 @@ export type ArchiveStatsResult =
   | { ok: true; stats: ArchiveStats }
   | { ok: false; message: string };
 
+export type AdminStudentDetail = {
+  student: {
+    id: number;
+    name: string;
+    subject: string;
+    grade: string;
+    school: string;
+    manager: string;
+    className: string;
+    attitude: string;
+    extra: Record<string, unknown>;
+    regionId: string | null;
+    campusId: string | null;
+    teacherName: string;
+    teacherCampus: string;
+    ownerEmail: string;
+    updatedAt: string | null;
+  };
+  history: {
+    id: number;
+    studentName: string;
+    text: string;
+    date: string | null;
+    typeName: string | null;
+    subject: string | null;
+    createdAt: string;
+    tool: string;
+    title: string | null;
+    score: number | null;
+    fullScore: number | null;
+  }[];
+};
+
+export type StudentDetailResult =
+  | { ok: true; detail: AdminStudentDetail }
+  | { ok: false; forbidden?: boolean; message: string };
+
 export const ARCHIVES_MIGRATION = "supabase/migrations/0027_admin_archives_a2.sql";
 const STATS_MIGRATION = "supabase/migrations/0028_admin_archive_stats.sql";
+const DETAIL_MIGRATION = "supabase/migrations/0033_admin_scopes_and_student_detail.sql";
 
 function describeDbError(message: string, code?: string | null): string {
   if (code === "PGRST202" || /Could not find the function|does not exist/i.test(message)) {
@@ -174,5 +212,81 @@ export async function setStudentCampus(id: number, campus: string): Promise<{ ok
   } catch (e) {
     console.error("[admin-archives] 归属纠正异常:", String(e));
     return { ok: false, message: "归属纠正失败，请稍后重试。" };
+  }
+}
+
+type RawDetail = {
+  student?: Record<string, unknown>;
+  history?: Record<string, unknown>[];
+};
+
+function str(v: unknown): string {
+  return v == null ? "" : String(v);
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export async function getStudentDetail(id: number): Promise<StudentDetailResult> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("admin_get_student_detail", {
+      p_student_id: id,
+    });
+    if (error) {
+      console.error("[admin-archives] 学生详情读取失败:", error.message);
+      if (error.code === "42501") {
+        return { ok: false, forbidden: true, message: "这位学生不在你的查看范围内。" };
+      }
+      if (error.code === "PGRST202" || /Could not find the function|does not exist/i.test(error.message)) {
+        return { ok: false, message: `学生详情函数还没建：请先执行 ${DETAIL_MIGRATION}。` };
+      }
+      return { ok: false, message: "读取学生详情失败，请稍后重试。" };
+    }
+
+    const raw = (data ?? {}) as RawDetail;
+    const s = raw.student ?? {};
+    const extra = s.extra && typeof s.extra === "object" && !Array.isArray(s.extra)
+      ? s.extra as Record<string, unknown>
+      : {};
+    const detail: AdminStudentDetail = {
+      student: {
+        id: Number(s.id ?? id),
+        name: str(s.name),
+        subject: str(s.subject),
+        grade: str(s.grade),
+        school: str(s.school),
+        manager: str(s.manager),
+        className: str(s.class_name),
+        attitude: str(s.attitude),
+        extra,
+        regionId: s.region_id ? String(s.region_id) : null,
+        campusId: s.campus_id ? String(s.campus_id) : null,
+        teacherName: str(s.teacher_name),
+        teacherCampus: str(s.teacher_campus),
+        ownerEmail: str(s.owner_email),
+        updatedAt: s.updated_at ? String(s.updated_at) : null,
+      },
+      history: (Array.isArray(raw.history) ? raw.history : []).map((h) => ({
+        id: Number(h.id),
+        studentName: str(h.student_name),
+        text: str(h.text),
+        date: h.date ? String(h.date) : null,
+        typeName: h.type_name ? String(h.type_name) : null,
+        subject: h.subject ? String(h.subject) : null,
+        createdAt: String(h.created_at ?? ""),
+        tool: str(h.tool || "feedback"),
+        title: h.title ? String(h.title) : null,
+        score: numOrNull(h.score),
+        fullScore: numOrNull(h.full_score),
+      })),
+    };
+    return { ok: true, detail };
+  } catch (e) {
+    console.error("[admin-archives] 学生详情异常:", String(e));
+    return { ok: false, message: "读取学生详情失败，请稍后重试。" };
   }
 }

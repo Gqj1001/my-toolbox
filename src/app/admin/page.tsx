@@ -76,6 +76,12 @@ export default async function AdminPage() {
               🗂 全机构档案总览 →
             </Link>
             <Link
+              href="/admin/scopes"
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              🏢 大区与权限管理 →
+            </Link>
+            <Link
               href="/admin/feedback-keywords"
               className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
             >

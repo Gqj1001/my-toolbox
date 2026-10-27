@@ -83,7 +83,13 @@ export type SkillDimension = {
   key: "calc" | "concept" | "application" | "innovation" | "standard" | "system";
   name: string;
   count: number;
+  /** 能力值 0–100：默认 100，每条证据扣 6 分，最低 40；可被老师手动覆盖 */
+  score: number;
 };
+
+const ABILITY_BASE = 100;
+const ABILITY_DEDUCTION = 6;
+const ABILITY_FLOOR = 40;
 
 /** 用户 2026-10-26 拍板的固定 6 维；顺序就是雷达图顺序 */
 const SKILL_DIMENSIONS: { key: SkillDimension["key"]; name: string; re: RegExp }[] = [
@@ -578,17 +584,34 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
 
   // ---------------- 固定 6 个能力维度（雷达图用） ----------------
   // 不再从原文里正则切“模块名”。只按用户确认的 6 个维度做关键词/难度映射，
-  // 每条薄弱/失分记录最多给每个维度 +1（频次 = 有多少条证据提到该维度）。
+  // 每条薄弱/失分记录最多给每个维度 +1；能力值从 100 起，每条证据扣 6 分，最低 40。
   const skillRadar: SkillDimension[] = SKILL_DIMENSIONS.map((d) => ({
     key: d.key,
     name: d.name,
     count: 0,
+    score: ABILITY_BASE,
   }));
   for (const w of weaknesses) {
     const text = w.text;
     SKILL_DIMENSIONS.forEach((d, i) => {
       if (d.re.test(text)) skillRadar[i].count++;
     });
+  }
+  for (const d of skillRadar) {
+    d.score = Math.max(ABILITY_FLOOR, ABILITY_BASE - d.count * ABILITY_DEDUCTION);
+  }
+
+  // 老师可手动覆盖（存 `feedback_students.extra.abilityScores`）；
+  // 只接受 0–100 的数字，非法值忽略，不把整张图弄坏。
+  const rawScores = student?.extra && typeof student.extra === "object"
+    ? (student.extra as Record<string, unknown>).abilityScores
+    : null;
+  if (rawScores && typeof rawScores === "object" && !Array.isArray(rawScores)) {
+    const overrides = rawScores as Record<string, unknown>;
+    for (const d of skillRadar) {
+      const n = Number(overrides[d.key]);
+      if (Number.isFinite(n) && n >= 0 && n <= 100) d.score = Math.round(n);
+    }
   }
 
   // ---------------- 「抽不到」的如实说明 ----------------
