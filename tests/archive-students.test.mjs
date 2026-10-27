@@ -439,16 +439,15 @@ try {
     record("（准备）造 4 条带「补录·日期」标题的课后反馈", seed.body?.inserted === 4, JSON.stringify(seed.body));
     await goto(`/dashboard?name=${encodeURIComponent(STU)}`, 4500);
     await sleepMs(900);
-    const folded = await inDoc(`
-      const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));
-      if(!sec) return { err: '没有课后反馈分组' };
-      const details = sec.querySelector(':scope > details');
+    const flat = await inDoc(`
+      const sec = [...document.querySelectorAll('section')].find(s => /历史记录/.test(s.querySelector('h2')?.innerText || ''));
+      if(!sec) return { err: '没有历史记录区块' };
+      const lis = [...sec.querySelectorAll('ul > li')];
+      const feedbackLis = lis.filter(li => /课后反馈/.test(li.innerText));
       return {
-        topLis: sec.querySelectorAll(':scope > ul > li').length,
-        foldedLis: details ? details.querySelectorAll('li').length : 0,
-        summary: details ? details.querySelector('summary')?.innerText || '' : '',
-        open: details ? details.open : null,
-        titles: [...sec.querySelectorAll('li')].map(li => (li.querySelector('span')?.textContent || '')).slice(0, 6),
+        rowCount: feedbackLis.length,
+        allClosed: feedbackLis.every(li => !li.querySelector('details')?.open),
+        summaries: feedbackLis.map(li => li.querySelector('summary')?.innerText || ''),
         hasBackfillText: /补录/.test(sec.innerText),
         hasProgressSection: /学习进度/.test(document.body.innerText),
         hasTargetSection: /分数目标对比/.test(document.body.innerText),
@@ -456,37 +455,36 @@ try {
         hasPdfButton: /下载 PDF 报告/.test(document.body.innerText),
       };
     `);
-    record("★课后反馈默认只展示最近 3 条（第 4 条在折叠里）",
-      folded?.topLis === 3 && folded?.foldedLis === 1,
-      JSON.stringify(folded));
-    record("★折叠按钮文案 =「展开全部（共 4 条）」",
-      /展开全部（共 4 条）/.test(String(folded?.summary)), String(folded?.summary));
-    record("★补录日期不再显示在标题里（页面上没有「补录 ·」字样，标题是「课后反馈」）",
-      folded?.hasBackfillText === false && folded?.titles?.every((t) => t === "课后反馈"),
-      JSON.stringify(folded?.titles));
+    record("★历史记录平铺：4 条反馈各占一行，默认全部收起",
+      flat?.rowCount === 4 && flat?.allClosed === true,
+      JSON.stringify(flat));
+    record("★平铺行包含日期/类型/标题，标题里的「补录 · 日期」已清掉",
+      flat?.hasBackfillText === false &&
+        (flat?.summaries ?? []).every((s) => s.includes("课后反馈") && !s.includes("补录")),
+      JSON.stringify(flat?.summaries));
     record("★免费学情分析页也出现「学习进度」「分数目标对比」两节（与 AI 摘要同源）",
-      folded?.hasProgressSection === true && folded?.hasTargetSection === true,
-      JSON.stringify({ progress: folded?.hasProgressSection, target: folded?.hasTargetSection }));
+      flat?.hasProgressSection === true && flat?.hasTargetSection === true,
+      JSON.stringify({ progress: flat?.hasProgressSection, target: flat?.hasTargetSection }));
     record("★学情分析图表真的渲染了（成绩趋势折线图 + 课时消耗环形图 + 能力值雷达图）",
-      (folded?.chartLabels ?? []).includes("成绩趋势折线图") &&
-        (folded?.chartLabels ?? []).includes("课时消耗环形图") &&
-        (folded?.chartLabels ?? []).includes("能力值雷达图"),
-      JSON.stringify(folded?.chartLabels));
-    record("★学员详情有「下载 PDF 报告」按钮", folded?.hasPdfButton === true, "PDF 按钮");
+      (flat?.chartLabels ?? []).includes("成绩趋势折线图") &&
+        (flat?.chartLabels ?? []).includes("课时消耗环形图") &&
+        (flat?.chartLabels ?? []).includes("能力值雷达图"),
+      JSON.stringify(flat?.chartLabels));
+    record("★学员详情有「下载 PDF 报告」按钮", flat?.hasPdfButton === true, "PDF 按钮");
 
     await inDoc(`
-      const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));
-      sec?.querySelector(':scope > details > summary')?.click();
+      const sec = [...document.querySelectorAll('section')].find(s => /历史记录/.test(s.querySelector('h2')?.innerText || ''));
+      sec?.querySelector('ul > li details > summary')?.click();
       return true;
     `);
     await sleepMs(500);
     const opened = await inDoc(`
-      const sec = [...document.querySelectorAll('section')].find(s => /课后反馈/.test(s.querySelector('h2')?.innerText || ''));
-      const d = sec?.querySelector(':scope > details');
-      return { open: !!d?.open, visibleLis: d ? [...d.querySelectorAll('li')].filter(li => li.getBoundingClientRect().height > 0).length : 0 };
+      const sec = [...document.querySelectorAll('section')].find(s => /历史记录/.test(s.querySelector('h2')?.innerText || ''));
+      const d = sec?.querySelector('ul > li details');
+      return { open: !!d?.open, visibleText: d ? d.innerText.length : 0 };
     `);
-    record("★点「展开全部」后能展开（折叠里的第 4 条可见）",
-      opened?.open === true && opened?.visibleLis === 1, JSON.stringify(opened));
+    record("★点击单条记录才展开全文",
+      opened?.open === true && opened?.visibleText > 0, JSON.stringify(opened));
   }
 
   // ---- 6. 名单页搜索 ----

@@ -6,7 +6,8 @@ import AnalysisSummary from "@/app/dashboard/analysis-summary";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
 import { getStudentDetail } from "@/lib/admin-archives";
 import type { HistoryRow, StudentRow } from "@/lib/feedback-db";
-import { buildStudentReport, TOOL_LABELS } from "@/lib/student-report";
+import { buildStudentReport, cleanHistoryTitle, TOOL_LABELS } from "@/lib/student-report";
+import { stripReportMarkup } from "@/lib/markdown-tables";
 
 export const dynamic = "force-dynamic";
 
@@ -91,13 +92,6 @@ export default async function AdminStudentDetailPage({
   }));
   const report = buildStudentReport({ name: student.name, student: studentRow, rows });
   const latestAnalysis = history.find((h) => h.tool === "analysis");
-  const toolOrder = ["math-plan", "plan-generator", "paper", "feedback", "manual", "analysis"];
-  const groups = toolOrder
-    .map((tool) => ({ tool, items: history.filter((h) => h.tool === tool) }))
-    .filter((g) => g.items.length);
-  for (const tool of [...new Set(history.map((h) => h.tool))]) {
-    if (!toolOrder.includes(tool)) groups.push({ tool, items: history.filter((h) => h.tool === tool) });
-  }
 
   return (
     <>
@@ -129,7 +123,6 @@ export default async function AdminStudentDetailPage({
             <div><dt className="text-xs text-zinc-400">机构校区</dt><dd className="text-zinc-800 dark:text-zinc-100">{student.teacherCampus || "—"}</dd></div>
             <div><dt className="text-xs text-zinc-400">任课老师</dt><dd className="text-zinc-800 dark:text-zinc-100">{student.teacherName || "—"}</dd></div>
             <div><dt className="text-xs text-zinc-400">学管师</dt><dd className="text-zinc-800 dark:text-zinc-100">{student.manager || "—"}</dd></div>
-            <div><dt className="text-xs text-zinc-400">班级</dt><dd className="text-zinc-800 dark:text-zinc-100">{student.className || "—"}</dd></div>
             <div><dt className="text-xs text-zinc-400">负责人邮箱</dt><dd className="break-all text-zinc-800 dark:text-zinc-100">{student.ownerEmail || "—"}</dd></div>
             <div><dt className="text-xs text-zinc-400">最近更新</dt><dd className="text-zinc-800 dark:text-zinc-100">{fmt(student.updatedAt)}</dd></div>
           </dl>
@@ -138,45 +131,47 @@ export default async function AdminStudentDetailPage({
         <AnalysisSummary report={report} />
 
         {latestAnalysis ? (
-          <section className={card}>
-            <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">AI 学情报告</h2>
-            <p className="mt-1 text-xs text-zinc-400">{latestAnalysis.title || "最近一份学情报告"} · {latestAnalysis.date || fmt(latestAnalysis.createdAt)}</p>
-            <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-zinc-700 dark:text-zinc-200">{latestAnalysis.text}</div>
-          </section>
+          <details className="rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+            <summary className="cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              AI 学情报告（点击展开）
+              <span className="ml-2 text-xs font-normal text-zinc-400">{latestAnalysis.date || fmt(latestAnalysis.createdAt)}</span>
+            </summary>
+            <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-zinc-700 dark:text-zinc-200">
+              {stripReportMarkup(latestAnalysis.text)}
+            </div>
+          </details>
         ) : null}
 
         <section className={card}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">历史记录</h2>
-            <span className="text-xs text-zinc-400">共 {history.length} 条 · 按工具折叠</span>
+            <span className="text-xs text-zinc-400">共 {history.length} 条 · 按时间倒序，点击单条展开</span>
           </div>
           {history.length === 0 ? (
             <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">这位学生还没有记录。</p>
           ) : (
-            <div className="mt-3 flex flex-col gap-2">
-              {groups.map((g) => (
-                <details key={g.tool} className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-                  <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-100">
-                    <span className="font-medium">{TOOL_LABELS[g.tool] ?? g.tool}</span>
-                    <span className="text-xs text-zinc-400">{g.items.length} 条</span>
-                  </summary>
-                  <div className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">
-                    {g.items.map((h) => (
-                      <article key={h.id} className="px-3 py-2.5">
-                        <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                          <span className="font-medium text-zinc-800 dark:text-zinc-100">{h.title || "—"}</span>
-                          <span className="text-xs text-zinc-400">
-                            {h.date || fmt(h.createdAt)}
-                            {h.score != null && h.fullScore != null ? ` · ${h.score} / ${h.fullScore}` : ""}
-                          </span>
-                        </div>
-                        <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-zinc-600 dark:text-zinc-300">{h.text}</div>
-                      </article>
-                    ))}
-                  </div>
-                </details>
+            <ul className="mt-3 flex flex-col gap-2">
+              {history.map((h) => (
+                <li key={h.id} className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+                  <details>
+                    <summary className="flex cursor-pointer flex-wrap items-baseline justify-between gap-2 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-100">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-zinc-400">{h.date || fmt(h.createdAt)}</span>
+                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                          {TOOL_LABELS[h.tool] ?? h.tool}
+                        </span>
+                        <span className="font-medium">{cleanHistoryTitle(h.title || "") || "—"}</span>
+                        {h.score != null && h.fullScore != null ? <span className="text-xs text-zinc-400">{h.score} / {h.fullScore}</span> : null}
+                      </span>
+                      <span className="text-xs text-zinc-400">展开全文</span>
+                    </summary>
+                    <div className="border-t border-zinc-100 px-3 py-2.5 dark:border-zinc-800">
+                      <div className="whitespace-pre-wrap break-words text-sm leading-6 text-zinc-600 dark:text-zinc-300">{h.text}</div>
+                    </div>
+                  </details>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </section>
       </main>

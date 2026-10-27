@@ -16,6 +16,23 @@ export type ReportBlock =
   | { type: "text"; text: string }
   | { type: "table"; headers: string[]; rows: string[][] };
 
+/** 清掉 AI 偶尔漏出的 Markdown 粗体与英文字段名（兜底，不依赖模型听话）。 */
+export function stripReportMarkup(input: string): string {
+  return String(input ?? "")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/\b(targetScore|fullScore|totalHours|studentName|examName)\s*=\s*/g, (_m, key: string) => {
+      const labels: Record<string, string> = {
+        targetScore: "目标分",
+        fullScore: "满分",
+        totalHours: "总课时",
+        studentName: "学生",
+        examName: "考试名",
+      };
+      return `${labels[key] ?? key} `;
+    });
+}
+
 function isPipeLine(line: string): boolean {
   const s = line.trim();
   if (!s.includes("|")) return false;

@@ -1,8 +1,8 @@
-import { parseMarkdownTables } from "@/lib/markdown-tables";
+import { parseMarkdownTables, stripReportMarkup } from "@/lib/markdown-tables";
 
 /** 把 AI 报告里的 Markdown 表格渲染成规整表格；其余文本保持换行。 */
 export default function ReportView({ text }: { text: string }) {
-  const blocks = parseMarkdownTables(text);
+  const blocks = parseMarkdownTables(stripReportMarkup(text));
   return (
     <div className="mt-3 max-h-[32rem] overflow-auto rounded-lg bg-zinc-50 px-3 py-2.5 text-sm leading-relaxed text-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-200">
       {blocks.map((b, i) =>

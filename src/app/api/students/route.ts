@@ -83,7 +83,10 @@ export async function GET(request: NextRequest) {
     //    但 `/api/students` 返回 `count:0` —— 三个工具拉档案时**看不到这个学生**，
     //    最长 25 秒，看起来就是「保存了但没生效」。
     //    这个接口是三个工具读写学生档案的**唯一入口**，正确性优先于省一次往返。
-    const rows = await getStudentsFresh();
+    const [rows, histRows] = await Promise.all([
+      getStudentsFresh(),
+      withHistory ? getHistoryFresh() : Promise.resolve(null),
+    ]);
     // 复用 feedback 的装配函数：**同一份返回结构**，三个工具与将来的统一首页只认这一种形状。
     // （不要在别处再写一套 {姓名: {...}} 的拼装，那种"第二个来源"是这个项目踩过的坑。）
     const all = studentsByName(rows);
@@ -95,8 +98,7 @@ export async function GET(request: NextRequest) {
     };
 
     if (withHistory) {
-      const histRows = await getHistoryFresh();
-      payload.history = historyByStudent(histRows);
+      payload.history = historyByStudent(histRows ?? []);
     }
     if (name) {
       payload.student = name in all ? all[name] : null;

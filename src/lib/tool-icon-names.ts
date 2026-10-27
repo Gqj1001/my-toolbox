@@ -15,4 +15,6 @@ export type ToolIcon =
   | "regex"
   | "hash"
   | "calculator"
+  | "chart"
+  | "sparkles"
   | "lock";

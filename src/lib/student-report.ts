@@ -106,7 +106,7 @@ export type StudentReport = {
   name: string;
   identity: {
     grade: string; campus: string; teacher: string; subject: string;
-    className: string; attitude: string;
+    attitude: string;
     /** 工具专属字段（extra）展平成「k=v」给人看；空则空串 */
     extra: string;
   };
@@ -660,7 +660,7 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
   const id = {
     grade: String(student?.grade ?? ""), campus: String(student?.campus ?? ""),
     teacher: String(student?.teacher ?? ""), subject: String(student?.subject ?? ""),
-    className: String(student?.class_name ?? ""), attitude: String(student?.attitude ?? ""),
+    attitude: String(student?.attitude ?? ""),
     extra: extraText(student?.extra),
   };
   lines.push(`学生：${name}`);
@@ -670,7 +670,6 @@ export function buildStudentReport({ name, student, rows }: ReportInput): Studen
       id.subject && `科目 ${id.subject}`,
       id.campus && `校区 ${id.campus}`,
       id.teacher && `任课教师 ${id.teacher}`,
-      id.className && `班级 ${id.className}`,
     ].filter(Boolean).join("；") || "（档案里还没填）"}`,
   );
   if (id.attitude) lines.push(`老师对该生的旧印象：${id.attitude}`);

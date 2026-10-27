@@ -356,7 +356,7 @@ try {
   const autoFilled = await ev(`(() => {
     const f = [...document.querySelectorAll('section')].find((s) => s.innerText.includes('补录历史材料') && s.querySelector('textarea'));
     if (!f) return { err: '面板没展开' };
-    const ta = f.querySelector('textarea');
+    const ta = f.querySelector('textarea[placeholder*="老材料"]');
     const d = Object.getOwnPropertyDescriptor(ta.constructor.prototype, 'value');
     // 模拟"粘进来一段"：真实粘贴会先把值落进 textarea，然后派发 paste 事件 —— 这里照做
     d.set.call(ta, '2025年3月月考，数学 100/150。错题：第9题立体几何。');
@@ -401,7 +401,7 @@ try {
   const filled = await ev(`(() => {
     const f = [...document.querySelectorAll('section')].find((s) => s.innerText.includes('补录历史材料') && s.querySelector('textarea'));
     if (!f) return { err: '面板没展开' };
-    const ta = f.querySelector('textarea');
+    const ta = f.querySelector('textarea[placeholder*="老材料"]');
     const setV = (el, v) => {
       const d = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value');
       d.set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -409,7 +409,7 @@ try {
     setV(ta, '2024年4月期中考试，数学 88/150。错题：第12题导数单调性；第13题解析几何联立。\\n建议多练导数。');
     // ⚠️ 2026-10 起按钮文案从「让 AI 整理成统一格式」改成了「重新整理」
     //    （因为上传/粘贴现在**会自动整理**，这个按钮只是"重跑"）。选择器用「整理」两个字兜住两种文案。
-    const go = [...f.querySelectorAll('button')].find((x) => x.textContent.includes('整理'));
+    const go = [...f.querySelectorAll('button')].find((x) => x.textContent.includes('重新整理'));
     if (!go) return { err: '找不到整理按钮' };
     go.click();
     return { ok: true };

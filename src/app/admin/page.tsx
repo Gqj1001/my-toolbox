@@ -45,15 +45,16 @@ export default async function AdminPage({
     redirect("/admin/archives");
   }
 
-  const result = await fetchAllUsers();
+  const [result, flagState, scopeData] = await Promise.all([
+    fetchAllUsers(),
+    getFeatureFlags(),
+    getScopeData(),
+  ]);
   const users = result.ok ? result.users : [];
   const adminCount = users.filter((item) => item.role === "admin").length;
   const vipCount = users.filter((item) => item.vipActive).length;
   const bannedCount = users.filter((item) => item.status === "banned").length;
 
-  // 功能开关（读不到表时 ready=false，功能一律保持开启）
-  const flagState = await getFeatureFlags();
-  const scopeData = await getScopeData();
   const params = (await searchParams) ?? {};
   const roleOk = typeof params.roleOk === "string" ? params.roleOk : "";
   const roleErr = typeof params.roleErr === "string" ? params.roleErr : "";

@@ -81,7 +81,7 @@ console.log("\n=== 工具列表（个人中心）的卡片 ===");
 await goto("/tools", 6000);
 {
   const t = await ev(`document.body.innerText`);
-  rec("工具列表出现「试卷分析工作台」", /试卷分析工作台/.test(String(t)), "");
+  rec("工具列表出现「AI 智能试卷分析系统」", /AI 智能试卷分析系统/.test(String(t)), "");
   const cards = await ev(`[...document.querySelectorAll('a')].filter(a=>a.href.includes('/tools/')).map(a=>({href:a.getAttribute('href'), text:a.innerText.replace(/\\s+/g,' ').slice(0,40)}))`);
   const paper = (cards ?? []).find((c) => String(c.href).includes("paper-analysis"));
   rec("卡片链接指向 /tools/paper-analysis", !!paper, JSON.stringify(paper ?? {}));

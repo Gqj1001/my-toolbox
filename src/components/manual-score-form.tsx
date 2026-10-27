@@ -87,8 +87,7 @@ export default function ManualScoreForm({ name }: Props) {
         <div>
           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">手动补录成绩</p>
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            在别处考的试（学校期中、别家机构模考…）也能记进来；补录后会自动进入下面的
-            「成绩趋势」和 AI 学情报告。
+            记录一次考试成绩，自动进入学情分析。
           </p>
         </div>
         <button

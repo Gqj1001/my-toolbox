@@ -48,6 +48,9 @@ export default function BackfillPanel({ name }: { name: string }) {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [edited, setEdited] = useState("");
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchText, setBatchText] = useState("");
+  const [batchItems, setBatchItems] = useState<{ kind: BackfillKind; tool: string; title: string; date: string; text: string; score: string; fullScore: string }[]>([]);
   /**
    * ★ 2026-10 用户线上验收后加的：**这条记录是哪天的**，由老师自己定。
    *
@@ -220,14 +223,92 @@ export default function BackfillPanel({ name }: { name: string }) {
     }
   }
 
+  async function runBatch() {
+    const blocks = batchText
+      .split(/\n\s*\n|^\s*---+\s*$/m)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!blocks.length) {
+      setMsg({ kind: "err", text: "请先粘贴多条反馈（用空行或 --- 分隔）。" });
+      return;
+    }
+    if (blocks.length > 20) {
+      setMsg({ kind: "err", text: "一次最多 20 条，请分批粘贴。" });
+      return;
+    }
+    setBusy("ai");
+    setMsg({ kind: "ok", text: `正在逐条整理 ${blocks.length} 条…` });
+    try {
+      const items: typeof batchItems = [];
+      for (const block of blocks) {
+        const r = await fetch("/api/students/backfill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "feedback", text: block }),
+        });
+        const j = (await r.json().catch(() => null)) as (Preview & { ok?: boolean; error?: string }) | null;
+        if (r.ok && j?.ok) {
+          items.push({
+            kind: "feedback",
+            tool: j.tool || "feedback",
+            title: String(j.facts?.examName || "课后反馈"),
+            date: parseDisplayDate(j.facts?.examDate) || todayIso(),
+            text: j.text,
+            score: String(j.facts?.score ?? ""),
+            fullScore: String(j.facts?.fullScore ?? ""),
+          });
+        }
+      }
+      setBatchItems(items);
+      setMsg({ kind: "ok", text: `整理完成 ${items.length} 条，请逐条核对后批量入档。` });
+    } catch (e) {
+      setMsg({ kind: "err", text: "批量整理失败：" + String((e as Error)?.message ?? e) });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function saveBatch() {
+    if (!batchItems.length) return;
+    setBusy("save");
+    try {
+      const r = await fetch("/api/students", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          op: "import",
+          items: batchItems.map((it) => ({
+            student_name: name,
+            tool: it.tool,
+            title: it.title.trim() || "课后反馈",
+            date: it.date,
+            text: it.text,
+            score: numOrNull(it.score),
+            full_score: numOrNull(it.fullScore),
+          })),
+        }),
+      });
+      const j = (await r.json().catch(() => null)) as { ok?: boolean; inserted?: number; error?: string } | null;
+      if (r.ok && j?.ok) {
+        setMsg({ kind: "ok", text: `已入档：新增 ${j.inserted ?? 0} 条。` });
+        setBatchItems([]);
+        setBatchText("");
+        router.refresh();
+      } else {
+        setMsg({ kind: "err", text: j?.error || `保存失败（HTTP ${r.status}）` });
+      }
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <section className="rounded-xl border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-900/40">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">补录历史材料</p>
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            工具上线**之前**做的试卷分析 / 辅导方案 / 课后反馈，可以在这里补进档案
-            —— 让学情分析用上全部历史（AI 只做整理，**要你核对后才入档**）。
+            把旧材料整理成档案记录，核对后再入档。
           </p>
         </div>
         <button
@@ -241,6 +322,41 @@ export default function BackfillPanel({ name }: { name: string }) {
 
       {open ? (
         <div className="mt-3 flex flex-col gap-3">
+          <details className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
+            <summary className="cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              批量粘贴多条反馈（用空行或 --- 分隔）
+            </summary>
+            <div className="mt-2 flex flex-col gap-2">
+              <textarea
+                value={batchText}
+                onChange={(e) => setBatchText(e.target.value)}
+                rows={6}
+                placeholder={"第一条反馈…\n\n第二条反馈…\n\n第三条反馈…"}
+                className={area}
+              />
+              <button type="button" onClick={runBatch} disabled={!!busy} className={`${btn} w-fit bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900`}>
+                {busy === "ai" ? "整理中…" : "AI 整理成多条"}
+              </button>
+              {batchItems.length ? (
+                <div className="flex flex-col gap-3">
+                  {batchItems.map((it, idx) => (
+                    <div key={idx} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <label className={label}>标题<input value={it.title} onChange={(e) => setBatchItems((arr) => arr.map((x, i) => i === idx ? { ...x, title: e.target.value } : x))} className={`${field} mt-1`} /></label>
+                        <label className={label}>日期<input type="date" value={it.date} onChange={(e) => setBatchItems((arr) => arr.map((x, i) => i === idx ? { ...x, date: e.target.value } : x))} className={`${field} mt-1`} /></label>
+                        <label className={label}>分数<input value={it.score} onChange={(e) => setBatchItems((arr) => arr.map((x, i) => i === idx ? { ...x, score: e.target.value } : x))} className={`${field} mt-1`} placeholder="可空" /></label>
+                      </div>
+                      <textarea value={it.text} onChange={(e) => setBatchItems((arr) => arr.map((x, i) => i === idx ? { ...x, text: e.target.value } : x))} rows={4} className={`${area} mt-2`} />
+                    </div>
+                  ))}
+                  <button type="button" onClick={saveBatch} disabled={!!busy} className={`${btn} w-fit bg-emerald-600 text-white`}>
+                    {busy === "save" ? "保存中…" : `批量入档（${batchItems.length} 条）`}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </details>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <label className={`${label} flex flex-col gap-1`}>
               <span>① 这是哪种材料？</span>

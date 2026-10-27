@@ -51,6 +51,35 @@ function pickIcon(tool: DbTool): ToolIcon {
   return "shield";
 }
 
+/** 商业化展示名 / 描述（只改展示，不改数据库，避免迁移） */
+const BRAND: Record<string, { name: string; description: string; icon: ToolIcon }> = {
+  "/tools/paper-analysis": {
+    name: "AI 智能试卷分析系统",
+    description: "上传试卷报告，自动生成逐题分析、错因归因与可打印的家长版报告。",
+    icon: "chart",
+  },
+  "/tools/paper-analysis-v2": {
+    name: "全学科 AI 试卷分析系统",
+    description: "数学 / 物理 / 英语 / 语文 × 初高中，一套工作台完成录分、归因与导出。",
+    icon: "chart",
+  },
+  "/tools/feedback": {
+    name: "AI 课后反馈助手",
+    description: "把课堂表现快速整理成专业、得体的课后反馈，可一键润色。",
+    icon: "sparkles",
+  },
+  "/tools/math-plan": {
+    name: "AI 数学辅导方案",
+    description: "按学情、目标分与课时，自动排出可执行的数学辅导方案。",
+    icon: "calculator",
+  },
+  "/tools/plan-generator": {
+    name: "全学科 AI 辅导方案",
+    description: "覆盖数学 / 物理 / 英语 / 语文，按教材进度生成个性化辅导方案。",
+    icon: "sparkles",
+  },
+};
+
 /** 从路由推导 slug：/tools/math-plan -> math-plan */
 export function slugFromRoute(route: string): string {
   const trimmed = route.replace(/\/+$/, "");
@@ -107,14 +136,17 @@ export function toToolView(tool: DbTool, membership: Pick<Membership, "isVip">):
   const slug = slugFromRoute(tool.route);
   const vipOnly = tool.min_plan === "vip";
   const unlocked = !vipOnly || membership.isVip;
+  const brand = BRAND[tool.route];
 
   return {
     ...tool,
+    name: brand?.name ?? tool.name,
+    description: brand?.description ?? tool.description,
     slug,
     vipOnly,
     unlocked,
     locked: !unlocked,
-    icon: pickIcon(tool),
+    icon: brand?.icon ?? pickIcon(tool),
     href: unlocked ? tool.route : `/upgrade?tool=${encodeURIComponent(slug)}`,
   };
 }

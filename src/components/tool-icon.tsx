@@ -67,6 +67,20 @@ export default function ToolIcon({ name, className = "h-6 w-6" }: ToolIconProps)
           <path d="M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15v3" />
         </svg>
       );
+    case "chart":
+      return (
+        <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...shared}>
+          <path d="M4 20V4M4 20h16" />
+          <path d="M8 17v-4M12 17V9M16 17V6M20 17v-7" />
+        </svg>
+      );
+    case "sparkles":
+      return (
+        <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...shared}>
+          <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />
+          <path d="M19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16z" />
+        </svg>
+      );
     case "lock":
       return (
         <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...shared}>
