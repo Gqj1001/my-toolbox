@@ -2,6 +2,7 @@ import Link from "next/link";
 import SiteHeader from "@/components/site-header";
 import BatchImportPanel from "@/components/batch-import-panel";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
+import { isFeatureEnabled } from "@/lib/feature-flags";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,19 @@ export default async function AdminImportPage() {
         <main className="mx-auto w-full max-w-4xl flex-1 overflow-y-auto px-6 py-10">
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             没有访问权限：批量导入仅对 Owner/管理员开放。
+          </p>
+        </main>
+      </>
+    );
+  }
+
+  if (!(await isFeatureEnabled("batch_import"))) {
+    return (
+      <>
+        <SiteHeader role="admin" current="/admin" />
+        <main className="mx-auto w-full max-w-4xl flex-1 overflow-y-auto px-6 py-10">
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+            批量导入已被管理员暂时关闭。现有档案不受影响。
           </p>
         </main>
       </>

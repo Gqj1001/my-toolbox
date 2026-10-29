@@ -117,6 +117,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
     //    所以不走 ToolPageShell 那套"拼 iframe 参数"，由本页自己读开关；
     //    同时支持临时兜底 `?nobackfill=1`（优先级与工具页一致：URL 参数 > 代码常量）。
     const backfillOff = await pageDisables("backfill_materials", params.nobackfill);
+    const aiOff = await pageDisables("ai_analysis", params.noai);
     const info = (all[selected] ?? {}) as Record<string, unknown>;
     const extra = (info.extra && typeof info.extra === "object" && !Array.isArray(info.extra))
       ? info.extra as Record<string, unknown>
@@ -194,11 +195,17 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
               AI 报告是会员专属（`AnalysisPanel` 里的按钮）。 */}
           <AnalysisSummary report={report} />
           <AbilityEditor name={selected} radar={report.skillRadar} />
-          <AnalysisPanel
-            name={selected}
-            isVip={!!viewer.membership.isVip}
-            hasRecords={report.overview.total > 0}
-          />
+          {aiOff ? (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+              AI 学情报告已被管理员暂时关闭；统计图表和历史记录不受影响。
+            </p>
+          ) : (
+            <AnalysisPanel
+              name={selected}
+              isVip={!!viewer.membership.isVip}
+              hasRecords={report.overview.total > 0}
+            />
+          )}
 
           {items.length ? (
             <section className="flex flex-col gap-2">

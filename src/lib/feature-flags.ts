@@ -64,6 +64,41 @@ export const FEATURE_FLAG_REGISTRY: FeatureFlagSpec[] = [
     param: "nopaperv2",
     tools: ["paper-analysis-v2"],
   },
+  {
+    key: "paper_analysis",
+    label: "AI 智能试卷分析（数学版）",
+    note: "老的数学试卷分析工作台（/tools/paper-analysis）。关掉后整个工具页显示「暂时关闭」，数据保留，重新打开即恢复。",
+    param: "nopaper",
+    tools: ["paper-analysis"],
+  },
+  {
+    key: "math_plan",
+    label: "AI 数学辅导方案",
+    note: "数学辅导方案生成器（/tools/math-plan）。关掉后整个工具页显示「暂时关闭」，数据保留。",
+    param: "nomathplan",
+    tools: ["math-plan"],
+  },
+  {
+    key: "plan_generator",
+    label: "全学科 AI 辅导方案",
+    note: "全学科辅导方案生成器（/tools/plan-generator）。关掉后整个工具页显示「暂时关闭」，数据保留。",
+    param: "noplan",
+    tools: ["plan-generator"],
+  },
+  {
+    key: "ai_analysis",
+    label: "AI 学情报告",
+    note: "学员档案详情页的「AI 整体学情报告」生成入口。关掉后入口消失、接口返回维护提示；统计图表与历史记录不受影响。",
+    param: "noai",
+    tools: [],
+  },
+  {
+    key: "batch_import",
+    label: "批量导入学生档案",
+    note: "后台批量导入（/admin/import）。关掉后页面与接口都拒绝导入，现有档案不受影响。",
+    param: "noimport",
+    tools: [],
+  },
 ];
 
 /**

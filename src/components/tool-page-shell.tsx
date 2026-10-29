@@ -6,7 +6,14 @@ import ToolFrame from "@/components/tool-frame";
 import ToolIcon from "@/components/tool-icon";
 import { getViewer } from "@/lib/viewer";
 import { getToolByRoute, resolveIframeSrc } from "@/lib/tools-db";
-import { getDisabledParamsForTool, withFeatureParams } from "@/lib/feature-flags";
+import { getDisabledParamsForTool, isFeatureEnabled, withFeatureParams } from "@/lib/feature-flags";
+
+const FULL_TOOL_FLAGS: Record<string, string> = {
+  "paper-analysis": "paper_analysis",
+  "paper-analysis-v2": "paper_analysis_v2",
+  "math-plan": "math_plan",
+  "plan-generator": "plan_generator",
+};
 
 type ToolPageShellProps = {
   /** 数据库 tools 表中的 route，如 /tools/math-plan */
@@ -43,6 +50,21 @@ export default async function ToolPageShell({ route, skeleton }: ToolPageShellPr
   if (!tool) notFound();
 
   const slug = route.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "";
+  const fullFlag = FULL_TOOL_FLAGS[slug];
+  if (fullFlag && !(await isFeatureEnabled(fullFlag))) {
+    return (
+      <>
+        <SiteHeader role={viewer.role ?? "user"} current="/tools" adminScope={viewer.adminScope} />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-3 px-6 py-12">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">该功能暂时关闭</h1>
+          <p className="text-sm text-zinc-500 dark:text-zinc-300">
+            管理员已临时关闭「{tool.name}」，数据不会丢失。稍后再试，或联系管理员。
+          </p>
+          <Link href="/tools" className="text-sm underline">← 返回工具列表</Link>
+        </main>
+      </>
+    );
+  }
   const vipOnly = tool.min_plan === "vip";
   const locked = vipOnly && !membership.isVip;
 

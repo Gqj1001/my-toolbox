@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireVip } from "@/lib/membership";
+import { isFeatureEnabled } from "@/lib/feature-flags";
 import {
   getHistoryFresh,
   getStudentsFresh,
@@ -98,6 +99,10 @@ export async function POST(request: NextRequest) {
       { ok: false, error: "学情分析（AI 报告）为会员专属功能，请先开通会员。" },
       { status: 403 },
     );
+  }
+
+  if (!(await isFeatureEnabled("ai_analysis"))) {
+    return NextResponse.json({ ok: false, error: "AI 学情报告已被管理员暂时关闭，请稍后再试。" }, { status: 503 });
   }
 
   // ---------- 2. 服务端配置 ----------

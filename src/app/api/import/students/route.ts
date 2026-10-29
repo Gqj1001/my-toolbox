@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getCurrentUserWithRole } from "@/lib/auth-role";
+import { isFeatureEnabled } from "@/lib/feature-flags";
 import { upsertStudent } from "@/lib/feedback-db";
 import { PROFILE_SUBJECTS } from "@/lib/user-profile";
 
@@ -37,6 +38,9 @@ export async function POST(request: Request) {
   const { role } = await getCurrentUserWithRole();
   if (role !== "admin") {
     return NextResponse.json({ ok: false, error: "只有 Owner/管理员能批量导入。" }, { status: 403 });
+  }
+  if (!(await isFeatureEnabled("batch_import"))) {
+    return NextResponse.json({ ok: false, error: "批量导入已被管理员暂时关闭。" }, { status: 503 });
   }
 
   let form: FormData;
