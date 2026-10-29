@@ -140,6 +140,13 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       student: studentRows.find((r) => r.name === selected) ?? null,
       rows: historyRows.filter((r) => r.student_name === selected),
     });
+    const toolOrder = ["math-plan", "plan-generator", "paper", "feedback", "manual", "analysis"];
+    const groups = toolOrder
+      .map((tool) => ({ tool, items: items.filter((i) => (i.tool ?? "feedback") === tool) }))
+      .filter((g) => g.items.length);
+    for (const tool of [...new Set(items.map((i) => i.tool ?? "feedback"))]) {
+      if (!toolOrder.includes(tool)) groups.push({ tool, items: items.filter((i) => (i.tool ?? "feedback") === tool) });
+    }
 
     return (
       <>
@@ -207,43 +214,56 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
             />
           )}
 
-          {items.length ? (
-            <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">历史记录 <span className="text-xs font-normal text-zinc-400">（按时间倒序，点击单条展开）</span></h2>
-              <ul className="flex flex-col gap-2">
-                {items.map((it) => {
-                  const meta = toolMeta(it.tool ?? "feedback");
-                  return (
-                    <li key={String(it.id ?? `${it.tool}-${it.date}-${it.title}`)} className={card}>
-                      <details>
-                        <summary className="flex cursor-pointer flex-wrap items-baseline justify-between gap-2">
-                          <span className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs text-zinc-500 dark:text-zinc-400">{it.date || "未填日期"}</span>
-                            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${meta.badge}`}>{meta.label}</span>
-                            <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                              {cleanHistoryTitle(it.title || "") || it.typeName || "（未填名称）"}
-                            </span>
-                            {it.score != null ? <span className="text-xs text-zinc-400">{it.score}{it.fullScore != null ? ` / ${it.fullScore}` : ""} 分</span> : null}
-                          </span>
-                          <span className="flex items-center gap-2 text-xs text-zinc-400">
-                            {it.id != null ? (
-                              <RecordDateButton id={it.id} date={it.dateIso ?? ""} title={cleanHistoryTitle(it.title || "")} />
-                            ) : null}
-                            {it.id != null && (it.tool === "manual" || it.tool === "analysis") ? (
-                              <RecordDeleteButton id={it.id} title={cleanHistoryTitle(it.title || "")} />
-                            ) : null}
-                            <span>展开全文</span>
-                          </span>
-                        </summary>
-                        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-300">
+          {groups.length ? (
+            groups.map((g) => {
+              const meta = toolMeta(g.tool);
+              const renderItem = (it: HistoryItem) => (
+                <li key={String(it.id ?? `${g.tool}-${it.date}-${it.title}`)} className={card}>
+                  <details>
+                    <summary className="flex cursor-pointer flex-wrap items-baseline justify-between gap-2">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">{it.date || "未填日期"}</span>
+                        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                          {cleanHistoryTitle(it.title || "") || meta.label}
+                        </span>
+                        {it.score != null ? <span className="text-xs text-zinc-400">{it.score}{it.fullScore != null ? ` / ${it.fullScore}` : ""} 分</span> : null}
+                      </span>
+                      <span className="flex items-center gap-2 text-xs text-zinc-400">
+                        {it.id != null ? (
+                          <RecordDateButton id={it.id} date={it.dateIso ?? ""} title={cleanHistoryTitle(it.title || "")} />
+                        ) : null}
+                        {it.id != null && (g.tool === "manual" || g.tool === "analysis") ? (
+                          <RecordDeleteButton id={it.id} title={cleanHistoryTitle(it.title || "")} />
+                        ) : null}
+                        <span>展开全文</span>
+                      </span>
+                    </summary>
+                    <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-300">
 {it.text || "（这条记录没有正文）"}
-                        </pre>
-                      </details>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
+                    </pre>
+                  </details>
+                </li>
+              );
+              const shown = g.tool === "feedback" ? g.items.slice(0, 3) : g.items;
+              const folded = g.tool === "feedback" ? g.items.slice(3) : [];
+              return (
+                <section key={g.tool} className="flex flex-col gap-2">
+                  <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${meta.badge}`}>{meta.label}</span>
+                    <span className="text-xs text-zinc-400 dark:text-zinc-500">{g.items.length} 条</span>
+                  </h2>
+                  <ul className="flex flex-col gap-2">{shown.map(renderItem)}</ul>
+                  {folded.length ? (
+                    <details className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <summary className="cursor-pointer text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                        展开全部（共 {g.items.length} 条）
+                      </summary>
+                      <ul className="mt-2 flex flex-col gap-2">{folded.map(renderItem)}</ul>
+                    </details>
+                  ) : null}
+                </section>
+              );
+            })
           ) : (
             <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
               这位学生还没有记录。在「辅导方案」「试卷分析」里选中他/她并保存，记录就会出现在这里。
