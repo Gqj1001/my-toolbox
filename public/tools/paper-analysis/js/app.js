@@ -2043,9 +2043,26 @@ function pickAttrReasons(text){
     if(parts[0].trim() === '题号') continue;        // 表头
     const reason = parts.slice(6).join(' | ').trim();
     if(!reason || reason === '无') continue;
-    targets.push({ lineIdx: i, reason });
+    targets.push({ lineIdx: i, reason, no: parts[0].trim() });
   }
   return { lines, targets };
+}
+
+/** 把报告里**当前**的错因列同步回 `lastAdviceCtx.ctx.questionRows`。
+ *
+ *  为什么必须做：老师点「AI 润色错因」后，报告正文（#reportText）已经更新，
+ *  但 Word 模板 / 公司模板导出读的是生成报告时算好的 `ctx.questionRows`；
+ *  不同步就会导出**润色前**的错因（2026-11 用户反馈的 bug）。
+ *  导出前再调一次，手动改过报告的情况也能带上。
+ */
+function syncAttributionToCtx(ctx){
+  const target = ctx || (lastAdviceCtx && lastAdviceCtx.ctx);
+  if(!target || !Array.isArray(target.questionRows)) return;
+  const { targets } = pickAttrReasons($('#reportText').textContent);
+  targets.forEach(t => {
+    const row = target.questionRows.find(r => String(r.no) === String(t.no));
+    if(row) row.reason = t.reason;
+  });
 }
 
 /**
@@ -2098,6 +2115,11 @@ async function aiPolishAttribution(opts){
       // ⚠️ 防一手：AI 万一在正文里写了 ` | `，会把这一行多切出一列、破坏表格
       const safe = String(out[i]).replace(/\s*\|\s*/g, '／').trim();
       lines[t.lineIdx] = head + ' | ' + safe;
+      // ★ 2026-11：同步给导出用的 ctx（否则模板导出还是润色前的错因）
+      if(lastAdviceCtx && lastAdviceCtx.ctx && Array.isArray(lastAdviceCtx.ctx.questionRows)){
+        const row = lastAdviceCtx.ctx.questionRows.find(r => String(r.no) === String(t.no));
+        if(row) row.reason = safe;
+      }
     });
 
     const merged = lines.join('\n');
@@ -2275,6 +2297,9 @@ function exportDocx(){
   const name = val('stuName');
   if(!name){ toast('请先填学生姓名'); switchStep('cScore'); return; }
   const ctx = collectCtx();
+  // ★ 2026-11：导出前把报告里当前（AI 润色 / 手动修改后）的错因同步进 ctx，
+  //   否则模板/公司模板会导出润色前的旧错因。
+  syncAttributionToCtx(ctx);
 
   // 建议段从预览里取（老师可能已手改或 AI 重写）
   let adviceText = '';
@@ -2399,6 +2424,8 @@ function companyExportDisabled(){
 
 /** 从页面与已生成的报告里取数据（**只读**，不改任何现有状态） */
 function collectCompanyData(){
+  // ★ 2026-11：无论从哪个入口导出，都先按当前报告同步一次错因
+  syncAttributionToCtx();
   const ctx = lastAdviceCtx && lastAdviceCtx.ctx ? lastAdviceCtx.ctx : null;
   // 错题行：直接用报告里已经算好的逐题行（no/full/got/knowledge/reason），不重算
   const rows = (ctx && ctx.questionRows ? ctx.questionRows : [])
@@ -2491,6 +2518,8 @@ window.PaperAnalysisHooks = {
   setPolishMarks: (m) => { reportPolishMarks = { advice: !!(m && m.advice), attribution: !!(m && m.attribution) }; },
   polishConfirm: (parts) => polishConfirm(reportPolishMarks, parts),
   resetPolishMarks: () => resetPolishMarks(),
+  /** ★ 2026-11：给回归测试用——把当前报告里的错因同步进一份 ctx，验证导出读的是最新文案 */
+  syncAttribution: (ctx) => { syncAttributionToCtx(ctx); return ctx; },
 };
 
 function copyReport(){

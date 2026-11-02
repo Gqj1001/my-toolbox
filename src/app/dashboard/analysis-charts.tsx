@@ -140,7 +140,7 @@ export default function AnalysisCharts({ scores, totalHours, consumedHours, skil
               beginAtZero: true,
               min: 0,
               max: 100,
-              ticks: { stepSize: 20, color: TEXT, backdropColor: "transparent" },
+              ticks: { display: false, stepSize: 20, color: TEXT, backdropColor: "transparent" },
               grid: { color: GRID },
               angleLines: { color: GRID },
               pointLabels: { color: TEXT, font: { size: 11 } },

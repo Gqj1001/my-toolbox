@@ -351,6 +351,19 @@ try {
         String(after?.text).includes("题号 | 题型 | 分值 | 得分 | 难度 | 考察知识点 | 失分情况及原因分析"),
       `字数=${after?.chars}`);
 
+    // ★ 2026-11 用户反馈 bug：AI 润色错因后，Word/公司模板导出仍用生成报告时的旧 ctx。
+    const synced = await inTool(`
+      const ctx = { questionRows: [
+        { no: 12, reason: '旧的错因' },
+        { no: 13, reason: '旧的错因' },
+      ] };
+      w.PaperAnalysisHooks.syncAttribution(ctx);
+      return ctx.questionRows.map(r => r.reason);
+    `);
+    record("★★润色后导出的 ctx 已同步成 AI 文案（不再导出润色前的旧错因）",
+      /润色后第1段/.test(String(synced?.[0])) && /润色后第2段/.test(String(synced?.[1])),
+      JSON.stringify(synced));
+
     /* ---- 失败时**不动原文**（结构里没有【错题分析】） ---- */
     const BEFORE = "这是一份没有错题分析段的报告。\n分析人：郭庆杰";
     await inTool(`
