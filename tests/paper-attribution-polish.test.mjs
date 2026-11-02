@@ -430,6 +430,27 @@ try {
     record("★★合并按钮：**两部分都润色了**（建议段换成 AI 文本；**有原因的那 3 道错题**最后一列都换成润色文案）",
       both?.adviceIsAI === true && both?.attrIsAI === 3,
       JSON.stringify({ 建议段是AI: both?.adviceIsAI, 润色行数: both?.attrIsAI, 表格总行数: both?.rows }));
+
+    // ★ 2026-11：真浏览器点「导出 Word 表格」，截获真正交给模板的 payload，
+    //   验证导出用的错因是润色后的（不是只在预览里新）。
+    const exported = await inTool(`
+      const oldBuild = w.ReportTemplate.build;
+      let captured = null;
+      w.ReportTemplate.build = (p) => {
+        captured = p;
+        return { blob: new Uint8Array([0x50, 0x4b]), warnings: [] };
+      };
+      w.document.getElementById('btnDocx').click();
+      w.ReportTemplate.build = oldBuild;
+      const rows = (captured && captured.questionRows) || [];
+      return {
+        polished: rows.filter(r => /润色后第/.test(String(r.reason || ''))).length,
+        sample: rows.slice(0, 1).map(r => String(r.reason || '').slice(0, 60)),
+      };
+    `);
+    record("★★点「导出 Word 表格」时，真正交给模板的错因已是润色文案",
+      exported?.polished === 3,
+      JSON.stringify(exported));
     record("★润过之后标记被记下（再点会弹确认）",
       (await inTool(`const m = w.PaperAnalysisHooks.polishMarks(); return m.advice === true && m.attribution === true;`)) === true,
       "marks 已置位");
