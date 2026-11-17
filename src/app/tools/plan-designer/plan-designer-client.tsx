@@ -12,10 +12,15 @@ import {
   cycleForWindow,
   defaultCourseIds,
   defaultModules,
+  defaultFocusIds,
+  examFocusFor,
   goalFor,
   moduleCourses,
   totalGoal,
+  phaseSpecs,
   windowByKey,
+  type CycleInfo,
+  type PhaseSpec,
   type PlanForm,
   type PlanRow,
   type PlanLibrary,
@@ -51,6 +56,7 @@ const emptyForm = (): PlanForm => ({
   schoolEnv: "",
   windowKey: "winter",
   year: 2027,
+  planMode: "window",
 });
 
 const dims = [
@@ -67,6 +73,9 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   const [form, setForm] = useState<PlanForm>(emptyForm);
   const [lib, setLib] = useState<PlanLibrary>(LIBRARY);
   const [libMsg, setLibMsg] = useState("");
+  const [phasePlans, setPhasePlans] = useState<Array<{ spec: PhaseSpec; rows: PlanRow[]; goal: string }>>([]);
+  const [activePhase, setActivePhase] = useState(0);
+  const [phaseHoursInput, setPhaseHoursInput] = useState("");
 
   useEffect(() => { setActiveLibrary(lib); }, [lib]);
   useEffect(() => {
@@ -75,7 +84,9 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
       setLib(raw ? (JSON.parse(raw) as PlanLibrary) : LIBRARY);
       setSelectedModules([]);
       setCourseSel({});
-      setRows([]);
+      setFocusSel({});
+      setPhasePlans([]);
+      setActivePhase(0);
       setLibMsg(raw ? "已载入本窗口上次导入的课程库。" : (form.windowKey === "winter" ? "当前使用内置寒假集训课程库。" : `当前窗口（${windowByKey(form.windowKey).label}）尚未导入课程库，暂用内置寒假库；请先导入。`));
     } catch {
       setLib(LIBRARY);
@@ -83,20 +94,34 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   }, [form.windowKey]);
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [courseSel, setCourseSel] = useState<Record<string, number[]>>({});
-  const [rows, setRows] = useState<PlanRow[]>([]);
+  const [focusSel, setFocusSel] = useState<Record<string, string[]>>({});
   const [analysis, setAnalysis] = useState(() => analysisDefaults(emptyForm()));
-  const [goalText, setGoalText] = useState("");
   const [busy, setBusy] = useState<"" | "ai" | "export" | "generate">("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [expanded, setExpanded] = useState<string>("函数");
 
+  const activeSpec = phasePlans[activePhase]?.spec;
+  const rows = phasePlans[activePhase]?.rows ?? [];
+  const phaseHours = activeSpec?.totalHours ?? form.totalHours;
   const cycle = useMemo(
-    () => cycleForWindow(form.windowKey, form.year, form.totalHours),
-    [form.windowKey, form.year, form.totalHours],
+    () => activeSpec
+      ? cycleForWindow(activeSpec.key, activeSpec.year, activeSpec.totalHours)
+      : cycleForWindow(form.windowKey, form.year, form.totalHours),
+    [activeSpec, form.windowKey, form.year, form.totalHours],
   );
-  const window = windowByKey(form.windowKey);
+  const window = windowByKey(activeSpec?.key ?? form.windowKey);
+  const goalText = phasePlans[activePhase]?.goal ?? "";
   const totalPlanned = rows.reduce((a, r) => a + Number(r.hours || 0), 0);
-  const diff = totalPlanned - form.totalHours;
+  const diff = totalPlanned - phaseHours;
+
+  function setRows(updater: PlanRow[] | ((list: PlanRow[]) => PlanRow[])) {
+    setPhasePlans((list) => list.map((p, i) => i === activePhase
+      ? { ...p, rows: typeof updater === "function" ? updater(p.rows) : updater }
+      : p));
+  }
+  function setGoalText(value: string) {
+    setPhasePlans((list) => list.map((p, i) => i === activePhase ? { ...p, goal: value } : p));
+  }
 
   function patch<K extends keyof PlanForm>(key: K, value: PlanForm[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -118,7 +143,12 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
       accuracy: s.accuracy || "85%",
       weakModules: weak,
     }));
-    setSelectedModules(defaultModules({ ...form, name: s.name, grade: s.grade, level: s.level, current: s.current, target: s.target, totalHours: s.totalHours, weakModules: weak }));
+    const mods = defaultModules({ ...form, name: s.name, grade: s.grade, level: s.level, current: s.current, target: s.target, totalHours: s.totalHours, weakModules: weak });
+    setSelectedModules(mods);
+    setFocusSel(Object.fromEntries(mods.map((m) => [m, defaultFocusIds(m)])));
+    setPhasePlans([]);
+    setActivePhase(0);
+    setPhaseHoursInput("");
     setMsg({ kind: "ok", text: `已载入 ${s.name} 的档案，可直接生成。` });
   }
 
@@ -139,7 +169,8 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
       setActiveLibrary(j.library);
       try { localStorage.setItem(`plan-designer-library-${form.windowKey}`, JSON.stringify(j.library)); } catch { /* ignore */ }
       setSelectedModules([]);
-      setRows([]);
+      setFocusSel({});
+      setPhasePlans([]);
       setLibMsg(`已导入 ${j.library.modules.length} 个模块 / ${j.library.courses.length} 门课程，覆盖当前窗口。`);
     } catch (e) {
       setLibMsg("导入失败：" + String((e as Error)?.message ?? e));
@@ -156,6 +187,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
     if (!courseSel[name]) {
       setCourseSel((m) => ({ ...m, [name]: defaultCourseIds(name, form.level) }));
     }
+    setFocusSel((m) => ({ ...m, [name]: m[name] ?? defaultFocusIds(name) }));
     setSelectedModules((list) => [...list, name]);
   }
 
@@ -166,15 +198,31 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
     });
   }
 
+  function toggleFocus(module: string, id: string) {
+    setFocusSel((m) => {
+      const cur = m[module] ?? defaultFocusIds(module);
+      return { ...m, [module]: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] };
+    });
+  }
+
   function generate() {
     if (!form.name.trim()) { setMsg({ kind: "err", text: "请先填写学生姓名。" }); return; }
     if (!selectedModules.length) { setMsg({ kind: "err", text: "请至少选择一个知识模块。" }); return; }
-    const r = buildRows(form, selectedModules, courseSel);
-    setRows(r);
-    const a = analysisDefaults(form);
-    setAnalysis(a);
-    setGoalText(totalGoal(form, cycle));
-    setMsg({ kind: "ok", text: `已生成 ${r.length} 个模块，共 ${r.reduce((x, y) => x + y.hours, 0)} 课时，可逐行修改。` });
+    const customHours = phaseHoursInput.split(/[,，\s]+/).map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0);
+    const specs = phaseSpecs(form.planMode, form.windowKey, form.year, form.totalHours, customHours);
+    const plans = specs.map((spec) => {
+      const f = { ...form, totalHours: spec.totalHours };
+      return {
+        spec,
+        rows: buildRows(f, selectedModules, courseSel, focusSel),
+        goal: totalGoal(f, cycleForWindow(spec.key, spec.year, spec.totalHours)),
+      };
+    });
+    setPhasePlans(plans);
+    setActivePhase(0);
+    setAnalysis(analysisDefaults(form));
+    const first = plans[0];
+    setMsg({ kind: "ok", text: `已生成 ${plans.length} 个阶段、共 ${plans.reduce((n, p) => n + p.rows.length, 0)} 个模块；当前显示「${first.spec.label}」。` });
   }
 
   function moveRow(index: number, dir: -1 | 1) {
@@ -249,36 +297,41 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   }
 
   async function exportXlsx() {
-    if (!rows.length) { setMsg({ kind: "err", text: "请先生成方案。" }); return; }
-    if (diff !== 0) { setMsg({ kind: "err", text: `规划课时合计 ${totalPlanned}，与总课时 ${form.totalHours} 不一致，请先调整。` }); return; }
+    if (!phasePlans.length) { setMsg({ kind: "err", text: "请先生成方案。" }); return; }
+    const bad = phasePlans.find((p) => p.rows.reduce((n, r) => n + Number(r.hours || 0), 0) !== p.spec.totalHours);
+    if (bad) { setMsg({ kind: "err", text: `「${bad.spec.label}」课时合计与阶段总课时不一致，请先调整。` }); return; }
     setBusy("export");
     setMsg(null);
     try {
-      const res = await fetch("/api/plan-designer/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          level: form.level,
-          analysis,
-          rows,
-          totalGoal: goalText,
-          cycleText: cycle.text,
-        }),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        setMsg({ kind: "err", text: j?.error || `导出失败（HTTP ${res.status}）` });
-        return;
+      for (const p of phasePlans) {
+        const res = await fetch("/api/plan-designer/export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...form,
+            totalHours: p.spec.totalHours,
+            analysis,
+            rows: p.rows,
+            totalGoal: p.goal,
+            cycleText: cycleForWindow(p.spec.key, p.spec.year, p.spec.totalHours).text,
+            phaseLabel: p.spec.label,
+          }),
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => null)) as { error?: string } | null;
+          setMsg({ kind: "err", text: `${p.spec.label}导出失败：${j?.error || `HTTP ${res.status}`}` });
+          return;
+        }
+        const blob = await res.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `${form.name}-${p.spec.label}-个性化辅导计划表.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1200);
+        await new Promise((r) => setTimeout(r, 250));
       }
-      const blob = await res.blob();
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `${form.name}-个性化辅导计划表.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1200);
-      setMsg({ kind: "ok", text: "已导出 xlsx，可直接打开检查/打印。" });
+      setMsg({ kind: "ok", text: `已导出 ${phasePlans.length} 个阶段的 xlsx，可直接打开检查/打印。` });
     } catch (e) {
       setMsg({ kind: "err", text: "导出失败：" + String((e as Error)?.message ?? e) });
     } finally { setBusy(""); }
@@ -313,7 +366,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
             </label>
             <label className={label}>当前分<input type="number" className={`${field} mt-1`} value={form.current} onChange={(e) => patch("current", Number(e.target.value))} /></label>
             <label className={label}>目标分<input type="number" className={`${field} mt-1`} value={form.target} onChange={(e) => patch("target", Number(e.target.value))} /></label>
-            <label className={label}>总课时<input type="number" className={`${field} mt-1`} value={form.totalHours} onChange={(e) => patch("totalHours", Number(e.target.value))} /></label>
+            <label className={label}>总课时 (h)<input type="number" className={`${field} mt-1`} value={form.totalHours} onChange={(e) => patch("totalHours", Number(e.target.value))} /></label>
             <label className={label}>已上课时<input type="number" className={`${field} mt-1`} value={form.usedHours} onChange={(e) => patch("usedHours", Number(e.target.value))} /></label>
             <label className={label}>基础题正确率<input className={`${field} mt-1`} value={form.accuracy} onChange={(e) => patch("accuracy", e.target.value)} /></label>
             <label className={label}>窗口期
@@ -322,6 +375,16 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
               </select>
             </label>
             <label className={label}>年份<input type="number" className={`${field} mt-1`} value={form.year} onChange={(e) => patch("year", Number(e.target.value))} /></label>
+            <label className={`${label} sm:col-span-2`}>出方案方式
+              <select className={`${field} mt-1`} value={form.planMode} onChange={(e) => patch("planMode", e.target.value as PlanForm["planMode"])}>
+                <option value="window">窗口期报名：连续两个阶段（如 12 月=寒假+春季）</option>
+                <option value="midterm">学期中途入学：只出当前阶段（如 4 月=春季）</option>
+                <option value="fulltime">全托生：从当前窗口起连续四个阶段</option>
+              </select>
+            </label>
+            <label className={`${label} sm:col-span-2`}>阶段课时（可留空，默认按 40% / 60% 或四等分；用逗号分隔）
+              <input className={`${field} mt-1`} value={phaseHoursInput} onChange={(e) => setPhaseHoursInput(e.target.value)} placeholder="如 40,60；全托如 25,25,25,25" />
+            </label>
           </div>
           <p className="mt-2 text-xs text-zinc-400">{window.label} · {cycle.text}</p>
         </section>
@@ -376,6 +439,20 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
                   </div>
                   {open ? (
                     <div className="border-t border-zinc-100 px-2 py-1.5 dark:border-zinc-800">
+                      {examFocusFor(m.name).length ? (
+                        <div className="mb-2 rounded-md bg-amber-50 px-2 py-1.5 dark:bg-amber-950/30">
+                          <p className="mb-1 text-[11px] font-medium text-amber-800 dark:text-amber-300">按考向拆分（题位 + 分值）</p>
+                          {examFocusFor(m.name).map((f) => {
+                            const selected = (focusSel[m.name] ?? defaultFocusIds(m.name)).includes(f.id);
+                            return (
+                              <label key={f.id} className="flex items-start gap-2 py-0.5 text-[11px] text-zinc-600 dark:text-zinc-300">
+                                <input type="checkbox" checked={selected} onChange={() => toggleFocus(m.name, f.id)} />
+                                <span>{f.name} <span className="text-amber-700 dark:text-amber-400">{f.scoreText}</span> <span className="text-zinc-400">{f.position}</span></span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                       {courses.map((c) => {
                         const ids = courseSel[m.name] ?? defaultCourseIds(m.name, form.level);
                         return (
@@ -406,7 +483,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">{form.name || "未命名学生"} · {window.label}个性化辅导计划</h1>
-              <p className="mt-1 text-xs text-zinc-500">{form.school} {form.grade} · {form.subject} · 总课时 {form.totalHours} · 已上 {form.usedHours}</p>
+              <p className="mt-1 text-xs text-zinc-500">{form.school} {form.grade} · {form.subject} · 总课时 {form.totalHours}h · 已上 {form.usedHours}h</p>
             </div>
             <button type="button" onClick={exportXlsx} disabled={!!busy || !rows.length} className={`${btn} bg-emerald-600 text-white`}>
               {busy === "export" ? "导出中…" : "⬇ 导出新模板 xlsx"}
@@ -436,10 +513,20 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
         </section>
 
         <section className={card}>
+          {phasePlans.length > 1 ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {phasePlans.map((p, i) => (
+                <button key={p.spec.label} type="button" onClick={() => setActivePhase(i)}
+                  className={`rounded-full border px-3 py-1 text-xs ${i === activePhase ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900" : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"}`}>
+                  {p.spec.label} · {p.spec.totalHours}h
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">二、辅导计划及结果验收</h2>
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`text-xs ${diff === 0 ? "text-emerald-600" : "text-red-600"}`}>课时合计 {totalPlanned} / {form.totalHours}{diff !== 0 ? `（差 ${diff > 0 ? "+" : ""}${diff}）` : " ✓"}</span>
+              <span className={`text-xs ${diff === 0 ? "text-emerald-600" : "text-red-600"}`}>课时合计 {totalPlanned}h / {phaseHours}h{diff !== 0 ? `（差 ${diff > 0 ? "+" : ""}${diff}h）` : " ✓"}</span>
               <select className={`${field} h-8 w-36`} defaultValue="" onChange={(e) => { addModule(e.target.value); e.currentTarget.value = ""; }}>
                 <option value="">+ 加模块</option>
                 {lib.modules.filter((m) => !selectedModules.includes(m.name)).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
@@ -453,7 +540,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">知识模块</th>
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">具体知识点</th>
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">考试分值</th>
-                  <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">规划课时</th>
+                  <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">规划课时 (h)</th>
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">可达成的目标</th>
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">已完成效果</th>
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">计划调整</th>

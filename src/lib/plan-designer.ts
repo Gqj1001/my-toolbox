@@ -45,6 +45,91 @@ let ACTIVE_LIBRARY: PlanLibrary = LIBRARY;
 export function setActiveLibrary(next: PlanLibrary): void { ACTIVE_LIBRARY = next; }
 export function getActiveLibrary(): PlanLibrary { return ACTIVE_LIBRARY; }
 
+export type ExamFocus = {
+  id: string;
+  name: string;
+  scoreText: string;
+  score: number | null;
+  position: string;
+  points: string;
+  defaultOn?: boolean;
+};
+
+/** 高考考向细分：不是每个学生都平均用力，而是按“题位 + 分值”拆。
+ *  数据参考新高考 I 卷常见分布与老师给的 2027 寒假样例；分值是可调整的估算。 */
+export const EXAM_FOCUS: Record<string, ExamFocus[]> = {
+  "集合、复数与常用逻辑用语": [
+    { id: "set", name: "集合运算", scoreText: "约5分", score: 5, position: "小题（第1题）", points: "元素与集合、交并补、子集个数", defaultOn: false },
+    { id: "complex", name: "复数运算", scoreText: "约5分", score: 5, position: "小题（前3题）", points: "复数概念、四则运算、共轭与模", defaultOn: false },
+    { id: "logic", name: "充要条件与量词", scoreText: "约5分", score: 5, position: "小题", points: "充分必要条件、全称与存在量词", defaultOn: false },
+  ],
+  "平面向量": [
+    { id: "vector", name: "向量基本运算", scoreText: "约5分", score: 5, position: "小题", points: "线性运算、坐标运算、数量积与模长夹角", defaultOn: false },
+  ],
+  "不等式与最值": [
+    { id: "ineq", name: "不等式与基本最值", scoreText: "约5分", score: 5, position: "小题", points: "不等式性质、比较大小、基本不等式", defaultOn: false },
+  ],
+  "函数": [
+    { id: "func-basic", name: "函数基本量", scoreText: "约5分", score: 5, position: "小题", points: "定义域、值域、解析式、分段函数", defaultOn: false },
+    { id: "func-prop", name: "性质与图像", scoreText: "约5分", score: 5, position: "小题", points: "单调性、奇偶性、周期性、图像变换", defaultOn: false },
+    { id: "func-zero", name: "零点与参数", scoreText: "约5分", score: 5, position: "小题压轴", points: "零点存在性、零点个数、含参讨论", defaultOn: false },
+  ],
+  "导数": [
+    { id: "deriv-basic", name: "导数运算与切线", scoreText: "约5分", score: 5, position: "小题/大题第一问", points: "求导公式、复合函数、切线方程", defaultOn: false },
+    { id: "deriv-mono", name: "单调性与极值", scoreText: "约5分", score: 5, position: "大题第一问", points: "单调区间、极值最值、含参分类讨论", defaultOn: false },
+    { id: "deriv-hard", name: "导数压轴", scoreText: "约10分", score: 10, position: "大题第二问", points: "恒成立、零点、隐零点、双变量与不等式证明", defaultOn: false },
+  ],
+  "三角函数与解三角形": [
+    { id: "trig", name: "三角恒等与图像", scoreText: "约5分", score: 5, position: "小题", points: "诱导公式、恒等变换、图像与性质", defaultOn: false },
+    { id: "triangle", name: "解三角形", scoreText: "约10分", score: 10, position: "大题", points: "正余弦定理、面积、边角互化、最值范围", defaultOn: false },
+  ],
+  "数列": [
+    { id: "seq-basic", name: "数列基本量", scoreText: "约5分", score: 5, position: "小题（固定题位）", points: "等差等比基本量、通项与性质、前n项和公式", defaultOn: true },
+    { id: "seq-sum", name: "通项与求和", scoreText: "约10分", score: 10, position: "大题", points: "构造求通项、分组/裂项/错位相减、数列不等式", defaultOn: true },
+  ],
+  "立体几何": [
+    { id: "solid-basic", name: "基本量与位置关系", scoreText: "约5分", score: 5, position: "小题", points: "三视图、表面积体积、平行垂直判定", defaultOn: false },
+    { id: "solid-vector", name: "空间向量与证明", scoreText: "约15分", score: 15, position: "大题", points: "建系、法向量、线面角/二面角、证明规范", defaultOn: false },
+  ],
+  "解析几何": [
+    { id: "line-circle", name: "直线与圆", scoreText: "约5分", score: 5, position: "小题", points: "直线方程、圆的方程、位置关系、弦长切线", defaultOn: false },
+    { id: "conic-basic", name: "圆锥曲线基本量", scoreText: "约10分", score: 10, position: "小题 + 大题第一问", points: "定义、标准方程、离心率、渐近线、焦点三角形", defaultOn: true },
+    { id: "conic-hard", name: "圆锥曲线综合", scoreText: "约10分", score: 10, position: "大题第二问", points: "联立、韦达、弦长面积、定点定值、范围最值", defaultOn: true },
+  ],
+  "概率与统计": [
+    { id: "prob", name: "概率基础", scoreText: "约5分", score: 5, position: "小题", points: "古典概型、互斥独立、条件概率", defaultOn: false },
+    { id: "stat", name: "统计图表", scoreText: "约5分", score: 5, position: "小题", points: "抽样、频率分布直方图、数字特征、回归", defaultOn: false },
+    { id: "dist", name: "分布列与期望", scoreText: "约10分", score: 10, position: "大题", points: "分布列、二项/超几何、期望方差、决策", defaultOn: false },
+  ],
+  "计数原理与二项式定理": [
+    { id: "count", name: "排列组合", scoreText: "约5分", score: 5, position: "小题", points: "分类分步、排列组合、分组分配", defaultOn: false },
+    { id: "binomial", name: "二项式定理", scoreText: "约5分", score: 5, position: "小题", points: "通项、特定项、系数和", defaultOn: false },
+  ],
+  "选填压轴与创新题": [
+    { id: "innov", name: "新定义与压轴选填", scoreText: "约10分", score: 10, position: "小题压轴", points: "新定义转化、函数性质综合、多结论判断", defaultOn: false },
+  ],
+  "计算与应试专项": [
+    { id: "calc", name: "计算与应试", scoreText: "贯穿全卷", score: null, position: "全卷", points: "计算准确率、时间分配、步骤规范、取舍", defaultOn: false },
+  ],
+  "高考真题精讲": [
+    { id: "real", name: "真题精讲", scoreText: "综合检测", score: null, position: "套卷", points: "近五年真题基础/中档题、命题角度、解法入口", defaultOn: false },
+  ],
+  "错题清零": [
+    { id: "wrong", name: "错题清零", scoreText: "综合检测", score: null, position: "课后", points: "错题重做、错因归类、同类变式", defaultOn: false },
+  ],
+  "综合模拟与查漏": [
+    { id: "mock", name: "综合模拟", scoreText: "150分", score: 150, position: "整卷", points: "限时套卷、考场节奏、查漏补缺", defaultOn: false },
+  ],
+};
+
+export function examFocusFor(moduleName: string): ExamFocus[] {
+  return EXAM_FOCUS[moduleName] ?? [];
+}
+
+export function defaultFocusIds(moduleName: string): string[] {
+  return examFocusFor(moduleName).filter((f) => f.defaultOn).map((f) => f.id);
+}
+
 export type WindowKey = "spring" | "summer" | "autumn" | "winter";
 
 export type WindowSpec = {
@@ -108,9 +193,58 @@ export function cycleForWindow(key: string, year: number, totalHours: number): C
   const sessions = Math.max(1, Math.round(Number(totalHours) / 2));
   const weeklyHours = Math.max(2, Math.round((Number(totalHours) / weeks) / 2) * 2);
   return {
-    text: `辅导时间：${startText}—${endText}（${w.label}，共${sessions}次课，每次2课时）；周课时：${weeklyHours}课时/周`,
+    text: `辅导时间：${startText}—${endText}（${w.label}，共${sessions}次课，每次2h）；周课时：${weeklyHours}h/周`,
     weeks, sessions, weeklyHours, startText, endText,
   };
+}
+
+export type PlanMode = "window" | "midterm" | "fulltime";
+
+export type PhaseSpec = {
+  key: string;
+  label: string;
+  year: number;
+  totalHours: number;
+};
+
+/** 连续窗口期：秋→寒假跨年；寒假→春季同年；其它同一年。 */
+function nextPhase(key: string, year: number): { key: string; year: number } {
+  const order = WINDOWS.map((w) => w.key);
+  const i = order.indexOf(key as WindowKey);
+  const next = order[(i + 1) % order.length];
+  return { key: next, year: next === "winter" && key === "autumn" ? year + 1 : year };
+}
+
+/**
+ * 一次出几个阶段：
+ * - window：窗口期报名 → 连续两个阶段（12 月=寒假+春季；3 月=春季+暑期…）
+ * - midterm：学期中途插班 → 只出当前阶段（4 月=春季）
+ * - fulltime：全托 → 从当前窗口起连续四个阶段
+ */
+export function phaseSpecs(
+  mode: PlanMode,
+  startKey: string,
+  year: number,
+  totalHours: number,
+  customHours?: number[],
+): PhaseSpec[] {
+  const count = mode === "midterm" ? 1 : mode === "fulltime" ? 4 : 2;
+  const keys: Array<{ key: string; year: number }> = [{ key: startKey, year }];
+  for (let i = 1; i < count; i++) keys.push(nextPhase(keys[keys.length - 1].key, keys[keys.length - 1].year));
+  const total = Math.max(0, Math.round(Number(totalHours) || 0));
+  const defaultRatios = count === 1 ? [1] : count === 2 ? [0.4, 0.6] : [0.25, 0.25, 0.25, 0.25];
+  const raw = keys.map((_, i) => Math.max(0, Math.round(Number(customHours?.[i]) || total * defaultRatios[i])));
+  let diff = total - raw.reduce((a, b) => a + b, 0);
+  if (diff !== 0 && raw.length) raw[raw.length - 1] += diff;
+  return keys.map((k, i) => {
+    const w = windowByKey(k.key);
+    return {
+      key: k.key,
+      label: `${w.label}（${k.year}）`,
+      year: k.year,
+      totalHours: Math.max(0, raw[i]),
+    };
+  });
 }
 
 export type PlanForm = {
@@ -132,6 +266,7 @@ export type PlanForm = {
   schoolEnv: string;
   windowKey: string;
   year: number;
+  planMode: PlanMode;
 };
 
 export type PlanRow = {
@@ -144,6 +279,8 @@ export type PlanRow = {
   effect: string;
   adjustment: string;
   courseIds: number[];
+  focusId?: string;
+  focusName?: string;
 };
 
 export type AnalysisDimensions = {
@@ -263,30 +400,48 @@ export function allocateHours(total: number, modules: PlanModule[], weights?: nu
   return out;
 }
 
-export function buildRows(form: PlanForm, moduleNames: string[], selectedCourses: Record<string, number[]>): PlanRow[] {
+export function buildRows(
+  form: PlanForm,
+  moduleNames: string[],
+  selectedCourses: Record<string, number[]>,
+  selectedFocus: Record<string, string[]> = {},
+): PlanRow[] {
   const modules = moduleNames
     .map((name) => ACTIVE_LIBRARY.modules.find((m) => m.name === name))
     .filter((m): m is PlanModule => !!m);
-  const courseIdsByModule = modules.map((m) => selectedCourses[m.name] ?? defaultCourseIds(m.name, form.level));
-  const weights = courseIdsByModule.map((ids) => {
+  const defs: Array<{ module: PlanModule; focus?: ExamFocus }> = [];
+  for (const m of modules) {
+    const focusIds = selectedFocus[m.name] ?? defaultFocusIds(m.name);
+    const focuses = examFocusFor(m.name).filter((f) => focusIds.includes(f.id));
+    if (focuses.length) focuses.forEach((focus) => defs.push({ module: m, focus }));
+    else defs.push({ module: m });
+  }
+  const weights = defs.map(({ module, focus }) => {
+    if (focus?.score != null) return Math.max(2, focus.score);
+    const ids = selectedCourses[module.name] ?? defaultCourseIds(module.name, form.level);
     const courses = ACTIVE_LIBRARY.courses.filter((c) => ids.includes(c.id));
     return Math.max(2, courses.reduce((a, c) => a + c.hours, 0));
   });
-  const hours = allocateHours(form.totalHours, modules, weights);
-  return modules.map((m, i) => {
-    const ids = courseIdsByModule[i];
+  const hours = allocateHours(form.totalHours, defs.map((d) => d.module), weights);
+  return defs.map(({ module: m, focus }, i) => {
+    const ids = selectedCourses[m.name] ?? defaultCourseIds(m.name, form.level);
     const courses = ACTIVE_LIBRARY.courses.filter((c) => ids.includes(c.id));
-    const points = [...new Set(courses.flatMap((c) => c.points.split(/[；;]/).map((s) => s.trim()).filter(Boolean)))].join("；");
+    const coursePoints = [...new Set(courses.flatMap((c) => c.points.split(/[；;]/).map((s) => s.trim()).filter(Boolean)))].join("；");
+    const targetModule: PlanModule = focus
+      ? { ...m, score: focus.score, scoreText: focus.scoreText }
+      : m;
     return {
       id: `m-${i}-${Date.now()}`,
-      module: m.name,
-      points: points || courses.map((c) => c.points).join("；"),
-      examScore: m.scoreText,
+      module: focus ? `${m.name}·${focus.name}` : m.name,
+      points: focus?.points || coursePoints || courses.map((c) => c.points).join("；"),
+      examScore: focus?.scoreText || m.scoreText,
       hours: hours[i] ?? 0,
-      goal: goalFor(m, form),
+      goal: goalFor(targetModule, form),
       effect: "—",
       adjustment: "—",
       courseIds: ids,
+      focusId: focus?.id,
+      focusName: focus?.name,
     };
   });
 }
@@ -346,5 +501,5 @@ export function totalGoal(form: PlanForm, cycle: CycleInfo): string {
   const weak = form.weakModules.length ? form.weakModules.join("、") : "薄弱模块";
   const accuracy = normalizeAccuracy(form.accuracy);
   const accNum = Number(accuracy) || 85;
-  return `由当前${form.current}分提升至${form.target}分（提升${gain}分）；基础题正确率≥${accuracy}%，运算准确率≥${Math.min(98, accNum + 7)}%；通过${form.totalHours}课时（${cycle.sessions}次课）的模块化辅导，重点补齐${weak}，构建完整知识体系、规范解题步骤，使成绩稳定在${form.target}分以上。`;
+  return `由当前${form.current}分提升至${form.target}分（提升${gain}分）；基础题正确率≥${accuracy}%，运算准确率≥${Math.min(98, accNum + 7)}%；通过${form.totalHours}h（${cycle.sessions}次课）的模块化辅导，重点补齐${weak}，构建完整知识体系、规范解题步骤，使成绩稳定在${form.target}分以上。`;
 }

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 type In = {
   name?: string; grade?: string; school?: string; teacher?: string; subject?: string;
-  level?: string; teacherLevel?: string; totalHours?: number; usedHours?: number;
+  level?: string; teacherLevel?: string; totalHours?: number; usedHours?: number; phaseLabel?: string;
   title?: string; cycleText?: string; totalGoal?: string;
   analysis?: Record<string, string>;
   rows?: Array<{ module?: string; points?: string; examScore?: string; hours?: number; goal?: string; effect?: string; adjustment?: string }>;
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
   ws.getCell("C3").value = teacher;
   ws.getCell("D3").value = subject;
   ws.getCell("E3").value = teacherLevel;
-  ws.getCell("F3").value = totalHours;
+  ws.getCell("F3").value = `${totalHours}h`;
   ws.getCell("G3").value = usedHours;
 
   const analysis = body.analysis || {};
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
     row.getCell(1).value = clean(item.module);
     row.getCell(2).value = clean(item.points);
     row.getCell(3).value = clean(item.examScore) || "—";
-    row.getCell(4).value = Math.max(0, Math.round(Number(item.hours) || 0));
+    row.getCell(4).value = `${Math.max(0, Math.round(Number(item.hours) || 0))}h`;
     row.getCell(5).value = clean(item.goal) || "—";
     row.getCell(6).value = clean(item.effect) || "—";
     row.getCell(7).value = clean(item.adjustment) || "—";
@@ -110,7 +110,8 @@ export async function POST(req: Request) {
   try { ws.mergeCells(`B${sig}:C${sig}`); } catch { /* ignore */ }
 
   const out = await wb.xlsx.writeBuffer();
-  const filename = `${name}-个性化辅导计划表.xlsx`;
+  const phaseLabel = clean(body.phaseLabel).replace(/[\\/:*?"<>|]/g, "");
+  const filename = `${name}-${phaseLabel ? phaseLabel + "-" : ""}个性化辅导计划表.xlsx`;
   return new NextResponse(out as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
