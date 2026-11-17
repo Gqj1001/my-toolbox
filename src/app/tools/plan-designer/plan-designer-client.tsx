@@ -288,9 +288,16 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
     <main className="mx-auto flex w-full max-w-[1500px] flex-1 flex-col gap-4 overflow-y-auto px-4 py-5 lg:flex-row">
       <aside className="flex w-full shrink-0 flex-col gap-3 lg:w-[390px]">
         <section className={card}>
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">1. 基本信息</h2>
-            <button type="button" onClick={() => loadStudent(lib.students[0]?.name ?? "")} className="text-xs text-zinc-500 underline">载入示例学生</button>
+            <select
+              className="h-8 max-w-[150px] rounded-lg border border-zinc-300 bg-white px-2 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+              defaultValue=""
+              onChange={(e) => { if (e.target.value) loadStudent(e.target.value); e.currentTarget.value = ""; }}
+            >
+              <option value="">载入示例学生</option>
+              {lib.students.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+            </select>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <label className={label}>学生姓名<input className={`${field} mt-1`} value={form.name} onChange={(e) => patch("name", e.target.value)} /></label>
