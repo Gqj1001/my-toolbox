@@ -15,9 +15,11 @@ import {
   defaultFocusIds,
   examFocusFor,
   goalFor,
+  mathDetailsFor,
   moduleCourses,
   totalGoal,
   phaseSpecs,
+  splitModulesForPhases,
   windowByKey,
   type CycleInfo,
   type PhaseSpec,
@@ -68,6 +70,29 @@ const dims = [
   ["family", "家庭环境"],
   ["school", "学校环境"],
 ] as const;
+
+const FAMILY_OPTIONS = [
+  "家长配合度高",
+  "家长配合度一般",
+  "祖辈照看/住校",
+  "家庭环境安静",
+  "家庭环境一般",
+  "亲子沟通顺畅",
+  "亲子沟通较少",
+  "待补充",
+];
+const SCHOOL_OPTIONS = [
+  "校内进度偏快",
+  "校内进度同步",
+  "校内进度偏慢",
+  "重点班/实验班",
+  "普通班",
+  "艺术/体育班",
+  "校内作业量大",
+  "作业量适中",
+  "待补充",
+];
+
 
 export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   const [form, setForm] = useState<PlanForm>(emptyForm);
@@ -210,11 +235,12 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
     if (!selectedModules.length) { setMsg({ kind: "err", text: "请至少选择一个知识模块。" }); return; }
     const customHours = phaseHoursInput.split(/[,，\s]+/).map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0);
     const specs = phaseSpecs(form.planMode, form.windowKey, form.year, form.totalHours, customHours);
-    const plans = specs.map((spec) => {
+    const groups = splitModulesForPhases(form, selectedModules, specs);
+    const plans = specs.map((spec, i) => {
       const f = { ...form, totalHours: spec.totalHours };
       return {
         spec,
-        rows: buildRows(f, selectedModules, courseSel, focusSel),
+        rows: buildRows(f, groups[i] ?? selectedModules, courseSel, focusSel),
         goal: totalGoal(f, cycleForWindow(spec.key, spec.year, spec.totalHours)),
       };
     });
@@ -403,10 +429,26 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
           <label className={`${label} mt-3 block`}>老师补充关键词
             <textarea className={`${area} mt-1`} rows={2} value={form.keywords} onChange={(e) => patch("keywords", e.target.value)} placeholder="如：计算粗心、导数含参不会讨论、做题慢" />
           </label>
-          <label className={`${label} mt-2 block`}>家庭环境（最后两行手动）
+          <label className={`${label} mt-2 block`}>家庭环境（可点选项，也可手写）
+            <div className="mt-1 flex flex-wrap gap-1">
+              {FAMILY_OPTIONS.map((op) => (
+                <button key={op} type="button" onClick={() => patch("family", op)}
+                  className={`rounded-full border px-2 py-0.5 text-[11px] ${form.family === op ? "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300" : "border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"}`}>
+                  {op}
+                </button>
+              ))}
+            </div>
             <textarea className={`${area} mt-1`} rows={2} value={form.family} onChange={(e) => patch("family", e.target.value)} />
           </label>
-          <label className={`${label} mt-2 block`}>学校环境（最后两行手动）
+          <label className={`${label} mt-2 block`}>学校环境（可点选项，也可手写）
+            <div className="mt-1 flex flex-wrap gap-1">
+              {SCHOOL_OPTIONS.map((op) => (
+                <button key={op} type="button" onClick={() => patch("schoolEnv", op)}
+                  className={`rounded-full border px-2 py-0.5 text-[11px] ${form.schoolEnv === op ? "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300" : "border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"}`}>
+                  {op}
+                </button>
+              ))}
+            </div>
             <textarea className={`${area} mt-1`} rows={2} value={form.schoolEnv} onChange={(e) => patch("schoolEnv", e.target.value)} />
           </label>
         </section>
@@ -452,6 +494,20 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
                             );
                           })}
                         </div>
+                      ) : null}
+                      {mathDetailsFor(m.name).length ? (
+                        <details className="mb-2 rounded-md border border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
+                          <summary className="cursor-pointer text-[11px] font-medium text-zinc-500">教材级分层（来自原数学辅导方案工具）</summary>
+                          {mathDetailsFor(m.name).map((d) => (
+                            <div key={d.id} className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                              <span className="font-medium text-zinc-700 dark:text-zinc-300">{d.name}</span>
+                              <span className="ml-1 text-zinc-400">L{d.lv}</span>
+                              <div>基础：{d.base}</div>
+                              <div>中档：{d.mid}</div>
+                              <div>压轴：{d.hard}</div>
+                            </div>
+                          ))}
+                        </details>
                       ) : null}
                       {courses.map((c) => {
                         const ids = courseSel[m.name] ?? defaultCourseIds(m.name, form.level);

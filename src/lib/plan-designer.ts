@@ -36,6 +36,7 @@ export type PlanLibrary = {
     accuracy: string;
     factor: number;
   }>;
+  mathModules?: Array<{ id: string; name: string; topic: string; g: string; lv: number; base: string; mid: string; hard: string; target: string; tags: string[] }>;
 };
 
 export const LIBRARY = library as PlanLibrary;
@@ -300,6 +301,31 @@ export const LEVELS = [
   { key: "预科衔接", label: "预科衔接", note: "只选需要提前学的新课模块" },
 ];
 
+const MATH_MODULE_MAP: Record<string, string[]> = {
+  "集合、复数与常用逻辑用语": ["m01", "m12", "m30"],
+  "平面向量": ["m10"],
+  "不等式与最值": ["m02", "m03", "m31"],
+  "函数": ["m04", "m05", "m06", "m07", "m32"],
+  "导数": ["m23", "m24", "m25", "m38"],
+  "三角函数与解三角形": ["m08", "m09", "m11", "m33"],
+  "数列": ["m21", "m22", "m34"],
+  "立体几何": ["m13", "m16", "m36"],
+  "解析几何": ["m17", "m18", "m19", "m20", "m37"],
+  "概率与统计": ["m14", "m15", "m28", "m29", "m35"],
+  "计数原理与二项式定理": ["m26", "m27"],
+  "选填压轴与创新题": ["m32", "m39"],
+  "计算与应试专项": ["m41", "m42", "m40"],
+  "高考真题精讲": ["m43"],
+  "错题清零": ["m44"],
+  "综合模拟与查漏": ["m45"],
+};
+
+/** 第一个工具（math-plan）里的教材级模块明细：基础/中档/压轴/目标。 */
+export function mathDetailsFor(moduleName: string) {
+  const ids = MATH_MODULE_MAP[moduleName] ?? [];
+  return (ACTIVE_LIBRARY.mathModules ?? []).filter((m) => ids.includes(m.id));
+}
+
 export function moduleCourses(moduleName: string): PlanCourse[] {
   const m = ACTIVE_LIBRARY.modules.find((x) => x.name === moduleName);
   if (!m) return [];
@@ -446,10 +472,40 @@ export function buildRows(
   });
 }
 
+/** 把选中的模块分配到不同阶段：前一阶段先补弱/基础，后一阶段接剩余与收尾。 */
+export function splitModulesForPhases(form: PlanForm, moduleNames: string[], specs: PhaseSpec[]): string[][] {
+  if (specs.length <= 1) return [moduleNames];
+  const tailNames = ["高考真题精讲", "错题清零", "综合模拟与查漏", "计算与应试专项"];
+  const weak = new Set(form.weakModules);
+  const core = moduleNames.filter((n) => !tailNames.includes(n));
+  const tails = moduleNames.filter((n) => tailNames.includes(n));
+  const ranked = core.slice().sort((a, b) => {
+    const aw = weak.has(a) ? 0 : 1, bw = weak.has(b) ? 0 : 1;
+    if (aw !== bw) return aw - bw;
+    const am = ACTIVE_LIBRARY.modules.find((m) => m.name === a);
+    const bm = ACTIVE_LIBRARY.modules.find((m) => m.name === b);
+    return (am?.score ?? 8) - (bm?.score ?? 8);
+  });
+  if (!core.length) {
+    const per = Math.max(1, Math.ceil(tails.length / specs.length));
+    return specs.map((_, i) => tails.slice(i * per, (i + 1) * per));
+  }
+  if (specs.length === 2) {
+    const ratio = specs[0].totalHours / Math.max(1, specs[0].totalHours + specs[1].totalHours);
+    const n1 = Math.max(1, Math.min(core.length, Math.round(core.length * ratio)));
+    return [ranked.slice(0, n1), [...ranked.slice(n1), ...tails]];
+  }
+  // 全托四阶段：基础/弱项 → 核心 → 核心剩余 → 收尾
+  const per = Math.max(1, Math.ceil(core.length / 3));
+  const groups = [ranked.slice(0, per), ranked.slice(per, per * 2), ranked.slice(per * 2), tails];
+  if (!groups[3].length) groups[3] = groups[2].splice(-1);
+  return groups;
+}
+
 export function defaultModules(form: PlanForm): string[] {
   if (form.level === "预科衔接") {
-    // 预科默认只给最前面的概念模块，老师自己勾选
-    return ["集合、复数与常用逻辑用语", "函数"];
+    // 预科默认给“新课起步”模块，老师再按教材进度增删；课程默认只勾概念/基础课
+    return ["集合、复数与常用逻辑用语", "函数", "三角函数与解三角形", "平面向量", "数列"];
   }
   const weak = new Set(form.weakModules);
   const scored = ACTIVE_LIBRARY.modules
