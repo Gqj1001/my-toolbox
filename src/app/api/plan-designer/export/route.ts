@@ -79,6 +79,7 @@ function fillSheet(ws: ExcelJS.Worksheet, data: In, phase: PhaseIn): void {
   });
   ws.getCell("B14").value = clean(phase.totalGoal ?? data.totalGoal) || "—";
   ws.getCell("B15").value = clean(phase.cycleText ?? data.cycleText) || "—";
+  ws.getRow(15).height = 60;
 
   // 取模板第 17 行（数据行）的样式，所有数据行都复用它
   const srcRow = ws.getRow(17);

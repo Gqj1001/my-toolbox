@@ -431,6 +431,7 @@ export function buildRows(
   moduleNames: string[],
   selectedCourses: Record<string, number[]>,
   selectedFocus: Record<string, string[]> = {},
+  selectedDetails: Record<string, string[]> = {},
 ): PlanRow[] {
   const modules = moduleNames
     .map((name) => ACTIVE_LIBRARY.modules.find((m) => m.name === name))
@@ -453,13 +454,14 @@ export function buildRows(
     const ids = selectedCourses[m.name] ?? defaultCourseIds(m.name, form.level);
     const courses = ACTIVE_LIBRARY.courses.filter((c) => ids.includes(c.id));
     const coursePoints = [...new Set(courses.flatMap((c) => c.points.split(/[；;]/).map((s) => s.trim()).filter(Boolean)))].join("；");
+    const chosenDetails = selectedDetails[m.name] ?? [];
     const targetModule: PlanModule = focus
       ? { ...m, score: focus.score, scoreText: focus.scoreText }
       : m;
     return {
       id: `m-${i}-${Date.now()}`,
       module: focus ? `${m.name}·${focus.name}` : m.name,
-      points: focus?.points || coursePoints || courses.map((c) => c.points).join("；"),
+      points: chosenDetails.length ? chosenDetails.join("；") : (focus?.points || coursePoints || courses.map((c) => c.points).join("；")),
       examScore: focus?.scoreText || m.scoreText,
       hours: hours[i] ?? 0,
       goal: goalFor(targetModule, form),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LIBRARY,
   setActiveLibrary,
@@ -21,8 +21,6 @@ import {
   phaseSpecs,
   splitModulesForPhases,
   windowByKey,
-  type CycleInfo,
-  type PhaseSpec,
   type PlanForm,
   type PlanRow,
   type PlanLibrary,
@@ -98,9 +96,10 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   const [form, setForm] = useState<PlanForm>(emptyForm);
   const [lib, setLib] = useState<PlanLibrary>(LIBRARY);
   const [libMsg, setLibMsg] = useState("");
-  const [phasePlans, setPhasePlans] = useState<Array<{ spec: PhaseSpec; rows: PlanRow[]; goal: string }>>([]);
-  const [activePhase, setActivePhase] = useState(0);
-  const [phaseHoursInput, setPhaseHoursInput] = useState("");
+  const [rows, setRows] = useState<PlanRow[]>([]);
+  const [cycleText, setCycleText] = useState("");
+  const [goalText, setGoalText] = useState("");
+  const [phaseLabels, setPhaseLabels] = useState<string[]>([]);
   const [showSidebar, setShowSidebar] = useState(true);
 
   useEffect(() => { setActiveLibrary(lib); }, [lib]);
@@ -111,8 +110,10 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
       setSelectedModules([]);
       setCourseSel({});
       setFocusSel({});
-      setPhasePlans([]);
-      setActivePhase(0);
+      setDetailSel({});
+      setRows([]);
+      setCycleText("");
+      setPhaseLabels([]);
       setLibMsg(raw ? "已载入本窗口上次导入的课程库。" : (form.windowKey === "winter" ? "当前使用内置寒假集训课程库。" : `当前窗口（${windowByKey(form.windowKey).label}）尚未导入课程库，暂用内置寒假库；请先导入。`));
     } catch {
       setLib(LIBRARY);
@@ -121,33 +122,16 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [courseSel, setCourseSel] = useState<Record<string, number[]>>({});
   const [focusSel, setFocusSel] = useState<Record<string, string[]>>({});
+  const [detailSel, setDetailSel] = useState<Record<string, string[]>>({});
   const [analysis, setAnalysis] = useState(() => analysisDefaults(emptyForm()));
   const [busy, setBusy] = useState<"" | "ai" | "export" | "generate">("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [expanded, setExpanded] = useState<string>("函数");
 
-  const activeSpec = phasePlans[activePhase]?.spec;
-  const rows = phasePlans[activePhase]?.rows ?? [];
-  const phaseHours = activeSpec?.totalHours ?? form.totalHours;
-  const cycle = useMemo(
-    () => activeSpec
-      ? cycleForWindow(activeSpec.key, activeSpec.year, activeSpec.totalHours)
-      : cycleForWindow(form.windowKey, form.year, form.totalHours),
-    [activeSpec, form.windowKey, form.year, form.totalHours],
-  );
-  const window = windowByKey(activeSpec?.key ?? form.windowKey);
-  const goalText = phasePlans[activePhase]?.goal ?? "";
+  const window = windowByKey(form.windowKey);
   const totalPlanned = rows.reduce((a, r) => a + Number(r.hours || 0), 0);
-  const diff = totalPlanned - phaseHours;
-
-  function setRows(updater: PlanRow[] | ((list: PlanRow[]) => PlanRow[])) {
-    setPhasePlans((list) => list.map((p, i) => i === activePhase
-      ? { ...p, rows: typeof updater === "function" ? updater(p.rows) : updater }
-      : p));
-  }
-  function setGoalText(value: string) {
-    setPhasePlans((list) => list.map((p, i) => i === activePhase ? { ...p, goal: value } : p));
-  }
+  const diff = totalPlanned - form.totalHours;
+  const planTitle = phaseLabels.length ? phaseLabels.join(" + ") : window.label;
 
   function patch<K extends keyof PlanForm>(key: K, value: PlanForm[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -172,9 +156,9 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
     const mods = defaultModules({ ...form, name: s.name, grade: s.grade, level: s.level, current: s.current, target: s.target, totalHours: s.totalHours, weakModules: weak });
     setSelectedModules(mods);
     setFocusSel(Object.fromEntries(mods.map((m) => [m, defaultFocusIds(m)])));
-    setPhasePlans([]);
-    setActivePhase(0);
-    setPhaseHoursInput("");
+    setDetailSel({});
+    setRows([]);
+    setPhaseLabels([]);
     setMsg({ kind: "ok", text: `已载入 ${s.name} 的档案，可直接生成。` });
   }
 
@@ -196,7 +180,9 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
       try { localStorage.setItem(`plan-designer-library-${form.windowKey}`, JSON.stringify(j.library)); } catch { /* ignore */ }
       setSelectedModules([]);
       setFocusSel({});
-      setPhasePlans([]);
+      setDetailSel({});
+      setRows([]);
+      setPhaseLabels([]);
       setLibMsg(`已导入 ${j.library.modules.length} 个模块 / ${j.library.courses.length} 门课程，覆盖当前窗口。`);
     } catch (e) {
       setLibMsg("导入失败：" + String((e as Error)?.message ?? e));
@@ -231,25 +217,32 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
     });
   }
 
+  function toggleDetail(module: string, text: string) {
+    setDetailSel((m) => {
+      const cur = m[module] ?? [];
+      return { ...m, [module]: cur.includes(text) ? cur.filter((x) => x !== text) : [...cur, text] };
+    });
+  }
+
   function generate() {
     if (!form.name.trim()) { setMsg({ kind: "err", text: "请先填写学生姓名。" }); return; }
     if (!selectedModules.length) { setMsg({ kind: "err", text: "请至少选择一个知识模块。" }); return; }
-    const customHours = phaseHoursInput.split(/[,，\s]+/).map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0);
-    const specs = phaseSpecs(form.planMode, form.windowKey, form.year, form.totalHours, customHours);
+    const specs = phaseSpecs(form.planMode, form.windowKey, form.year, form.totalHours);
     const groups = splitModulesForPhases(form, selectedModules, specs);
-    const plans = specs.map((spec, i) => {
-      const f = { ...form, totalHours: spec.totalHours };
-      return {
-        spec,
-        rows: buildRows(f, groups[i] ?? selectedModules, courseSel, focusSel),
-        goal: totalGoal(f, cycleForWindow(spec.key, spec.year, spec.totalHours)),
-      };
+    const allRows = specs.flatMap((spec, i) =>
+      buildRows({ ...form, totalHours: spec.totalHours }, groups[i] ?? selectedModules, courseSel, focusSel, detailSel));
+    const cycles = specs.map((spec) => {
+      const c = cycleForWindow(spec.key, spec.year, spec.totalHours);
+      return { spec, c };
     });
-    setPhasePlans(plans);
-    setActivePhase(0);
+    const combinedCycle = `辅导时间：${cycles.map(({ spec, c }) => `${c.startText}—${c.endText}（${windowByKey(spec.key).label}，每周${c.weeklyHours}h）`).join("；")}；总课时：${form.totalHours}h`;
+    const fakeCycle = { ...cycleForWindow(specs[0].key, specs[0].year, form.totalHours), text: combinedCycle };
+    setRows(allRows);
+    setCycleText(combinedCycle);
+    setGoalText(totalGoal(form, fakeCycle));
+    setPhaseLabels(specs.map((s) => s.label));
     setAnalysis(analysisDefaults(form));
-    const first = plans[0];
-    setMsg({ kind: "ok", text: `已生成 ${plans.length} 个阶段、共 ${plans.reduce((n, p) => n + p.rows.length, 0)} 个模块；当前显示「${first.spec.label}」。` });
+    setMsg({ kind: "ok", text: `已生成完整方案：${specs.length} 个阶段、共 ${allRows.length} 个模块，合计 ${allRows.reduce((n, r) => n + r.hours, 0)}h。` });
   }
 
   function moveRow(index: number, dir: -1 | 1) {
@@ -303,7 +296,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
           form,
           analysis,
           rows,
-          cycleText: cycle.text,
+          cycleText,
         }),
       });
       const j = (await res.json().catch(() => null)) as { ok?: boolean; error?: string; analysis?: Record<string, string>; goals?: string[] } | null;
@@ -324,9 +317,8 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   }
 
   async function exportXlsx() {
-    if (!phasePlans.length) { setMsg({ kind: "err", text: "请先生成方案。" }); return; }
-    const bad = phasePlans.find((p) => p.rows.reduce((n, r) => n + Number(r.hours || 0), 0) !== p.spec.totalHours);
-    if (bad) { setMsg({ kind: "err", text: `「${bad.spec.label}」课时合计与阶段总课时不一致，请先调整。` }); return; }
+    if (!rows.length) { setMsg({ kind: "err", text: "请先生成方案。" }); return; }
+    if (diff !== 0) { setMsg({ kind: "err", text: `规划课时合计 ${totalPlanned}h，与总课时 ${form.totalHours}h 不一致，请先调整。` }); return; }
     setBusy("export");
     setMsg(null);
     try {
@@ -336,13 +328,10 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
         body: JSON.stringify({
           ...form,
           analysis,
-          phases: phasePlans.map((p) => ({
-            label: p.spec.label,
-            totalHours: p.spec.totalHours,
-            totalGoal: p.goal,
-            cycleText: cycleForWindow(p.spec.key, p.spec.year, p.spec.totalHours).text,
-            rows: p.rows,
-          })),
+          phaseLabel: "个性化辅导计划",
+          rows,
+          totalGoal: goalText,
+          cycleText,
         }),
       });
       if (!res.ok) {
@@ -353,11 +342,11 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
       const blob = await res.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `${form.name}-个性化辅导方案${phasePlans.length > 1 ? `（${phasePlans.length}阶段）` : ""}.xlsx`;
+      a.download = `${form.name}-个性化辅导方案.xlsx`;
       document.body.appendChild(a);
       a.click();
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1200);
-      setMsg({ kind: "ok", text: `已导出 1 个 xlsx（${phasePlans.length} 个阶段工作表），可直接打开检查/打印。` });
+      setMsg({ kind: "ok", text: "已导出完整方案 xlsx（单个工作表），可直接打开检查/打印。" });
     } catch (e) {
       setMsg({ kind: "err", text: "导出失败：" + String((e as Error)?.message ?? e) });
     } finally { setBusy(""); }
@@ -408,11 +397,8 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
                 <option value="fulltime">全托生：从当前窗口起连续四个阶段</option>
               </select>
             </label>
-            <label className={`${label} sm:col-span-2`}>阶段课时（可留空，默认按 40% / 60% 或四等分；用逗号分隔）
-              <input className={`${field} mt-1`} value={phaseHoursInput} onChange={(e) => setPhaseHoursInput(e.target.value)} placeholder="如 40,60；全托如 25,25,25,25" />
-            </label>
           </div>
-          <p className="mt-2 text-xs text-zinc-400">{window.label} · {cycle.text}</p>
+          <p className="mt-2 text-xs text-zinc-400">{planTitle} · {cycleText || "生成后显示完整辅导周期"}</p>
         </section>
 
         <section className={card}>
@@ -497,14 +483,28 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
                       ) : null}
                       {mathDetailsFor(m.name).length ? (
                         <details className="mb-2 rounded-md border border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
-                          <summary className="cursor-pointer text-[11px] font-medium text-zinc-500">教材级分层（来自原数学辅导方案工具）</summary>
+                          <summary className="cursor-pointer text-[11px] font-medium text-zinc-500">教材级分层（展开勾选具体知识点）</summary>
+                          <div className="mb-1 mt-1 flex justify-end">
+                            <button type="button" className="rounded border border-zinc-300 px-2 py-0.5 text-[10px] text-zinc-500 dark:border-zinc-700"
+                              onClick={() => {
+                                const all = mathDetailsFor(m.name).flatMap((d) => [d.base, d.mid, d.hard]).filter(Boolean);
+                                setDetailSel((prev) => ({ ...prev, [m.name]: all }));
+                              }}>
+                              全选本模块
+                            </button>
+                          </div>
                           {mathDetailsFor(m.name).map((d) => (
                             <div key={d.id} className="mt-1 text-[11px] leading-relaxed text-zinc-500">
-                              <span className="font-medium text-zinc-700 dark:text-zinc-300">{d.name}</span>
-                              <span className="ml-1 text-zinc-400">L{d.lv}</span>
-                              <div>基础：{d.base}</div>
-                              <div>中档：{d.mid}</div>
-                              <div>压轴：{d.hard}</div>
+                              <div>
+                                <span className="font-medium text-zinc-700 dark:text-zinc-300">{d.name}</span>
+                                <span className="ml-1 text-zinc-400">L{d.lv}</span>
+                              </div>
+                              {[["基础", d.base], ["中档", d.mid], ["压轴", d.hard]].map(([part, text]) => (
+                                <label key={part} className="flex items-start gap-1.5 py-0.5">
+                                  <input type="checkbox" className="mt-0.5" checked={(detailSel[m.name] ?? []).includes(text)} onChange={() => toggleDetail(m.name, text)} />
+                                  <span>{part}：{text}</span>
+                                </label>
+                              ))}
                             </div>
                           ))}
                         </details>
@@ -538,7 +538,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
         <section className={card}>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">{form.name || "未命名学生"} · {window.label}个性化辅导计划</h1>
+              <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">{form.name || "未命名学生"} · {planTitle}个性化辅导计划</h1>
               <p className="mt-1 text-xs text-zinc-500">{form.school} {form.grade} · {form.subject} · 总课时 {form.totalHours}h · 已上 {form.usedHours}h</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -552,7 +552,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <label className={label}>预期总目标<textarea className={`${area} mt-1`} rows={4} value={goalText} onChange={(e) => setGoalText(e.target.value)} /></label>
-            <label className={label}>辅导周期<textarea className={`${area} mt-1`} rows={4} value={cycle.text} readOnly /></label>
+            <label className={label}>辅导周期<textarea className={`${area} mt-1`} rows={4} value={cycleText} onChange={(e) => setCycleText(e.target.value)} /></label>
           </div>
         </section>
 
@@ -575,20 +575,10 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
         </details>
 
         <section className={card}>
-          {phasePlans.length > 1 ? (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {phasePlans.map((p, i) => (
-                <button key={p.spec.label} type="button" onClick={() => setActivePhase(i)}
-                  className={`rounded-full border px-3 py-1 text-xs ${i === activePhase ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900" : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"}`}>
-                  {p.spec.label} · {p.spec.totalHours}h
-                </button>
-              ))}
-            </div>
-          ) : null}
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">二、辅导计划及结果验收</h2>
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`text-xs ${diff === 0 ? "text-emerald-600" : "text-red-600"}`}>课时合计 {totalPlanned}h / {phaseHours}h{diff !== 0 ? `（差 ${diff > 0 ? "+" : ""}${diff}h）` : " ✓"}</span>
+              <span className={`text-xs ${diff === 0 ? "text-emerald-600" : "text-red-600"}`}>课时合计 {totalPlanned}h / {form.totalHours}h{diff !== 0 ? `（差 ${diff > 0 ? "+" : ""}${diff}h）` : " ✓"}</span>
               <select className={`${field} h-8 w-36`} defaultValue="" onChange={(e) => { addModule(e.target.value); e.currentTarget.value = ""; }}>
                 <option value="">+ 加模块</option>
                 {lib.modules.filter((m) => !selectedModules.includes(m.name)).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
