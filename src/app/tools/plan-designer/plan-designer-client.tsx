@@ -101,6 +101,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   const [phasePlans, setPhasePlans] = useState<Array<{ spec: PhaseSpec; rows: PlanRow[]; goal: string }>>([]);
   const [activePhase, setActivePhase] = useState(0);
   const [phaseHoursInput, setPhaseHoursInput] = useState("");
+  const [showSidebar, setShowSidebar] = useState(true);
 
   useEffect(() => { setActiveLibrary(lib); }, [lib]);
   useEffect(() => {
@@ -329,43 +330,42 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
     setBusy("export");
     setMsg(null);
     try {
-      for (const p of phasePlans) {
-        const res = await fetch("/api/plan-designer/export", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...form,
+      const res = await fetch("/api/plan-designer/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          analysis,
+          phases: phasePlans.map((p) => ({
+            label: p.spec.label,
             totalHours: p.spec.totalHours,
-            analysis,
-            rows: p.rows,
             totalGoal: p.goal,
             cycleText: cycleForWindow(p.spec.key, p.spec.year, p.spec.totalHours).text,
-            phaseLabel: p.spec.label,
-          }),
-        });
-        if (!res.ok) {
-          const j = (await res.json().catch(() => null)) as { error?: string } | null;
-          setMsg({ kind: "err", text: `${p.spec.label}导出失败：${j?.error || `HTTP ${res.status}`}` });
-          return;
-        }
-        const blob = await res.blob();
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `${form.name}-${p.spec.label}-个性化辅导计划表.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1200);
-        await new Promise((r) => setTimeout(r, 250));
+            rows: p.rows,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        setMsg({ kind: "err", text: `导出失败：${j?.error || `HTTP ${res.status}`}` });
+        return;
       }
-      setMsg({ kind: "ok", text: `已导出 ${phasePlans.length} 个阶段的 xlsx，可直接打开检查/打印。` });
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${form.name}-个性化辅导方案${phasePlans.length > 1 ? `（${phasePlans.length}阶段）` : ""}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1200);
+      setMsg({ kind: "ok", text: `已导出 1 个 xlsx（${phasePlans.length} 个阶段工作表），可直接打开检查/打印。` });
     } catch (e) {
       setMsg({ kind: "err", text: "导出失败：" + String((e as Error)?.message ?? e) });
     } finally { setBusy(""); }
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-[1500px] flex-1 flex-col gap-4 overflow-y-auto px-4 py-5 lg:flex-row">
-      <aside className="flex w-full shrink-0 flex-col gap-3 lg:w-[390px]">
+    <main className="mx-auto flex w-full max-w-[1900px] flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 lg:flex-row lg:items-start">
+      <aside className={`${showSidebar ? "flex" : "hidden"} w-full shrink-0 flex-col gap-3 lg:sticky lg:top-2 lg:max-h-[calc(100dvh-7rem)] lg:w-[360px] lg:overflow-y-auto lg:pr-1`}>
         <section className={card}>
           <div className="mb-2 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">1. 基本信息</h2>
@@ -541,9 +541,14 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
               <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">{form.name || "未命名学生"} · {window.label}个性化辅导计划</h1>
               <p className="mt-1 text-xs text-zinc-500">{form.school} {form.grade} · {form.subject} · 总课时 {form.totalHours}h · 已上 {form.usedHours}h</p>
             </div>
-            <button type="button" onClick={exportXlsx} disabled={!!busy || !rows.length} className={`${btn} bg-emerald-600 text-white`}>
-              {busy === "export" ? "导出中…" : "⬇ 导出新模板 xlsx"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => setShowSidebar((v) => !v)} className={`${btn} border border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300`}>
+                {showSidebar ? "收起设置" : "展开设置"}
+              </button>
+              <button type="button" onClick={exportXlsx} disabled={!!busy || !rows.length} className={`${btn} bg-emerald-600 text-white`}>
+                {busy === "export" ? "导出中…" : "⬇ 导出完整方案（xlsx）"}
+              </button>
+            </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <label className={label}>预期总目标<textarea className={`${area} mt-1`} rows={4} value={goalText} onChange={(e) => setGoalText(e.target.value)} /></label>
@@ -551,22 +556,23 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
           </div>
         </section>
 
-        <section className={card}>
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">一、学生整体学情分析</h2>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => ai("analysis")} disabled={!!busy} className={`${btn} border border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200`}>✨ AI 润色前 5 项</button>
-              <button type="button" onClick={() => ai("goals")} disabled={!!busy || !rows.length} className={`${btn} border border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200`}>✨ AI 润色目标</button>
-            </div>
+        <details className={card}>
+          <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">一、学生整体学情分析</span>
+            <span className="text-xs text-zinc-400">点击展开 / 收起</span>
+          </summary>
+          <div className="mt-2 flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={() => ai("analysis")} disabled={!!busy} className={`${btn} border border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200`}>✨ AI 润色前 5 项</button>
+            <button type="button" onClick={() => ai("goals")} disabled={!!busy || !rows.length} className={`${btn} border border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200`}>✨ AI 润色目标</button>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
             {dims.map(([key, name]) => (
               <label key={key} className={label}>{name}
                 <textarea className={`${area} mt-1`} rows={3} value={analysis[key]} onChange={(e) => setAnalysis((a) => ({ ...a, [key]: e.target.value }))} />
               </label>
             ))}
           </div>
-        </section>
+        </details>
 
         <section className={card}>
           {phasePlans.length > 1 ? (
@@ -589,10 +595,10 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
               </select>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] border-collapse text-xs">
+          <div className="max-h-[calc(100dvh-14rem)] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full min-w-[1080px] border-collapse text-xs">
               <thead>
-                <tr className="bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                <tr className="sticky top-0 z-10 bg-zinc-100 text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">知识模块</th>
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">具体知识点</th>
                   <th className="border border-zinc-200 px-2 py-1.5 dark:border-zinc-700">考试分值</th>
