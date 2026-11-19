@@ -181,6 +181,28 @@ export type CycleInfo = {
   endText: string;
 };
 
+export function scheduleCycle(form: PlanForm): CycleInfo {
+  const lesson = Math.max(0.5, Number(form.lessonHours) || 2);
+  const total = Math.max(0, Math.round(Number(form.totalHours) || 0));
+  const sessions = Math.max(1, Math.ceil(total / lesson));
+  const weeks = Math.max(1, Number(form.schoolWeeks || 0) + Number(form.holidayWeeks || 0));
+  const capacity = Math.max(0,
+    Number(form.schoolPerWeek || 0) * Number(form.schoolWeeks || 0) +
+    Number(form.holidayPerWeek || 0) * Number(form.holidayWeeks || 0) +
+    Number(form.nationalExtra || 0) + Number(form.otherExtra || 0));
+  const fmtDate = (v: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v ?? ""));
+    return m ? `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日` : String(v ?? "");
+  };
+  const range = [fmtDate(form.startDate), fmtDate(form.endDate)].filter(Boolean).join("—");
+  const weeklyHours = Math.max(1, Math.round(total / weeks));
+  return {
+    text: `辅导时间：${range || "待定"}；总课时：${total}h；每次${lesson}h，共${sessions}次课；在校${form.schoolWeeks}周×${form.schoolPerWeek}次/周 + 假期${form.holidayWeeks}周×${form.holidayPerWeek}次/周 + 节日加课${Number(form.nationalExtra || 0) + Number(form.otherExtra || 0)}次（可排${capacity}次）`,
+    weeks, sessions, weeklyHours,
+    startText: fmtDate(form.startDate), endText: fmtDate(form.endDate),
+  };
+}
+
 export function cycleForWindow(key: string, year: number, totalHours: number): CycleInfo {
   const w = windowByKey(key);
   const y = Number.isFinite(year) ? Math.round(year) : new Date().getFullYear();
@@ -265,9 +287,15 @@ export type PlanForm = {
   keywords: string;
   family: string;
   schoolEnv: string;
-  windowKey: string;
-  year: number;
-  planMode: PlanMode;
+  startDate: string;
+  endDate: string;
+  lessonHours: number;
+  schoolPerWeek: number;
+  holidayPerWeek: number;
+  schoolWeeks: number;
+  holidayWeeks: number;
+  nationalExtra: number;
+  otherExtra: number;
 };
 
 export type PlanRow = {

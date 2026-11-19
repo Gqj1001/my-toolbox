@@ -5,11 +5,9 @@ import {
   LIBRARY,
   setActiveLibrary,
   LEVELS,
-  WINDOWS,
-  allocateHours,
   analysisDefaults,
   buildRows,
-  cycleForWindow,
+  scheduleCycle,
   defaultCourseIds,
   defaultModules,
   defaultFocusIds,
@@ -18,13 +16,9 @@ import {
   mathDetailsFor,
   moduleCourses,
   totalGoal,
-  phaseSpecs,
-  splitModulesForPhases,
-  windowByKey,
   type PlanForm,
   type PlanRow,
   type PlanLibrary,
-  type WindowKey,
 } from "@/lib/plan-designer";
 
 const field =
@@ -54,9 +48,15 @@ const emptyForm = (): PlanForm => ({
   keywords: "",
   family: "",
   schoolEnv: "",
-  windowKey: "winter",
-  year: 2027,
-  planMode: "window",
+  startDate: "2027-01-15",
+  endDate: "2027-06-30",
+  lessonHours: 2,
+  schoolPerWeek: 2,
+  holidayPerWeek: 5,
+  schoolWeeks: 20,
+  holidayWeeks: 3,
+  nationalExtra: 5,
+  otherExtra: 1,
 });
 
 const dims = [
@@ -99,13 +99,12 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   const [rows, setRows] = useState<PlanRow[]>([]);
   const [cycleText, setCycleText] = useState("");
   const [goalText, setGoalText] = useState("");
-  const [phaseLabels, setPhaseLabels] = useState<string[]>([]);
   const [showSidebar, setShowSidebar] = useState(true);
 
   useEffect(() => { setActiveLibrary(lib); }, [lib]);
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(`plan-designer-library-${form.windowKey}`);
+      const raw = localStorage.getItem("plan-designer-library-current");
       setLib(raw ? (JSON.parse(raw) as PlanLibrary) : LIBRARY);
       setSelectedModules([]);
       setCourseSel({});
@@ -113,12 +112,11 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
       setDetailSel({});
       setRows([]);
       setCycleText("");
-      setPhaseLabels([]);
-      setLibMsg(raw ? "已载入本窗口上次导入的课程库。" : (form.windowKey === "winter" ? "当前使用内置寒假集训课程库。" : `当前窗口（${windowByKey(form.windowKey).label}）尚未导入课程库，暂用内置寒假库；请先导入。`));
+      setLibMsg(raw ? "已载入上次导入的课程库。" : "当前使用内置数学课程库，可在左侧导入 xlsx 覆盖。");
     } catch {
       setLib(LIBRARY);
     }
-  }, [form.windowKey]);
+  }, []);
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [courseSel, setCourseSel] = useState<Record<string, number[]>>({});
   const [focusSel, setFocusSel] = useState<Record<string, string[]>>({});
@@ -128,10 +126,10 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [expanded, setExpanded] = useState<string>("函数");
 
-  const window = windowByKey(form.windowKey);
   const totalPlanned = rows.reduce((a, r) => a + Number(r.hours || 0), 0);
   const diff = totalPlanned - form.totalHours;
-  const planTitle = phaseLabels.length ? phaseLabels.join(" + ") : window.label;
+  const planTitle = "个性化辅导计划";
+  const schedulePreview = scheduleCycle(form);
 
   function patch<K extends keyof PlanForm>(key: K, value: PlanForm[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -158,7 +156,6 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
     setFocusSel(Object.fromEntries(mods.map((m) => [m, defaultFocusIds(m)])));
     setDetailSel({});
     setRows([]);
-    setPhaseLabels([]);
     setMsg({ kind: "ok", text: `已载入 ${s.name} 的档案，可直接生成。` });
   }
 
@@ -177,12 +174,11 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
       }
       setLib(j.library);
       setActiveLibrary(j.library);
-      try { localStorage.setItem(`plan-designer-library-${form.windowKey}`, JSON.stringify(j.library)); } catch { /* ignore */ }
+      try { localStorage.setItem("plan-designer-library-current", JSON.stringify(j.library)); } catch { /* ignore */ }
       setSelectedModules([]);
       setFocusSel({});
       setDetailSel({});
       setRows([]);
-      setPhaseLabels([]);
       setLibMsg(`已导入 ${j.library.modules.length} 个模块 / ${j.library.courses.length} 门课程，覆盖当前窗口。`);
     } catch (e) {
       setLibMsg("导入失败：" + String((e as Error)?.message ?? e));
@@ -227,22 +223,13 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
   function generate() {
     if (!form.name.trim()) { setMsg({ kind: "err", text: "请先填写学生姓名。" }); return; }
     if (!selectedModules.length) { setMsg({ kind: "err", text: "请至少选择一个知识模块。" }); return; }
-    const specs = phaseSpecs(form.planMode, form.windowKey, form.year, form.totalHours);
-    const groups = splitModulesForPhases(form, selectedModules, specs);
-    const allRows = specs.flatMap((spec, i) =>
-      buildRows({ ...form, totalHours: spec.totalHours }, groups[i] ?? selectedModules, courseSel, focusSel, detailSel));
-    const cycles = specs.map((spec) => {
-      const c = cycleForWindow(spec.key, spec.year, spec.totalHours);
-      return { spec, c };
-    });
-    const combinedCycle = `辅导时间：${cycles.map(({ spec, c }) => `${c.startText}—${c.endText}（${windowByKey(spec.key).label}，每周${c.weeklyHours}h）`).join("；")}；总课时：${form.totalHours}h`;
-    const fakeCycle = { ...cycleForWindow(specs[0].key, specs[0].year, form.totalHours), text: combinedCycle };
+    const cycle = scheduleCycle(form);
+    const allRows = buildRows(form, selectedModules, courseSel, focusSel, detailSel);
     setRows(allRows);
-    setCycleText(combinedCycle);
-    setGoalText(totalGoal(form, fakeCycle));
-    setPhaseLabels(specs.map((s) => s.label));
+    setCycleText(cycle.text);
+    setGoalText(totalGoal(form, cycle));
     setAnalysis(analysisDefaults(form));
-    setMsg({ kind: "ok", text: `已生成完整方案：${specs.length} 个阶段、共 ${allRows.length} 个模块，合计 ${allRows.reduce((n, r) => n + r.hours, 0)}h。` });
+    setMsg({ kind: "ok", text: `已生成完整方案：${allRows.length} 个模块，合计 ${allRows.reduce((n, r) => n + r.hours, 0)}h。` });
   }
 
   function moveRow(index: number, dir: -1 | 1) {
@@ -381,28 +368,45 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
             </label>
             <label className={label}>当前分<input type="number" className={`${field} mt-1`} value={form.current} onChange={(e) => patch("current", Number(e.target.value))} /></label>
             <label className={label}>目标分<input type="number" className={`${field} mt-1`} value={form.target} onChange={(e) => patch("target", Number(e.target.value))} /></label>
-            <label className={label}>总课时 (h)<input type="number" className={`${field} mt-1`} value={form.totalHours} onChange={(e) => patch("totalHours", Number(e.target.value))} /></label>
-            <label className={label}>已上课时<input type="number" className={`${field} mt-1`} value={form.usedHours} onChange={(e) => patch("usedHours", Number(e.target.value))} /></label>
             <label className={label}>基础题正确率<input className={`${field} mt-1`} value={form.accuracy} onChange={(e) => patch("accuracy", e.target.value)} /></label>
-            <label className={label}>窗口期
-              <select className={`${field} mt-1`} value={form.windowKey} onChange={(e) => patch("windowKey", e.target.value as WindowKey)}>
-                {WINDOWS.map((w) => <option key={w.key} value={w.key}>{w.month} 月 · {w.label}</option>)}
-              </select>
-            </label>
-            <label className={label}>年份<input type="number" className={`${field} mt-1`} value={form.year} onChange={(e) => patch("year", Number(e.target.value))} /></label>
-            <label className={`${label} sm:col-span-2`}>出方案方式
-              <select className={`${field} mt-1`} value={form.planMode} onChange={(e) => patch("planMode", e.target.value as PlanForm["planMode"])}>
-                <option value="window">窗口期报名：连续两个阶段（如 12 月=寒假+春季）</option>
-                <option value="midterm">学期中途入学：只出当前阶段（如 4 月=春季）</option>
-                <option value="fulltime">全托生：从当前窗口起连续四个阶段</option>
-              </select>
-            </label>
+            <label className={label}>辅导开始<input type="date" className={`${field} mt-1`} value={form.startDate} onChange={(e) => patch("startDate", e.target.value)} /></label>
+            <label className={label}>辅导结束<input type="date" className={`${field} mt-1`} value={form.endDate} onChange={(e) => patch("endDate", e.target.value)} /></label>
           </div>
-          <p className="mt-2 text-xs text-zinc-400">{planTitle} · {cycleText || "生成后显示完整辅导周期"}</p>
+          <p className="mt-2 text-xs text-zinc-400">辅导周期：{schedulePreview.text}</p>
         </section>
 
         <section className={card}>
-          <h2 className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-100">2. 学情关键词</h2>
+          <h2 className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-100">2. 课时与排课</h2>
+          <label className={label}>总课时数：<span className="font-medium text-zinc-800 dark:text-zinc-100">{form.totalHours}h</span>
+            <input type="range" min={10} max={200} step={2} value={form.totalHours}
+              onChange={(e) => patch("totalHours", Number(e.target.value))}
+              className="mt-2 w-full accent-blue-700" />
+          </label>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <label className={label}>每次课时长
+              <select className={`${field} mt-1`} value={form.lessonHours} onChange={(e) => patch("lessonHours", Number(e.target.value))}>
+                <option value={1.5}>1.5h（90分钟）</option>
+                <option value={2}>2h（120分钟）</option>
+                <option value={2.5}>2.5h（150分钟）</option>
+                <option value={3}>3h（180分钟）</option>
+              </select>
+            </label>
+            <label className={label}>已上课时<input type="number" className={`${field} mt-1`} value={form.usedHours} onChange={(e) => patch("usedHours", Number(e.target.value))} /></label>
+            <label className={label}>在校每周次数<input type="number" className={`${field} mt-1`} value={form.schoolPerWeek} onChange={(e) => patch("schoolPerWeek", Number(e.target.value))} /></label>
+            <label className={label}>假期每周次数<input type="number" className={`${field} mt-1`} value={form.holidayPerWeek} onChange={(e) => patch("holidayPerWeek", Number(e.target.value))} /></label>
+            <label className={label}>在校周数<input type="number" className={`${field} mt-1`} value={form.schoolWeeks} onChange={(e) => patch("schoolWeeks", Number(e.target.value))} /></label>
+            <label className={label}>假期周数<input type="number" className={`${field} mt-1`} value={form.holidayWeeks} onChange={(e) => patch("holidayWeeks", Number(e.target.value))} /></label>
+            <label className={label}>国庆加课<input type="number" className={`${field} mt-1`} value={form.nationalExtra} onChange={(e) => patch("nationalExtra", Number(e.target.value))} /></label>
+            <label className={label}>其它节日加课<input type="number" className={`${field} mt-1`} value={form.otherExtra} onChange={(e) => patch("otherExtra", Number(e.target.value))} /></label>
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            按每次 {form.lessonHours}h 计，共 {schedulePreview.sessions} 次课；排课容量约 {Math.max(0, form.schoolPerWeek * form.schoolWeeks + form.holidayPerWeek * form.holidayWeeks + form.nationalExtra + form.otherExtra)} 次
+            {Math.max(0, form.schoolPerWeek * form.schoolWeeks + form.holidayPerWeek * form.holidayWeeks + form.nationalExtra + form.otherExtra) < schedulePreview.sessions ? "（容量不足，请调整）" : "（可容纳）"}。
+          </p>
+        </section>
+
+        <section className={card}>
+          <h2 className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-100">3. 学情关键词</h2>
           <label className={label}>失分模块（可多选）</label>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {lib.modules.filter((m) => m.score != null).map((m) => (
@@ -441,7 +445,7 @@ export default function PlanDesignerClient({ isVip }: { isVip: boolean }) {
 
         <section className={card}>
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">3. 课程选择</h2>
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">4. 课程选择</h2>
             <span className="text-xs text-zinc-400">{selectedModules.length} 个模块</span>
           </div>
           <p className="mb-2 text-xs text-zinc-400">预科/插班可只勾需要的内容；生成后还能在右侧调整顺序和课时。</p>
